@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Fanatical Library",
+  "version": "0.1.0",
+  "description": "Locally mark Fanatical products and bundles you already own.",
+  "permissions": ["storage", "scripting"],
+  "host_permissions": ["https://www.fanatical.com/*"],
+  "background": { "service_worker": "src/service-worker.js", "type": "module" },
+  "action": { "default_title": "Fanatical Library", "default_popup": "src/popup.html" },
+  "options_page": "src/options.html",
+  "content_scripts": [{
+    "matches": ["https://www.fanatical.com/*"],
+    "js": ["src/shared.js", "src/content.js"],
+    "css": ["src/content.css"],
+    "run_at": "document_idle"
+  }],
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'self';" }
+}
