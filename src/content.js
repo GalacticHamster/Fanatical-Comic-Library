@@ -2,7 +2,7 @@
   'use strict';
   const F = globalThis.FanaticalLibrary;
   if (!F) return;
-  const state = { url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), showNewOnly: false, refreshesForUrl: 0 };
+  const state = { url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), showNewOnly: false };
   let observer = null;
 
   function route() {
@@ -100,6 +100,20 @@
     document.querySelectorAll('.fanatical-library-card-owned, .fanatical-library-card-owned-elsewhere').forEach((card) => card.classList.toggle('fanatical-library-bundle-filtered', state.showNewOnly));
   }
 
+  function cardsNeedAnnotation() {
+    if (!state.parsed) return true;
+    let visibleCards = 0;
+    for (const product of state.parsed.products) {
+      const card = cardFor(product);
+      if (!card) continue;
+      visibleCards += 1;
+      const host = card.querySelector('.cover-container') ?? card;
+      if (!host.querySelector(`[data-fanatical-library-for="${product.sourceItemId}"]`)) return true;
+    }
+    // Keep waiting through the SPA's short gap while it replaces a tier grid.
+    return visibleCards === 0;
+  }
+
   function panel(failed = false) {
     document.querySelector('[data-fanatical-library-summary]')?.remove();
     const element = document.createElement('aside'); element.dataset.fanaticalLibrarySummary = 'true'; element.className = failed ? 'fanatical-library-progress fanatical-library-progress-error' : 'fanatical-library-summary'; element.setAttribute('role', 'status'); document.body.append(element); return element;
@@ -158,8 +172,7 @@
 
   async function render() {
     if (state.rendering) return; const current = route(); if (!current) return;
-    if (state.url === location.href && state.parsed && state.refreshesForUrl >= 3) return;
-    if (state.url !== location.href) { state.refreshesForUrl = 0; state.showNewOnly = false; }
+    if (state.url !== location.href) state.showNewOnly = false;
     state.rendering = true;
     observer?.disconnect();
     showPanel('Fanatical Library: loading ownership status…');
@@ -173,7 +186,6 @@
       });
       renderSummary(parsed, matches, stored.fanaticalLibraryItems);
       applyNewOnlyFilter();
-      state.refreshesForUrl += 1;
     } catch (error) {
       showPanel(`Fanatical Library could not load this bundle: ${String(error?.message ?? 'unknown error')}`, true);
     } finally {
@@ -182,9 +194,12 @@
     }
   }
 
-  const schedule = () => { clearTimeout(state.timer); state.timer = setTimeout(render, 120); };
+  const schedule = (force = false) => {
+    if (!force && state.parsed && !cardsNeedAnnotation()) return;
+    clearTimeout(state.timer); state.timer = setTimeout(render, 120);
+  };
   observer = new MutationObserver(schedule);
   observer.observe(document.documentElement, { childList: true, subtree: true });
-  chrome.storage.onChanged.addListener(schedule);
+  chrome.storage.onChanged.addListener(() => schedule(true));
   schedule();
 }());
