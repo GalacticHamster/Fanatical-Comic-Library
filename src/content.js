@@ -14,6 +14,20 @@
     return card.querySelector('.card-product-name')?.textContent?.trim() || card.querySelector('img[alt]')?.alt?.trim() || '';
   }
 
+  function upsertCardTitle(card, product) {
+    const host = card.querySelector('.cover-container') ?? card;
+    let label = host.querySelector(`[data-fanatical-library-title-for="${product.sourceItemId}"]`);
+    if (!label) {
+      label = document.createElement('span');
+      label.className = 'fanatical-library-card-title';
+      label.dataset.fanaticalLibraryTitleFor = product.sourceItemId;
+      label.setAttribute('aria-hidden', 'true');
+      host.append(label);
+    }
+    label.textContent = product.title;
+    label.title = product.title;
+  }
+
   function sortPickMixCards() {
     document.querySelectorAll('.fanatical-library-sorted-empty-row').forEach((row) => row.classList.remove('fanatical-library-sorted-empty-row'));
     const rows = [...document.querySelectorAll('.three-column-row')].filter((row) => row.querySelector('article.PickAndMixCard'));
@@ -33,6 +47,19 @@
     }
     for (const parent of originalParents) {
       if (parent !== primaryParent && parent.children.length === 0) parent.classList.add('fanatical-library-sorted-empty-row');
+    }
+  }
+
+  function sortStandardBundleCards() {
+    for (const grid of document.querySelectorAll('.fan-grid-container')) {
+      const rows = [...grid.children].filter((row) => row.matches('.three-column-row, .five-column-row') && row.querySelector('article.bundle-product-card'));
+      if (rows.length < 2) continue;
+      const ordered = [...rows].sort((left, right) => titleCollator.compare(cardTitle(left), cardTitle(right)) || cardTitle(left).localeCompare(cardTitle(right)));
+      if (ordered.every((row, index) => row === rows[index])) continue;
+      const marker = document.createComment('fanatical-library-tier-sort-anchor');
+      grid.insertBefore(marker, rows[0]);
+      for (const row of ordered) grid.insertBefore(row, marker);
+      marker.remove();
     }
   }
 
@@ -298,8 +325,10 @@
       parsed.products.forEach((product, index) => {
         const card = cardFor(product); if (!card) return;
         F.upsertBadge(card, product.sourceItemId, matches[index], card.querySelector('.cover-container') ?? card);
+        upsertCardTitle(card, product);
       });
       if (parsed.kind === 'pick-mix') sortPickMixCards();
+      else sortStandardBundleCards();
       if (!hasStableSummary) renderSummary(parsed, matches, stored.fanaticalLibraryItems);
       applyNewOnlyFilter();
     } catch (error) {
