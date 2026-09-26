@@ -138,13 +138,18 @@
 
   function upsertBadge(card, productId, match, badgeHost = card) {
     if (!card || !badgeHost || !productId || !global.document?.createElement) return null;
-    for (const node of badgeHost.querySelectorAll?.('[data-fanatical-library-for]') ?? []) {
+    for (const node of card.querySelectorAll?.('[data-fanatical-library-for]') ?? []) {
       if (node.dataset?.fanaticalLibraryFor === productId) node.remove();
     }
     const badge = global.document.createElement('span');
     badge.dataset.fanaticalLibraryFor = productId;
     const state = match?.state ?? 'new';
-    for (const name of ['owned', 'owned-elsewhere', 'partial', 'possible', 'new']) card.classList?.remove(`fanatical-library-card-${name}`, `fanatical-library-${name}-item`);
+    const statusClasses = ['owned', 'owned-elsewhere', 'partial', 'possible', 'new'];
+    for (const node of [card, ...(card.querySelectorAll?.('.fanatical-library-badge-host') ?? [])]) {
+      for (const name of statusClasses) node.classList?.remove(`fanatical-library-card-${name}`, `fanatical-library-${name}-item`);
+      node.classList?.remove('fanatical-library-badge-host');
+      if (node !== card) { delete node.dataset?.fanaticalLibraryBadge; node.removeAttribute?.('title'); }
+    }
     card.classList?.add(`fanatical-library-card-${state}`, `fanatical-library-${state}-item`);
     badgeHost.classList?.add('fanatical-library-badge-host');
     if (card.dataset) card.dataset.fanaticalLibraryBadge = state === 'owned-elsewhere' ? 'Owned elsewhere' : state === 'partial' ? `${match.owned}/${match.total} Owned` : overlayLabel(match);

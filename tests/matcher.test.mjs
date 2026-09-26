@@ -100,3 +100,15 @@ test('badge can be placed on a stable cover host while the whole card receives s
   testContext.FanaticalLibrary.upsertBadge(card, 'product-123456', { state: 'owned', reason: 'exact Fanatical product ID' }, host);
   assert.equal(nodes.length, 1); assert.equal(classNames.has('fanatical-library-card-owned'), true); assert.equal(classNames.has('fanatical-library-badge-host'), true);
 });
+
+test('rebinding removes an obsolete hover-overlay badge before adding the stable-cover badge', () => {
+  const nodes = [{ dataset: { fanaticalLibraryFor: 'product-123456' }, remove() { this.removed = true; } }];
+  const document = { createElement: () => ({ dataset: {}, setAttribute() {}, remove() {} }) };
+  const host = { querySelectorAll: () => [], append: (node) => nodes.push(node), classList: { add() {} } };
+  const overlay = { dataset: { fanaticalLibraryBadge: 'New' }, classList: { remove() {} }, removeAttribute() {} };
+  const card = { querySelectorAll: (selector) => selector === '[data-fanatical-library-for]' ? [nodes[0]] : [overlay], classList: { add() {}, remove() {} }, dataset: {}, title: '' };
+  const testContext = { globalThis: null, document }; testContext.globalThis = testContext; vm.createContext(testContext);
+  vm.runInContext(fs.readFileSync(new URL('../src/shared.js', import.meta.url), 'utf8'), testContext);
+  testContext.FanaticalLibrary.upsertBadge(card, 'product-123456', { state: 'owned' }, host);
+  assert.equal(nodes[0].removed, true); assert.equal(nodes.length, 2);
+});

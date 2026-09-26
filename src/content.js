@@ -74,8 +74,8 @@
 
   function cardFor(product) {
     const wanted = F.titleKey(product.title);
-    const directCard = [...document.querySelectorAll('article.bundle-product-card')].find((card) => {
-      const title = card.querySelector('h3.card-product-name')?.textContent;
+    const directCard = [...document.querySelectorAll('article.bundle-product-card, article.PickAndMixCard')].find((card) => {
+      const title = card.querySelector('.card-product-name')?.textContent;
       const alt = card.querySelector('img[alt]')?.alt;
       return F.titleKey(title) === wanted || F.titleKey(alt) === wanted;
     });
