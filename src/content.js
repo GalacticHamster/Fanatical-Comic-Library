@@ -2,8 +2,39 @@
   'use strict';
   const F = globalThis.FanaticalLibrary;
   if (!F) return;
+  const titleCollator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
   const state = { url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false, pickMixReflow: [] };
   let observer = null;
+
+  function alphabetize(products) {
+    return [...products].sort((left, right) => titleCollator.compare(left.title, right.title) || String(left.sourceItemId).localeCompare(String(right.sourceItemId)));
+  }
+
+  function cardTitle(card) {
+    return card.querySelector('.card-product-name')?.textContent?.trim() || card.querySelector('img[alt]')?.alt?.trim() || '';
+  }
+
+  function sortPickMixCards() {
+    document.querySelectorAll('.fanatical-library-sorted-empty-row').forEach((row) => row.classList.remove('fanatical-library-sorted-empty-row'));
+    const rows = [...document.querySelectorAll('.three-column-row')].filter((row) => row.querySelector('article.PickAndMixCard'));
+    if (rows.length < 2) return;
+    const primaryParent = rows[0].parentElement;
+    if (!primaryParent) return;
+    const originalParents = new Set(rows.map((row) => row.parentElement));
+    const ordered = [...rows].sort((left, right) => titleCollator.compare(cardTitle(left), cardTitle(right)) || cardTitle(left).localeCompare(cardTitle(right)));
+    if (!ordered.every((row, index) => row === rows[index] && row.parentElement === primaryParent)) {
+      // A card is not a stable insertion point: moving it can rotate the
+      // remaining sequence on the next iteration. A marker stays put until
+      // every card has been moved into its exact sorted position.
+      const marker = document.createComment('fanatical-library-sort-anchor');
+      primaryParent.insertBefore(marker, rows.find((row) => row.parentElement === primaryParent) ?? null);
+      for (const row of ordered) primaryParent.insertBefore(row, marker);
+      marker.remove();
+    }
+    for (const parent of originalParents) {
+      if (parent !== primaryParent && parent.children.length === 0) parent.classList.add('fanatical-library-sorted-empty-row');
+    }
+  }
 
   function route() {
     const path = location.pathname.replace(/\/+$/u, ''); const slug = path.split('/').pop();
@@ -210,9 +241,9 @@
     const lines = [`Fanatical Library — ${parsed.title}`, ''];
     if (parsed.kind === 'standard') parsed.groups.forEach((group, index) => {
       const price = Number(group.price?.USD); lines.push(`${Number.isFinite(price) ? `$${(price / 100).toFixed(2)}` : `Tier ${index + 1}`} tier`);
-      group.products.forEach((product) => lines.push(`[${stateFor(product)}] ${product.title}`)); lines.push('');
+      alphabetize(group.products).forEach((product) => lines.push(`[${stateFor(product)}] ${product.title}`)); lines.push('');
     });
-    else parsed.products.forEach((product) => lines.push(`[${stateFor(product)}] ${product.title}`));
+    else alphabetize(parsed.products).forEach((product) => lines.push(`[${stateFor(product)}] ${product.title}`));
     const blob = new Blob([lines.join('\n')], { type: 'text/plain' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `${parsed.title.replace(/[^a-z0-9]+/giu, '-').replace(/^-|-$/gu, '').toLowerCase() || 'fanatical-bundle'}-tier-list.txt`; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 0);
   }
 
@@ -249,7 +280,7 @@
     for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partially owned'], ['possible', 'Possible matches']]) {
       const entries = parsed.products.filter((_product, index) => (state === 'owned-elsewhere' ? matches[index].state === 'owned-elsewhere' : matches[index].state === state));
       if (!entries.length) continue;
-      const detailList = document.createElement('details'); detailList.className = 'fanatical-library-title-list'; const title = document.createElement('summary'); title.textContent = `${label} (${entries.length})`; detailList.append(title); const list = document.createElement('ol'); entries.sort((left, right) => left.title.localeCompare(right.title)).forEach((product) => { const row = document.createElement('li'); row.textContent = product.title; list.append(row); }); detailList.append(list); element.append(detailList);
+      const detailList = document.createElement('details'); detailList.className = 'fanatical-library-title-list'; const title = document.createElement('summary'); title.textContent = `${label} (${entries.length})`; detailList.append(title); const list = document.createElement('ol'); alphabetize(entries).forEach((product) => { const row = document.createElement('li'); row.textContent = product.title; list.append(row); }); detailList.append(list); element.append(detailList);
     }
   }
 
@@ -268,6 +299,7 @@
         const card = cardFor(product); if (!card) return;
         F.upsertBadge(card, product.sourceItemId, matches[index], card.querySelector('.cover-container') ?? card);
       });
+      if (parsed.kind === 'pick-mix') sortPickMixCards();
       if (!hasStableSummary) renderSummary(parsed, matches, stored.fanaticalLibraryItems);
       applyNewOnlyFilter();
     } catch (error) {
