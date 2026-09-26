@@ -2,7 +2,7 @@
   'use strict';
   const F = globalThis.FanaticalLibrary;
   if (!F) return;
-  const state = { url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), showNewOnly: false };
+  const state = { url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false };
   let observer = null;
 
   function route() {
@@ -38,16 +38,20 @@
   }
 
   async function queryGalactic(products, extensionId) {
-    if (!F.isExtensionId(extensionId)) return;
+    state.galacticEnabled = F.isExtensionId(extensionId);
+    if (!state.galacticEnabled) { state.galacticStatus = 'Not configured.'; return; }
     const requests = F.galacticRequestItems(products);
-    if (!requests.length) return;
+    if (!requests.length) { state.galacticStatus = 'No compatible new items to check.'; return; }
     let timeout;
+    state.galacticStatus = `Checking ${requests.length} item${requests.length === 1 ? '' : 's'}…`;
     try {
       for (let offset = 0; offset < requests.length; offset += 500) {
         const response = await Promise.race([chrome.runtime.sendMessage(extensionId, { type: 'MATCH_ITEMS', apiVersion: 1, items: requests.slice(offset, offset + 500) }), new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('timeout')), 3500); })]);
         if (response?.ok && response.apiVersion === 1 && Array.isArray(response.results)) for (const result of response.results) state.galactic.set(String(result?.requestId), result);
       }
-    } catch { /* Optional integration must never prevent local annotations. */ } finally { clearTimeout(timeout); }
+      const exact = [...state.galactic.values()].filter((result) => (Array.isArray(result?.matches) ? result.matches : []).some((match) => match?.ownership === 'owned' || match?.ownership === 'claimed')).length;
+      state.galacticStatus = `Available. ${exact} exact external match${exact === 1 ? '' : 'es'}.`;
+    } catch { state.galacticStatus = 'Unavailable; showing local Fanatical results only.'; } finally { clearTimeout(timeout); }
   }
 
   function status(product, localItems) {
@@ -144,6 +148,7 @@
     const legend = document.createElement('div'); legend.className = 'fanatical-library-legend';
     for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partial'], ['possible', 'Possible']]) { const chip = document.createElement('span'); chip.className = `fanatical-library-legend-${state}`; chip.textContent = label; legend.append(chip); }
     element.append(legend);
+    if (state.galacticEnabled) { const galactic = document.createElement('p'); galactic.className = 'fanatical-library-galactic-status'; galactic.textContent = `Galactic Library: ${state.galacticStatus}`; galactic.title = 'Galactic Library receives only current Fanatical titles and returns narrow ownership matches from connected providers.'; element.append(galactic); }
     const purchase = (Array.isArray(localItems) ? localItems : []).find((item) => item?.bundle?.sourceItemId === parsed.sourceItemId);
     if (purchase?.purchaseDate) { const notice = document.createElement('p'); notice.className = 'fanatical-library-purchased'; const date = new Date(purchase.purchaseDate); notice.textContent = `Already purchased: ${Number.isNaN(date.valueOf()) ? purchase.purchaseDate : date.toLocaleDateString()}`; element.append(notice); }
     if (parsed.kind === 'standard' && parsed.groups.length) {
@@ -173,9 +178,10 @@
   async function render() {
     if (state.rendering) return; const current = route(); if (!current) return;
     if (state.url !== location.href) state.showNewOnly = false;
+    const hasStableSummary = state.url === location.href && Boolean(document.querySelector('[data-fanatical-library-summary]'));
     state.rendering = true;
     observer?.disconnect();
-    showPanel('Fanatical Library: loading ownership status…');
+    if (!hasStableSummary) showPanel('Fanatical Library: loading ownership status…');
     try {
       const [parsed, stored] = await Promise.all([loadPublicBundle(current), chrome.storage.local.get({ fanaticalLibraryItems: [], galacticLibraryExtensionId: '' })]);
       await queryGalactic(parsed.products.filter((product) => F.classify(product, stored.fanaticalLibraryItems).state === 'new'), stored.galacticLibraryExtensionId);
@@ -184,7 +190,7 @@
         const card = cardFor(product); if (!card) return;
         F.upsertBadge(card, product.sourceItemId, matches[index], card.querySelector('.cover-container') ?? card);
       });
-      renderSummary(parsed, matches, stored.fanaticalLibraryItems);
+      if (!hasStableSummary) renderSummary(parsed, matches, stored.fanaticalLibraryItems);
       applyNewOnlyFilter();
     } catch (error) {
       showPanel(`Fanatical Library could not load this bundle: ${String(error?.message ?? 'unknown error')}`, true);
