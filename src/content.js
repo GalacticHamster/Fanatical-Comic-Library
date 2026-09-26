@@ -2,7 +2,7 @@
   'use strict';
   const F = globalThis.FanaticalLibrary;
   if (!F) return;
-  const state = { url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false };
+  const state = { url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false, pickMixReflow: [] };
   let observer = null;
 
   function route() {
@@ -100,8 +100,86 @@
     }).length;
   }
 
+  function restorePickMixReflow() {
+    for (const group of state.pickMixReflow) {
+      // Disconnect the temporary grid first so original child indexes refer
+      // only to Fanatical's real card wrappers.
+      group.grid.remove();
+      for (const cell of [...group.cells].sort((left, right) => left.index - right.index)) {
+        if (!cell.parent.isConnected) continue;
+        cell.parent.insertBefore(cell.node, cell.parent.children[cell.index] ?? null);
+      }
+      for (const row of group.rows) {
+        if (row.display) row.node.style.setProperty('display', row.display, row.priority);
+        else row.node.style.removeProperty('display');
+      }
+    }
+    state.pickMixReflow = [];
+  }
+
+  function reflowVisiblePickMixCards() {
+    const rows = [...document.querySelectorAll('.three-column-row')].filter((row) => row.querySelector('article.PickAndMixCard'));
+    const parent = rows[0]?.parentElement;
+    if (!parent) return;
+    const visibleRows = rows.map((node) => ({ node, parent, index: [...parent.children].indexOf(node) }))
+      .filter((cell) => !cell.node.querySelector('.fanatical-library-card-owned, .fanatical-library-card-owned-elsewhere'));
+    if (!visibleRows.length) return;
+
+    // Copy the live dimensions of Fanatical's complete column wrappers.
+    // These wrappers carry the site's gutters, so moving them intact keeps
+    // card dimensions and row spacing unchanged.
+    const positionedRows = rows.map((node) => ({ node, rect: node.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.width > 0 && rect.height > 0);
+    if (!positionedRows.length) return;
+    const firstTop = Math.min(...positionedRows.map(({ rect }) => rect.top));
+    const firstVisualRow = positionedRows
+      .filter(({ rect }) => Math.abs(rect.top - firstTop) < 1)
+      .sort((left, right) => left.rect.left - right.rect.left);
+    const firstRect = firstVisualRow[0]?.rect;
+    const nextRowRect = positionedRows.find(({ rect }) => firstRect && rect.top > firstRect.top + 1)?.rect;
+    const grid = document.createElement('div'); grid.className = 'fanatical-library-pick-mix-reflow';
+    if (firstVisualRow.length) {
+      grid.style.gridTemplateColumns = firstVisualRow.map(({ rect }) => `${rect.width}px`).join(' ');
+      const columnGap = firstVisualRow.length > 1 ? firstVisualRow[1].rect.left - firstVisualRow[0].rect.right : 0;
+      const rowGap = nextRowRect && firstRect ? nextRowRect.top - firstRect.bottom : 0;
+      grid.style.columnGap = `${Math.max(0, columnGap)}px`;
+      grid.style.rowGap = `${Math.max(0, rowGap)}px`;
+    }
+    parent.insertBefore(grid, rows[0]);
+    for (const cell of visibleRows) grid.append(cell.node);
+    const visibleNodes = new Set(visibleRows.map(({ node }) => node));
+    const savedRows = rows.filter((node) => !visibleNodes.has(node)).map((node) => ({ node, display: node.style.getPropertyValue('display'), priority: node.style.getPropertyPriority('display') }));
+    for (const row of savedRows) row.node.style.setProperty('display', 'none', 'important');
+    state.pickMixReflow.push({ grid, cells: visibleRows, rows: savedRows });
+  }
+
   function applyNewOnlyFilter() {
-    document.querySelectorAll('.fanatical-library-card-owned, .fanatical-library-card-owned-elsewhere').forEach((card) => card.classList.toggle('fanatical-library-bundle-filtered', state.showNewOnly));
+    restorePickMixReflow();
+    document.body.classList.remove('fanatical-library-show-new-only');
+    document.querySelectorAll('[data-fanatical-library-filter-display]').forEach((node) => {
+      const original = node.dataset.fanaticalLibraryFilterDisplay;
+      const priority = node.dataset.fanaticalLibraryFilterPriority;
+      if (original) node.style.setProperty('display', original, priority);
+      else node.style.removeProperty('display');
+      delete node.dataset.fanaticalLibraryFilterDisplay;
+      delete node.dataset.fanaticalLibraryFilterPriority;
+    });
+    document.querySelectorAll('.fanatical-library-bundle-filtered').forEach((node) => node.classList.remove('fanatical-library-bundle-filtered'));
+    if (!state.showNewOnly) return;
+    // Measure and build the replacement grid while Fanatical's original rows
+    // are still visible; the body filter below intentionally hides them.
+    reflowVisiblePickMixCards();
+    document.body.classList.add('fanatical-library-show-new-only');
+    document.querySelectorAll('.fanatical-library-card-owned, .fanatical-library-card-owned-elsewhere').forEach((card) => {
+      // Pick & Mix places each article in a one-card grid-cell wrapper. Hide
+      // that wrapper so CSS Grid reflows instead of retaining an empty hole.
+      const wrapper = card.parentElement;
+      const target = wrapper?.parentElement?.matches('.three-column-row, .five-column-row') ? wrapper : card;
+      target.classList.add('fanatical-library-bundle-filtered');
+      target.dataset.fanaticalLibraryFilterDisplay = target.style.getPropertyValue('display');
+      target.dataset.fanaticalLibraryFilterPriority = target.style.getPropertyPriority('display');
+      target.style.setProperty('display', 'none', 'important');
+    });
   }
 
   function cardsNeedAnnotation() {
