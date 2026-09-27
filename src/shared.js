@@ -138,9 +138,10 @@
 
   function upsertBadge(card, productId, match, badgeHost = card) {
     if (!card || !badgeHost || !productId || !global.document?.createElement) return null;
-    for (const node of card.querySelectorAll?.('[data-fanatical-library-for]') ?? []) {
-      if (node.dataset?.fanaticalLibraryFor === productId) node.remove();
-    }
+    // Fanatical's SPA can recycle a card node for a different product. Any
+    // previous extension badge on that node is therefore stale, regardless
+    // of its old product ID.
+    for (const node of card.querySelectorAll?.('[data-fanatical-library-for]') ?? []) node.remove();
     const badge = global.document.createElement('span');
     badge.dataset.fanaticalLibraryFor = productId;
     const state = match?.state ?? 'new';

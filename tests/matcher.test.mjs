@@ -79,15 +79,15 @@ test('MATCH_ITEMS candidates include only Galactic-supported media with stable r
   ]);
 });
 
-test('badge upsert is idempotent across SPA rerenders', () => {
+test('badge upsert clears a stale badge when a SPA reuses a card for another product', () => {
   const nodes = [];
   const document = { createElement: () => ({ dataset: {}, setAttribute() {}, remove() { const i = nodes.indexOf(this); if (i >= 0) nodes.splice(i, 1); } }) };
   const card = { querySelectorAll: () => [...nodes], append: (node) => nodes.push(node) };
   const testContext = { globalThis: null, document }; testContext.globalThis = testContext; vm.createContext(testContext);
   vm.runInContext(fs.readFileSync(new URL('../src/shared.js', import.meta.url), 'utf8'), testContext);
   testContext.FanaticalLibrary.upsertBadge(card, 'product-123456', { state: 'new' });
-  testContext.FanaticalLibrary.upsertBadge(card, 'product-123456', { state: 'owned' });
-  assert.equal(nodes.length, 1); assert.equal(nodes[0].textContent, 'Owned');
+  testContext.FanaticalLibrary.upsertBadge(card, 'product-654321', { state: 'owned' });
+  assert.equal(nodes.length, 1); assert.equal(nodes[0].textContent, 'Owned'); assert.equal(nodes[0].dataset.fanaticalLibraryFor, 'product-654321');
 });
 
 test('badge can be placed on a stable cover host while the whole card receives state classes', () => {

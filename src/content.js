@@ -16,14 +16,14 @@
 
   function upsertCardTitle(card, product) {
     const host = card.querySelector('.cover-container') ?? card;
-    let label = host.querySelector(`[data-fanatical-library-title-for="${product.sourceItemId}"]`);
-    if (!label) {
-      label = document.createElement('span');
-      label.className = 'fanatical-library-card-title';
-      label.dataset.fanaticalLibraryTitleFor = product.sourceItemId;
-      label.setAttribute('aria-hidden', 'true');
-      host.append(label);
-    }
+    // A SPA card node can be repurposed for another product, just as with
+    // ownership badges. Its old title label must not survive that reuse.
+    for (const stale of host.querySelectorAll('[data-fanatical-library-title-for]')) stale.remove();
+    const label = document.createElement('span');
+    label.className = 'fanatical-library-card-title';
+    label.dataset.fanaticalLibraryTitleFor = product.sourceItemId;
+    label.setAttribute('aria-hidden', 'true');
+    host.append(label);
     label.textContent = product.title;
     label.title = product.title;
   }
@@ -170,8 +170,20 @@
       for (const row of group.rows) {
         if (row.display) row.node.style.setProperty('display', row.display, row.priority);
         else row.node.style.removeProperty('display');
+        delete row.node.dataset.fanaticalLibraryReflowDisplay;
+        delete row.node.dataset.fanaticalLibraryReflowPriority;
       }
     }
+    // Recover even if Fanatical replaced a grid while the checkbox was being
+    // toggled and the in-memory reflow group no longer contains that row.
+    document.querySelectorAll('[data-fanatical-library-reflow-display]').forEach((node) => {
+      const display = node.dataset.fanaticalLibraryReflowDisplay;
+      const priority = node.dataset.fanaticalLibraryReflowPriority;
+      if (display) node.style.setProperty('display', display, priority);
+      else node.style.removeProperty('display');
+      delete node.dataset.fanaticalLibraryReflowDisplay;
+      delete node.dataset.fanaticalLibraryReflowPriority;
+    });
     state.pickMixReflow = [];
   }
 
@@ -207,7 +219,11 @@
     for (const cell of visibleRows) grid.append(cell.node);
     const visibleNodes = new Set(visibleRows.map(({ node }) => node));
     const savedRows = rows.filter((node) => !visibleNodes.has(node)).map((node) => ({ node, display: node.style.getPropertyValue('display'), priority: node.style.getPropertyPriority('display') }));
-    for (const row of savedRows) row.node.style.setProperty('display', 'none', 'important');
+    for (const row of savedRows) {
+      row.node.dataset.fanaticalLibraryReflowDisplay = row.display;
+      row.node.dataset.fanaticalLibraryReflowPriority = row.priority;
+      row.node.style.setProperty('display', 'none', 'important');
+    }
     state.pickMixReflow.push({ grid, cells: visibleRows, rows: savedRows });
   }
 
@@ -228,6 +244,9 @@
     // are still visible; the body filter below intentionally hides them.
     reflowVisiblePickMixCards();
     document.body.classList.add('fanatical-library-show-new-only');
+    // Pick & Mix has already hidden each excluded outer card wrapper above.
+    // A second nested hide can survive a SPA card recycle and hide a new card.
+    if (state.parsed?.kind === 'pick-mix') return;
     document.querySelectorAll('.fanatical-library-card-owned, .fanatical-library-card-owned-elsewhere').forEach((card) => {
       // Pick & Mix places each article in a one-card grid-cell wrapper. Hide
       // that wrapper so CSS Grid reflows instead of retaining an empty hole.
@@ -327,8 +346,13 @@
         F.upsertBadge(card, product.sourceItemId, matches[index], card.querySelector('.cover-container') ?? card);
         upsertCardTitle(card, product);
       });
-      if (parsed.kind === 'pick-mix') sortPickMixCards();
-      else sortStandardBundleCards();
+      // While New-only is active, the visible Pick & Mix rows live in our
+      // temporary reflow grid. Sorting that transient grid would also pull
+      // the hidden original rows into it, so they would be removed along
+      // with the temporary grid when the filter is switched off.
+      if (parsed.kind === 'pick-mix') {
+        if (!state.showNewOnly) sortPickMixCards();
+      } else sortStandardBundleCards();
       if (!hasStableSummary) renderSummary(parsed, matches, stored.fanaticalLibraryItems);
       applyNewOnlyFilter();
     } catch (error) {
