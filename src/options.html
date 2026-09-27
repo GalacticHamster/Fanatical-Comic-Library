@@ -4,9 +4,9 @@
 <body>
   <main class="settings">
     <h1>Fanatical Library settings</h1>
-    <section><h2>Local library</h2><p id="import-summary">No purchases imported yet.</p><p id="history-note">Order-history pagination has not yet been validated on a larger account.</p><button id="export" type="button">Export local ownership data</button> <button id="reset" class="danger" type="button">Delete local library</button><p id="local-status" role="status"></p></section>
+    <section><h2>Local library</h2><p id="import-summary">No purchases imported yet.</p><p id="history-note">Order-history pagination has not yet been validated on a larger account.</p><button id="quick-scan" type="button">Quick scan for new purchases</button> <button id="full-scan" type="button">Full scan all purchases</button> <button id="export" type="button">Export local ownership data</button> <button id="reset" class="danger" type="button">Delete local library</button><p id="local-status" role="status"></p></section>
     <section><h2>Optional Galactic Library</h2><p>Enter the paired Galactic Library extension ID to enable title-only matching for games, books/comics, and audiobooks. Fanatical Library remains fully usable without it.</p><label>Extension ID <input id="galactic-id" autocomplete="off" spellcheck="false"></label> <button id="save-galactic" type="button">Save</button><p id="galactic-status" role="status"></p></section>
-    <section><h2>Privacy</h2><p>Purchase metadata is stored only in this browser. The importer reads Fanatical's session token only in the Fanatical page context; neither tokens nor raw order responses are stored, exported, or sent to another extension.</p></section>
+    <section><h2>Privacy</h2><p>Purchase metadata is stored only in this browser. The importer reads Fanatical's session token only in the Fanatical page context; neither tokens nor raw order responses are stored, exported, or sent to another extension. Quick scans retain only SHA-256 fingerprints of completed-order IDs, never the IDs themselves.</p></section>
   </main>
   <script src="shared.js"></script><script src="options.js"></script>
 </body>

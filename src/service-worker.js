@@ -2,6 +2,7 @@
 
 const STORAGE_ITEMS = 'fanaticalLibraryItems';
 const STORAGE_SUMMARY = 'fanaticalImportSummary';
+const STORAGE_ORDER_FINGERPRINTS = 'fanaticalScannedOrderFingerprints';
 
 const safeText = (value, max = 500) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 const safeId = (value) => /^[a-zA-Z0-9_-]{6,128}$/u.test(String(value ?? '')) ? String(value) : '';
@@ -33,12 +34,20 @@ function sanitizeImportResult(value) {
     };
     deduplicated.set(sourceItemId, item);
   }
-  return { schemaVersion: 1, ordersScanned: Math.max(0, Math.floor(Number(input.ordersScanned) || 0)), items: [...deduplicated.values()].sort((a, b) => a.sourceItemId.localeCompare(b.sourceItemId)) };
+  const orderFingerprints = [...new Set((Array.isArray(input.orderFingerprints) ? input.orderFingerprints : [])
+    .filter((fingerprint) => /^[a-f0-9]{64}$/iu.test(String(fingerprint))).map((fingerprint) => String(fingerprint).toLowerCase()))].sort();
+  return {
+    schemaVersion: 1,
+    ordersScanned: Math.max(0, Math.floor(Number(input.ordersScanned) || 0)),
+    ordersAvailable: Math.max(0, Math.floor(Number(input.ordersAvailable) || 0)),
+    orderFingerprints,
+    items: [...deduplicated.values()].sort((a, b) => a.sourceItemId.localeCompare(b.sourceItemId))
+  };
 }
 
 /* This function is serialized by chrome.scripting and runs only in Fanatical's
  * MAIN world. Its return value is an explicit ownership DTO, never raw JSON. */
-async function importFanaticalOrdersInPage() {
+async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerprints = [] } = {}) {
   const safeTextInPage = (value, max = 500) => typeof value === 'string' ? value.trim().slice(0, max) : '';
   const safeIdInPage = (value) => /^[a-zA-Z0-9_-]{6,128}$/u.test(String(value ?? '')) ? String(value) : '';
   const safeDateInPage = (value) => typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? value : null;
@@ -82,7 +91,17 @@ async function importFanaticalOrdersInPage() {
   };
   const summaries = await request('/api/user/orders');
   const complete = (Array.isArray(summaries) ? summaries : []).filter((order) => order?.status === 'COMPLETE' && safeIdInPage(order?._id));
-  const details = await Promise.all(complete.map((order) => request(`/api/user/orders/${encodeURIComponent(order._id)}`)));
+  // Only opaque SHA-256 fingerprints leave the page world. This lets a quick
+  // scan identify unseen orders without persisting Fanatical order IDs.
+  const fingerprintOrderInPage = async (id) => {
+    const bytes = new TextEncoder().encode(String(id));
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return [...new Uint8Array(digest)].map((part) => part.toString(16).padStart(2, '0')).join('');
+  };
+  const completeWithFingerprints = await Promise.all(complete.map(async (order) => ({ order, fingerprint: await fingerprintOrderInPage(order._id) })));
+  const known = new Set((Array.isArray(knownOrderFingerprints) ? knownOrderFingerprints : []).filter((fingerprint) => /^[a-f0-9]{64}$/iu.test(String(fingerprint))).map((fingerprint) => String(fingerprint).toLowerCase()));
+  const toInspect = fullScan ? completeWithFingerprints : completeWithFingerprints.filter(({ fingerprint }) => !known.has(fingerprint));
+  const details = await Promise.all(toInspect.map(({ order }) => request(`/api/user/orders/${encodeURIComponent(order._id)}`)));
   const items = new Map();
   for (const order of details) {
     if (order?.status !== 'COMPLETE') continue;
@@ -96,7 +115,13 @@ async function importFanaticalOrdersInPage() {
     }
   }
   // `token`, summaries, details, and raw leaves remain in this execution world.
-  return { schemaVersion: 1, ordersScanned: complete.length, items: [...items.values()] };
+  return {
+    schemaVersion: 1,
+    ordersScanned: toInspect.length,
+    ordersAvailable: complete.length,
+    orderFingerprints: completeWithFingerprints.map(({ fingerprint }) => fingerprint),
+    items: [...items.values()]
+  };
 }
 
 async function activeFanaticalTab() {
@@ -105,13 +130,35 @@ async function activeFanaticalTab() {
   return tab;
 }
 
-async function importPurchases() {
+async function importPurchases({ fullScan = false } = {}) {
   const tab = await activeFanaticalTab();
-  const result = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: importFanaticalOrdersInPage });
+  const stored = await chrome.storage.local.get({ [STORAGE_ITEMS]: [], [STORAGE_ORDER_FINGERPRINTS]: [] });
+  const knownOrderFingerprints = Array.isArray(stored[STORAGE_ORDER_FINGERPRINTS]) ? stored[STORAGE_ORDER_FINGERPRINTS] : [];
+  const result = await chrome.scripting.executeScript({
+    target: { tabId: tab.id }, world: 'MAIN', func: importFanaticalOrdersInPage,
+    args: [{ fullScan, knownOrderFingerprints }]
+  });
   const projected = sanitizeImportResult(result?.[0]?.result);
+  const existing = new Map((Array.isArray(stored[STORAGE_ITEMS]) ? stored[STORAGE_ITEMS] : []).filter((item) => safeId(item?.sourceItemId)).map((item) => [item.sourceItemId, item]));
+  const addedProducts = projected.items.filter((item) => !existing.has(item.sourceItemId)).length;
+  const merged = fullScan ? new Map() : existing;
+  for (const item of projected.items) merged.set(item.sourceItemId, item);
   const importedAt = new Date().toISOString();
-  const summary = { importedAt, ordersScanned: projected.ordersScanned, ownedLeafProducts: projected.items.length, historyCoverage: 'Pagination has not yet been validated on a larger account.' };
-  await chrome.storage.local.set({ [STORAGE_ITEMS]: projected.items, [STORAGE_SUMMARY]: summary });
+  const summary = {
+    importedAt,
+    scanMode: fullScan ? 'full' : 'quick',
+    ordersScanned: projected.ordersScanned,
+    ordersAvailable: projected.ordersAvailable,
+    ordersSkipped: Math.max(0, projected.ordersAvailable - projected.ordersScanned),
+    addedProducts,
+    ownedLeafProducts: merged.size,
+    historyCoverage: 'Pagination has not yet been validated on a larger account.'
+  };
+  await chrome.storage.local.set({
+    [STORAGE_ITEMS]: [...merged.values()].sort((a, b) => a.sourceItemId.localeCompare(b.sourceItemId)),
+    [STORAGE_ORDER_FINGERPRINTS]: projected.orderFingerprints,
+    [STORAGE_SUMMARY]: summary
+  });
   return summary;
 }
 
@@ -138,7 +185,7 @@ async function fetchPublicBundle(path) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'FANATICAL_IMPORT_PURCHASES') {
-    importPurchases().then((summary) => sendResponse({ ok: true, summary })).catch((error) => sendResponse({ ok: false, error: String(error?.message ?? 'Import failed.') }));
+    importPurchases({ fullScan: message.fullScan === true }).then((summary) => sendResponse({ ok: true, summary })).catch((error) => sendResponse({ ok: false, error: String(error?.message ?? 'Import failed.') }));
     return true;
   }
   if (message?.type === 'FANATICAL_GET_PUBLIC_BUNDLE') {

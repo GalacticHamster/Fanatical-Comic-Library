@@ -19,6 +19,13 @@ test('importer has no cart endpoint or diagnostic logging path', () => {
   assert.match(worker, /world: 'MAIN'/);
 });
 
+test('quick scans persist only opaque order fingerprints and full scans are explicit', () => {
+  assert.match(worker, /fanaticalScannedOrderFingerprints/);
+  assert.match(worker, /crypto\.subtle\.digest\('SHA-256'/);
+  assert.match(worker, /fullScan: message\.fullScan === true/);
+  assert.equal(worker.includes('orderIds'), false);
+});
+
 test('only observed public bundle paths may be requested from the page world', () => {
   assert.match(worker, /products-group\|pick-and-mix/);
   assert.equal(worker.includes('FANATICAL_GET_PUBLIC_BUNDLE'), true);

@@ -10,8 +10,9 @@ title-only matches for games, books/comics, and audiobooks.
 1. Open `chrome://extensions`.
 2. Enable **Developer mode**.
 3. Choose **Load unpacked** and select this project directory.
-4. Open a signed-in `www.fanatical.com` page and choose **Import Fanatical
-   purchases** from the extension popup.
+4. Open a signed-in `www.fanatical.com` page and choose **Quick scan for new
+   purchases** from the extension popup. Use **Full scan all purchases** to
+   deliberately rebuild the local library from every completed order.
 
 No browser test has yet been performed against a live page. See the manual
 checklist below before treating the extension as release-ready.
@@ -45,18 +46,23 @@ fanaticalLibraryItems: Array<{
 }>
 
 fanaticalImportSummary: {
-  importedAt, ordersScanned, ownedLeafProducts, historyCoverage
+  importedAt, scanMode, ordersScanned, ordersAvailable, ordersSkipped,
+  addedProducts, ownedLeafProducts, historyCoverage
 }
+
+fanaticalScannedOrderFingerprints: string[] // SHA-256 fingerprints only
 
 galacticLibraryExtensionId: string
 ```
 
-The export uses the same allowlisted data.
+The export uses the same allowlisted ownership data; scan fingerprints are
+local importer state and are not exported.
 
 ## Manual browser checklist
 
-- Import the supplied comic purchase while signed in; confirm its owned-leaf
-  count and no sensitive data appears in extension storage/export.
+- Run a Quick scan while signed in; confirm its owned-leaf count and no
+  sensitive data appears in extension storage/export. Run it again and confirm
+  it skips already scanned orders; use a Full scan to rebuild all orders.
 - Reload the purchased tiered comic bundle; confirm all 47 matching leaf cards
   display **Owned** and duplicate badges do not appear after navigation.
 - Open a Pick & Mix bundle; confirm all pool cards receive non-interactive
