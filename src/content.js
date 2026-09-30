@@ -71,6 +71,46 @@
     return null;
   }
 
+  function isOrderHistoryPage() {
+    return /^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?orders\/?$/iu.test(location.pathname);
+  }
+
+  function importerResult(summary, fullScan) {
+    if (fullScan) return `Full scan checked ${summary.ordersScanned} order${summary.ordersScanned === 1 ? '' : 's'} and rebuilt ${summary.ownedLeafProducts} product${summary.ownedLeafProducts === 1 ? '' : 's'}.`;
+    return `Quick scan checked ${summary.ordersScanned} new order${summary.ordersScanned === 1 ? '' : 's'}, skipped ${summary.ordersSkipped}, and added ${summary.addedProducts} product${summary.addedProducts === 1 ? '' : 's'}.`;
+  }
+
+  function ensureOrderImporter() {
+    if (document.querySelector('#fanatical-library-importer') || !document.body) return;
+    const panel = document.createElement('section');
+    panel.id = 'fanatical-library-importer';
+    panel.className = 'fanatical-library-importer';
+    const heading = document.createElement('strong'); heading.textContent = 'Fanatical Library';
+    const description = document.createElement('span'); description.textContent = 'Import completed Fanatical products from this order history into this browser.';
+    const actions = document.createElement('div'); actions.className = 'fanatical-library-import-actions';
+    const quick = document.createElement('button'); quick.type = 'button'; quick.dataset.importMode = 'new'; quick.textContent = 'Quick scan for new purchases';
+    const full = document.createElement('button'); full.type = 'button'; full.dataset.importMode = 'all'; full.textContent = 'Full scan all purchases'; full.title = 'Reprocesses every completed order and rebuilds the local Fanatical library.';
+    actions.append(quick, full);
+    const status = document.createElement('output'); status.setAttribute('aria-live', 'polite');
+    panel.append(heading, description, actions, status);
+    document.body.prepend(panel);
+    const buttons = [quick, full];
+    for (const button of buttons) button.addEventListener('click', async () => {
+      const fullScan = button.dataset.importMode === 'all';
+      if (fullScan && !confirm('Full scan every completed Fanatical purchase? This can take longer.')) return;
+      buttons.forEach((control) => { control.disabled = true; });
+      status.textContent = fullScan ? 'Scanning every completed purchase locally...' : 'Checking for new purchases locally...';
+      try {
+        const response = await chrome.runtime.sendMessage({ type: 'FANATICAL_IMPORT_PURCHASES', fullScan });
+        status.textContent = response?.ok ? importerResult(response.summary, fullScan) : (response?.error ?? 'Import failed.');
+      } catch {
+        status.textContent = 'Import failed. Refresh this signed-in Fanatical Orders page and try again.';
+      } finally {
+        buttons.forEach((control) => { control.disabled = false; });
+      }
+    });
+  }
+
   function plainProduct(raw) {
     if (!raw?._id || typeof raw?.name !== 'string') return null;
     const externalIds = {};
@@ -361,6 +401,17 @@
       state.rendering = false;
       observer?.observe(document.documentElement, { childList: true, subtree: true });
     }
+  }
+
+  if (isOrderHistoryPage()) {
+    ensureOrderImporter();
+    let importerTimer;
+    new MutationObserver(() => {
+      if (document.querySelector('#fanatical-library-importer')) return;
+      clearTimeout(importerTimer);
+      importerTimer = setTimeout(ensureOrderImporter, 100);
+    }).observe(document.documentElement, { childList: true, subtree: true });
+    return;
   }
 
   const schedule = (force = false) => {

@@ -10,9 +10,11 @@ title-only matches for games, books/comics, and audiobooks.
 1. Open `chrome://extensions`.
 2. Enable **Developer mode**.
 3. Choose **Load unpacked** and select this project directory.
-4. Open a signed-in `www.fanatical.com` page and choose **Quick scan for new
-   purchases** from the extension popup. Use **Full scan all purchases** to
-   deliberately rebuild the local library from every completed order.
+4. Open the extension popup and choose **Manage library**. In Extension
+   options, select **Open Fanatical orders importer**, then use **Quick scan
+   for new purchases** on that signed-in Orders page. Use **Full scan all
+   purchases** to deliberately rebuild the local library from every completed
+   order.
 
 No browser test has yet been performed against a live page. See the manual
 checklist below before treating the extension as release-ready.

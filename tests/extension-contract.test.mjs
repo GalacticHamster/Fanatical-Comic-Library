@@ -5,6 +5,9 @@ import test from 'node:test';
 const root = new URL('../', import.meta.url);
 const manifest = JSON.parse(fs.readFileSync(new URL('manifest.json', root), 'utf8'));
 const worker = fs.readFileSync(new URL('src/service-worker.js', root), 'utf8');
+const content = fs.readFileSync(new URL('src/content.js', root), 'utf8');
+const popup = fs.readFileSync(new URL('src/popup.js', root), 'utf8');
+const options = fs.readFileSync(new URL('src/options.js', root), 'utf8');
 
 test('manifest uses only Fanatical host access and minimal importer permissions', () => {
   assert.deepEqual(manifest.host_permissions, ['https://www.fanatical.com/*']);
@@ -24,6 +27,14 @@ test('quick scans persist only opaque order fingerprints and full scans are expl
   assert.match(worker, /crypto\.subtle\.digest\('SHA-256'/);
   assert.match(worker, /fullScan: message\.fullScan === true/);
   assert.equal(worker.includes('orderIds'), false);
+});
+
+test('library management follows the Fanatical Orders importer flow', () => {
+  assert.match(popup, /openOptionsPage/);
+  assert.match(options, /https:\/\/www\.fanatical\.com\/en\/orders/);
+  assert.match(content, /isOrderHistoryPage/);
+  assert.match(content, /Quick scan for new purchases/);
+  assert.match(content, /Full scan all purchases/);
 });
 
 test('only observed public bundle paths may be requested from the page world', () => {

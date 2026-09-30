@@ -1,13 +1,36 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fanatical Library settings</title><link rel="stylesheet" href="ui.css"></head>
-<body>
-  <main class="settings">
-    <h1>Fanatical Library settings</h1>
-    <section><h2>Local library</h2><p id="import-summary">No purchases imported yet.</p><p id="history-note">Order-history pagination has not yet been validated on a larger account.</p><button id="quick-scan" type="button">Quick scan for new purchases</button> <button id="full-scan" type="button">Full scan all purchases</button> <button id="export" type="button">Export local ownership data</button> <button id="reset" class="danger" type="button">Delete local library</button><p id="local-status" role="status"></p></section>
-    <section><h2>Optional Galactic Library</h2><p>Enter the paired Galactic Library extension ID to enable title-only matching for games, books/comics, and audiobooks. Fanatical Library remains fully usable without it.</p><label>Extension ID <input id="galactic-id" autocomplete="off" spellcheck="false"></label> <button id="save-galactic" type="button">Save</button><p id="galactic-status" role="status"></p></section>
-    <section><h2>Privacy</h2><p>Purchase metadata is stored only in this browser. The importer reads Fanatical's session token only in the Fanatical page context; neither tokens nor raw order responses are stored, exported, or sent to another extension. Quick scans retain only SHA-256 fingerprints of completed-order IDs, never the IDs themselves.</p></section>
-  </main>
-  <script src="shared.js"></script><script src="options.js"></script>
-</body>
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Fanatical Library settings</title><link rel="stylesheet" href="ui.css"></head>
+  <body>
+    <main class="settings">
+      <h1>Fanatical Library</h1>
+      <p>Your library stays in this browser. Import directly from your signed-in Fanatical order history.</p>
+      <section>
+        <h2>Import from Fanatical</h2>
+        <p>Open your Orders page and select <em>Quick scan for new purchases</em>. It checks the order list and retrieves details only for orders not already scanned locally. Use <em>Full scan all purchases</em> only when you need to rebuild the Fanatical library.</p>
+        <button id="open-orders" type="button">Open Fanatical orders importer</button>
+        <p id="last-import" role="status"></p>
+      </section>
+      <section>
+        <h2>Galactic Library link</h2>
+        <p>Optionally check a current Fanatical bundle against exact game, book/comic, and audiobook titles owned through your other connected libraries. This sends only the bundle titles being checked to your locally installed Galactic Library extension; it never transfers either full library.</p>
+        <label for="galactic-id">Galactic Library extension ID</label>
+        <input id="galactic-id" autocomplete="off" spellcheck="false">
+        <div class="actions"><button id="save-galactic" type="button">Save link</button></div>
+        <p id="galactic-status" role="status"></p>
+      </section>
+      <section>
+        <h2>Library</h2>
+        <p id="library-count">Loading...</p>
+        <p id="history-note">Order-history pagination has not yet been validated on a larger account.</p>
+        <div class="actions"><button id="export" type="button">Export backup</button><button id="reset" class="danger" type="button">Clear library</button></div>
+        <p id="local-status" role="status"></p>
+      </section>
+      <section>
+        <h2>Privacy</h2>
+        <p>Purchase metadata is stored only in this browser. The importer reads Fanatical's session token only in the Fanatical page context; neither tokens nor raw order responses are stored, exported, or sent to another extension. Quick scans retain only SHA-256 fingerprints of completed-order IDs, never the IDs themselves.</p>
+      </section>
+    </main>
+    <script src="shared.js"></script><script src="options.js"></script>
+  </body>
 </html>
