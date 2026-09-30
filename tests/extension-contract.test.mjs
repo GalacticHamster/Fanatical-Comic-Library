@@ -37,6 +37,13 @@ test('library management follows the Fanatical Orders importer flow', () => {
   assert.match(content, /Full scan all purchases/);
 });
 
+test('bundle summary distinguishes partial and possible matches and recommends a tier', () => {
+  assert.match(content, /counts\.partial/);
+  assert.match(content, /only partly owned/);
+  assert.match(content, /Lowest tier containing all confirmed-new items/);
+  assert.match(content, /fanaticalShowNewItemsOnly/);
+});
+
 test('only observed public bundle paths may be requested from the page world', () => {
   assert.match(worker, /products-group\|pick-and-mix/);
   assert.equal(worker.includes('FANATICAL_GET_PUBLIC_BUNDLE'), true);

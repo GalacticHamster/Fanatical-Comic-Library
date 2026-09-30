@@ -3,7 +3,7 @@
   const F = globalThis.FanaticalLibrary;
   if (!F) return;
   const titleCollator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
-  const state = { url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false, pickMixReflow: [] };
+  const state = { url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false, showNewOnlyLoaded: false, pickMixReflow: [] };
   let observer = null;
 
   function alphabetize(products) {
@@ -322,6 +322,19 @@
     panel(failed).textContent = message;
   }
 
+  function appendNewOnlyFilter(summary) {
+    const label = document.createElement('label'); label.className = 'fanatical-library-bundle-filter';
+    const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = state.showNewOnly;
+    checkbox.addEventListener('change', () => {
+      state.showNewOnly = checkbox.checked;
+      chrome.storage.local.set({ fanaticalShowNewItemsOnly: state.showNewOnly }).catch(() => {});
+      applyNewOnlyFilter();
+    });
+    label.append(checkbox, ' Show new items only');
+    label.title = 'Hides confirmed-owned items. Possible and partially owned items stay visible for review.';
+    summary.append(label);
+  }
+
   function downloadTierList(parsed, matches) {
     const stateFor = (product) => matches[parsed.products.findIndex((candidate) => candidate.sourceItemId === product.sourceItemId)]?.state ?? 'new';
     const lines = [`Fanatical Library — ${parsed.title}`, ''];
@@ -329,56 +342,122 @@
       const price = Number(group.price?.USD); lines.push(`${Number.isFinite(price) ? `$${(price / 100).toFixed(2)}` : `Tier ${index + 1}`} tier`);
       alphabetize(group.products).forEach((product) => lines.push(`[${stateFor(product)}] ${product.title}`)); lines.push('');
     });
-    else alphabetize(parsed.products).forEach((product) => lines.push(`[${stateFor(product)}] ${product.title}`));
+    else {
+      lines.push('Pick & Mix tiers:');
+      for (const tier of [...parsed.tiers].sort((left, right) => Number(left.price?.USD ?? Number.MAX_SAFE_INTEGER) - Number(right.price?.USD ?? Number.MAX_SAFE_INTEGER))) {
+        const price = Number(tier.price?.USD);
+        lines.push(`${Number.isFinite(price) ? `$${(price / 100).toFixed(2)}` : 'Unknown price'} tier: choose ${tier.quantity} item${tier.quantity === 1 ? '' : 's'}`);
+      }
+      lines.push('', 'Pool:');
+      alphabetize(parsed.products).forEach((product) => lines.push(`[${stateFor(product)}] ${product.title}`));
+    }
     const blob = new Blob([lines.join('\n')], { type: 'text/plain' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `${parsed.title.replace(/[^a-z0-9]+/giu, '-').replace(/^-|-$/gu, '').toLowerCase() || 'fanatical-bundle'}-tier-list.txt`; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 0);
   }
 
   function renderSummary(parsed, matches, localItems) {
-    const counts = { owned: 0, elsewhere: 0, possible: 0, new: 0 };
-    for (const match of matches) { if (match.state === 'owned') counts.owned++; else if (match.state === 'owned-elsewhere') counts.elsewhere++; else if (match.state === 'possible' || match.state === 'partial') counts.possible++; else counts.new++; }
+    const counts = { owned: 0, elsewhere: 0, partial: 0, possible: 0, new: 0 };
+    for (const match of matches) {
+      if (match.state === 'owned') counts.owned++;
+      else if (match.state === 'owned-elsewhere') counts.elsewhere++;
+      else if (match.state === 'partial') counts.partial++;
+      else if (match.state === 'possible') counts.possible++;
+      else counts.new++;
+    }
     const detail = parsed.kind === 'pick-mix' ? ` Available unowned: ${matches.filter((match, i) => match.state === 'new' && parsed.products[i].availability.regionAvailable && !parsed.products[i].availability.soldOut).length}. Selected (page UI): ${selectedCount(parsed.products)}.` : '';
     const rates = parsed.kind === 'pick-mix' ? parsed.tiers.map((tier) => Number.isFinite(tier.price?.USD) ? `${tier.quantity}: $${(tier.price.USD / 100 / tier.quantity).toFixed(2)}/item` : '').filter(Boolean).join(' · ') : '';
     const element = panel();
     const heading = document.createElement('strong'); heading.textContent = `Your Fanatical items: ${counts.owned} owned${counts.elsewhere ? ` · ${counts.elsewhere} elsewhere` : ''} · ${counts.new} new${counts.possible ? ` · ${counts.possible} possible` : ''}`; element.append(heading);
+    heading.textContent = `Your Fanatical items: ${counts.owned} owned${counts.elsewhere ? ` \u00b7 ${counts.elsewhere} elsewhere` : ''} \u00b7 ${counts.new} new${counts.partial ? ` \u00b7 ${counts.partial} partial` : ''}${counts.possible ? ` \u00b7 ${counts.possible} possible` : ''}`;
+    const purchase = (Array.isArray(localItems) ? localItems : []).find((item) => item?.bundle?.sourceItemId === parsed.sourceItemId);
+    if (purchase?.purchaseDate) {
+      const notice = document.createElement('p'); notice.className = 'fanatical-library-purchased';
+      const date = new Date(purchase.purchaseDate);
+      notice.textContent = `Already purchased: ${Number.isNaN(date.valueOf()) ? purchase.purchaseDate : date.toLocaleDateString()}`;
+      element.append(notice);
+    }
     const legend = document.createElement('div'); legend.className = 'fanatical-library-legend';
     for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partial'], ['possible', 'Possible']]) { const chip = document.createElement('span'); chip.className = `fanatical-library-legend-${state}`; chip.textContent = label; legend.append(chip); }
     element.append(legend);
     if (state.galacticEnabled) { const galactic = document.createElement('p'); galactic.className = 'fanatical-library-galactic-status'; galactic.textContent = `Galactic Library: ${state.galacticStatus}`; galactic.title = 'Galactic Library receives only current Fanatical titles and returns narrow ownership matches from connected providers.'; element.append(galactic); }
-    const purchase = (Array.isArray(localItems) ? localItems : []).find((item) => item?.bundle?.sourceItemId === parsed.sourceItemId);
-    if (purchase?.purchaseDate) { const notice = document.createElement('p'); notice.className = 'fanatical-library-purchased'; const date = new Date(purchase.purchaseDate); notice.textContent = `Already purchased: ${Number.isNaN(date.valueOf()) ? purchase.purchaseDate : date.toLocaleDateString()}`; element.append(notice); }
+    appendNewOnlyFilter(element);
+    if (counts.partial) {
+      const partial = document.createElement('p'); partial.className = 'fanatical-library-match-note';
+      partial.textContent = `${counts.partial} grouped item${counts.partial === 1 ? ' is' : 's are'} only partly owned - not counted as owned or new.`;
+      element.append(partial);
+    }
+    if (counts.possible) {
+      const possible = document.createElement('p'); possible.className = 'fanatical-library-match-note';
+      possible.textContent = `${counts.possible} possible match${counts.possible === 1 ? '' : 'es'} - not counted as owned.`;
+      element.append(possible);
+    }
+    let tierDownload = null;
+    let recommendedTierPrice = null;
     if (parsed.kind === 'standard' && parsed.groups.length) {
       const byId = new Map(parsed.products.map((product, index) => [product.sourceItemId, matches[index]]));
       const list = document.createElement('ul'); list.className = 'fanatical-library-tier-list';
-      let cumulativeTotal = 0; let cumulativeOwned = 0; let cumulativeElsewhere = 0; let cumulativePossible = 0;
-      parsed.groups.forEach((group, index) => {
-        const groupCounts = { owned: 0, elsewhere: 0, possible: 0, new: 0 };
-        for (const product of group.products) { const match = byId.get(product.sourceItemId); if (match?.state === 'owned') groupCounts.owned++; else if (match?.state === 'owned-elsewhere') groupCounts.elsewhere++; else if (match?.state === 'possible' || match?.state === 'partial') groupCounts.possible++; else groupCounts.new++; }
-        cumulativeTotal += group.products.length; cumulativeOwned += groupCounts.owned; cumulativeElsewhere += groupCounts.elsewhere; cumulativePossible += groupCounts.possible;
-        const confirmedNew = cumulativeTotal - cumulativeOwned - cumulativeElsewhere - cumulativePossible;
+      let cumulativeTotal = 0; let cumulativeOwned = 0; let cumulativeElsewhere = 0; let cumulativePartial = 0; let cumulativePossible = 0;
+      const orderedGroups = [...parsed.groups].sort((left, right) => Number(left.price?.USD ?? Number.MAX_SAFE_INTEGER) - Number(right.price?.USD ?? Number.MAX_SAFE_INTEGER));
+      orderedGroups.forEach((group, index) => {
+        const groupCounts = { owned: 0, elsewhere: 0, partial: 0, possible: 0, new: 0 };
+        for (const product of group.products) {
+          const match = byId.get(product.sourceItemId);
+          if (match?.state === 'owned') groupCounts.owned++;
+          else if (match?.state === 'owned-elsewhere') groupCounts.elsewhere++;
+          else if (match?.state === 'partial') groupCounts.partial++;
+          else if (match?.state === 'possible') groupCounts.possible++;
+          else groupCounts.new++;
+        }
+        cumulativeTotal += group.products.length; cumulativeOwned += groupCounts.owned; cumulativeElsewhere += groupCounts.elsewhere; cumulativePartial += groupCounts.partial; cumulativePossible += groupCounts.possible;
+        const confirmedNew = cumulativeTotal - cumulativeOwned - cumulativeElsewhere - cumulativePartial - cumulativePossible;
         const price = Number(group.price?.USD); const priceText = Number.isFinite(price) ? `$${(price / 100).toFixed(2)} tier` : `Tier ${index + 1}`; const perNew = confirmedNew && Number.isFinite(price) ? ` · $${(price / 100 / confirmedNew).toFixed(2)} per confirmed-new item` : '';
+        if (confirmedNew && Number.isFinite(price)) recommendedTierPrice = price;
         const line = document.createElement('li'); line.textContent = `${priceText}: ${confirmedNew} confirmed new / ${cumulativeTotal} items${perNew}`; list.append(line);
       });
       element.append(list);
-      const download = document.createElement('button'); download.type = 'button'; download.className = 'fanatical-library-download'; download.textContent = 'Download complete tier list'; download.addEventListener('click', () => downloadTierList(parsed, matches)); element.append(download);
+      if (recommendedTierPrice !== null) {
+        const recommendation = document.createElement('p'); recommendation.className = 'fanatical-library-buy-recommendation';
+        recommendation.textContent = `Lowest tier containing all confirmed-new items: $${(recommendedTierPrice / 100).toFixed(2)}`;
+        recommendation.title = 'Possible and partially owned items are excluded from this recommendation.';
+        element.append(recommendation);
+      }
+      tierDownload = document.createElement('button'); tierDownload.type = 'button'; tierDownload.className = 'fanatical-library-download'; tierDownload.textContent = 'Download complete tier list'; tierDownload.addEventListener('click', () => downloadTierList(parsed, matches));
+    }
+    if (parsed.kind === 'pick-mix' && parsed.tiers.length) {
+      const availableProducts = parsed.products.filter((product) => product.availability.regionAvailable && !product.availability.soldOut);
+      const availableNew = availableProducts.filter((product) => matches[parsed.products.findIndex((candidate) => candidate.sourceItemId === product.sourceItemId)]?.state === 'new').length;
+      const tierList = document.createElement('ul'); tierList.className = 'fanatical-library-tier-list';
+      for (const tier of [...parsed.tiers].sort((left, right) => Number(left.price?.USD ?? Number.MAX_SAFE_INTEGER) - Number(right.price?.USD ?? Number.MAX_SAFE_INTEGER))) {
+        const price = Number(tier.price?.USD);
+        const priceText = Number.isFinite(price) ? `$${(price / 100).toFixed(2)} tier` : `${tier.quantity}-item tier`;
+        const perItem = Number.isFinite(price) && tier.quantity ? ` · $${(price / 100 / tier.quantity).toFixed(2)}/item` : '';
+        const row = document.createElement('li');
+        row.textContent = `${priceText}: choose ${tier.quantity} item${tier.quantity === 1 ? '' : 's'} from ${availableProducts.length} available (${availableNew} confirmed new)${perItem}`;
+        tierList.append(row);
+      }
+      element.append(tierList);
+      tierDownload = document.createElement('button'); tierDownload.type = 'button'; tierDownload.className = 'fanatical-library-download'; tierDownload.textContent = 'Download complete tier list'; tierDownload.addEventListener('click', () => downloadTierList(parsed, matches));
     }
     if (detail || rates) { const extra = document.createElement('div'); extra.textContent = `${detail}${rates ? ` USD: ${rates}.` : ''}`; element.append(extra); }
-    const showNew = document.createElement('label'); showNew.className = 'fanatical-library-bundle-filter'; const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = state.showNewOnly; checkbox.addEventListener('change', () => { state.showNewOnly = checkbox.checked; applyNewOnlyFilter(); }); showNew.append(checkbox, ' Show new items only'); element.append(showNew);
     for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partially owned'], ['possible', 'Possible matches']]) {
       const entries = parsed.products.filter((_product, index) => (state === 'owned-elsewhere' ? matches[index].state === 'owned-elsewhere' : matches[index].state === state));
       if (!entries.length) continue;
       const detailList = document.createElement('details'); detailList.className = 'fanatical-library-title-list'; const title = document.createElement('summary'); title.textContent = `${label} (${entries.length})`; detailList.append(title); const list = document.createElement('ol'); alphabetize(entries).forEach((product) => { const row = document.createElement('li'); row.textContent = product.title; list.append(row); }); detailList.append(list); element.append(detailList);
     }
+    if (tierDownload) element.append(tierDownload);
   }
 
   async function render() {
     if (state.rendering) return; const current = route(); if (!current) return;
-    if (state.url !== location.href) state.showNewOnly = false;
     const hasStableSummary = state.url === location.href && Boolean(document.querySelector('[data-fanatical-library-summary]'));
     state.rendering = true;
     observer?.disconnect();
     if (!hasStableSummary) showPanel('Fanatical Library: loading ownership status…');
     try {
-      const [parsed, stored] = await Promise.all([loadPublicBundle(current), chrome.storage.local.get({ fanaticalLibraryItems: [], galacticLibraryExtensionId: '' })]);
+      const [parsed, stored] = await Promise.all([loadPublicBundle(current), chrome.storage.local.get({ fanaticalLibraryItems: [], galacticLibraryExtensionId: '', fanaticalShowNewItemsOnly: false })]);
+      if (!state.showNewOnlyLoaded) {
+        state.showNewOnly = Boolean(stored.fanaticalShowNewItemsOnly);
+        state.showNewOnlyLoaded = true;
+      }
       await queryGalactic(parsed.products.filter((product) => F.classify(product, stored.fanaticalLibraryItems).state === 'new'), stored.galacticLibraryExtensionId);
       const matches = parsed.products.map((product) => status(product, stored.fanaticalLibraryItems));
       parsed.products.forEach((product, index) => {
