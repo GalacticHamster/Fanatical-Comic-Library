@@ -328,8 +328,9 @@
   }
 
   function importerResult(summary, fullScan) {
-    if (fullScan) return `Full scan checked ${summary.ordersScanned} order${summary.ordersScanned === 1 ? '' : 's'} and rebuilt ${summary.ownedLeafProducts} product${summary.ownedLeafProducts === 1 ? '' : 's'}.`;
-    return `Quick scan checked ${summary.ordersScanned} new order${summary.ordersScanned === 1 ? '' : 's'}, skipped ${summary.ordersSkipped}, and added ${summary.addedProducts} product${summary.addedProducts === 1 ? '' : 's'}.`;
+    const result = fullScan ? `Full scan checked ${summary.ordersScanned} order${summary.ordersScanned === 1 ? '' : 's'} and rebuilt ${summary.ownedLeafProducts} product${summary.ownedLeafProducts === 1 ? '' : 's'}.`
+      : `Quick scan checked ${summary.ordersScanned} new order${summary.ordersScanned === 1 ? '' : 's'}, skipped ${summary.ordersSkipped}, and added ${summary.addedProducts} product${summary.addedProducts === 1 ? '' : 's'}.`;
+    return `${result} ${summary.historyCoverage ?? ''}`.trim();
   }
 
   function ensureOrderImporter() {

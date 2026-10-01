@@ -51,15 +51,36 @@ test('invalid or cancelled backup import never changes storage', async () => {
 });
 
 test('confirmed restore updates the preview and resets scan history while preserving settings', async () => {
-  const ui = await optionsHarness({ fanaticalLibraryItems: [item('Old')], fanaticalImportSummary: { scanMode: 'quick' }, fanaticalScannedOrderFingerprints: ['a'.repeat(64)], galacticLibraryExtensionId: 'b'.repeat(32), fanaticalShowDiagnostics: true });
+  const ui = await optionsHarness({ fanaticalLibraryItems: [item('Old')], fanaticalImportSummary: { scanMode: 'quick' }, fanaticalScannedOrderFingerprints: ['a'.repeat(64)], fanaticalLastScanAttempt: { status: 'incomplete' }, galacticLibraryExtensionId: 'b'.repeat(32), fanaticalShowDiagnostics: true });
   await ui.upload({ schemaVersion: 1, items: [item('Restored')], orderFingerprints: ['b'.repeat(64)], summary: { importedAt: 'not trusted' } });
   assert.equal(ui.writes.length, 1);
   assert.equal(ui.stored.fanaticalLibraryItems[0].title, 'Restored');
   assert.deepEqual(ui.stored.fanaticalScannedOrderFingerprints, []);
   assert.equal(ui.stored.fanaticalImportSummary, null);
+  assert.equal(ui.stored.fanaticalLastScanAttempt, null);
   assert.equal(ui.stored.galacticLibraryExtensionId, 'b'.repeat(32));
   assert.equal(ui.stored.fanaticalShowDiagnostics, true);
   assert.equal(ui.get('#library-preview').children[0].textContent, 'Restored — Test bundle');
+});
+
+test('options disclose incomplete coverage while retaining the last successful scan and library preview', async () => {
+  const ui = await optionsHarness({ fanaticalLibraryItems: [item('Kept')], fanaticalLastScanAttempt: { status: 'incomplete' },
+    fanaticalImportSummary: { scanMode: 'full', addedProducts: 1, ordersScanned: 1, importedAt: '2026-10-01T12:00:00Z', historyCoverage: 'Validated 1 listed order.' } });
+  assert.match(ui.get('#history-note').textContent, /Last scan incomplete/);
+  assert.match(ui.get('#history-note').textContent, /Validated 1 listed order/);
+  assert.match(ui.get('#last-import').textContent, /Last full scan/);
+  assert.match(ui.get('#library-preview').children[0].textContent, /Kept/);
+  await ui.click('#reset');
+  assert.equal('fanaticalLastScanAttempt' in ui.stored, false);
+  assert.equal(ui.get('#history-note').textContent.includes('incomplete'), false);
+});
+
+test('scan request diagnostics are opt-in', async () => {
+  const summary = { historyCoverage: 'Validated 25 pages.', coverage: { retries: 2, concurrency: 3 } };
+  const plain = await optionsHarness({ fanaticalImportSummary: summary });
+  assert.equal(plain.get('#history-note').textContent.includes('retries'), false);
+  const diagnostic = await optionsHarness({ fanaticalImportSummary: summary, fanaticalShowDiagnostics: true });
+  assert.match(diagnostic.get('#history-note').textContent, /2 retries; at most 3 concurrent/);
 });
 
 test('Galactic test validates IDs and API compatibility without saving or transferring library data', async () => {

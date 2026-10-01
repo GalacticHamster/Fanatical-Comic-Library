@@ -24,10 +24,16 @@ globalThis.addEventListener('error', event => {fetch('/result?route='+encodeURIC
 const listeners = [];
 globalThis.values = { fanaticalLibraryItems: [{source:'fanatical',sourceItemId:'product-123450',title:'Comic #10',mediaType:'book',bundle:{sourceItemId:'bundle-123456',title:'Test comics',slug:'test-comics'},purchaseDate:null}],galacticLibraryExtensionId:'b'.repeat(32),fanaticalScannedOrderFingerprints:['a'.repeat(64)] };
 if(location.pathname.includes('test-editions')) values.fanaticalLibraryItems=[${JSON.stringify(editionBase)}];
+if(location.pathname==='/options') values.fanaticalLastScanAttempt={status:'incomplete'};
+globalThis.scanFailure = false;
 globalThis.requests = [];
 globalThis.chrome = {runtime:{id:'a'.repeat(32),sendMessage:async(first,second)=>{
   const message=second||first; requests.push(message);
   if(message.type==='PING')return {ok:true,apiVersion:1,appVersion:'0.1.0'};
+  if(message.type==='FANATICAL_IMPORT_PURCHASES'){
+    await new Promise(resolve=>setTimeout(resolve,100));
+    return scanFailure?{ok:false,error:'Scan incomplete; previous purchases and successful scan history were kept.'}:{ok:true,summary:{ordersScanned:1,ordersSkipped:0,addedProducts:1,ownedLeafProducts:1,historyCoverage:'No pagination metadata: silent server truncation cannot be independently ruled out.'}};
+  }
   if(message.type==='MATCH_ITEMS')return {ok:true,apiVersion:1,results:message.items.map(item=>({requestId:item.requestId,matches:item.title==='External comic'?[{provider:'humble',ownership:'owned'}]:[]}))};
   if(message.type==='FANATICAL_GET_PUBLIC_BUNDLE')return {ok:true,bundle:message.path.includes('test-editions')?${JSON.stringify(editionBundle)}:message.path.includes('pick-and-mix')?${JSON.stringify({ ...bundle, products, tiers: [{ quantity: 2, price: { USD: 100 } }] })}:${JSON.stringify(bundle)}};
 }},storage:{local:{get:async defaults=>({...defaults,...values}),set:async changes=>{Object.assign(values,changes); const events={};for(const key in changes)events[key]={newValue:changes[key]};listeners.forEach(listener=>listener(events,'local'));},remove:async key=>{delete values[key];listeners.forEach(listener=>listener({[key]:{newValue:undefined}},'local'));}},onChanged:{addListener:listener=>listeners.push(listener)}},tabs:{create(){}}};
@@ -79,6 +85,7 @@ try {
   await wait();
   const $=selector=>document.querySelector(selector);
   assert($('#library-preview li').textContent.includes('Comic #10'),'Options preview missing');
+  assert($('#history-note').textContent.includes('Last scan incomplete'),'Incomplete coverage warning missing');
   assert($('#fanatical-extension-id').textContent==='a'.repeat(32),'Own extension ID missing');
   $('#test-galactic').click();await wait();
   assert($('#galactic-status').textContent.includes('Connected'),'Galactic PING failed');
@@ -91,6 +98,7 @@ try {
   confirmAnswer=true;backup.items[0].title='Restored comic';await upload(JSON.stringify(backup));
   assert(values.fanaticalLibraryItems[0].title==='Restored comic','Backup did not restore: '+$('#import-status').textContent);
   assert(values.fanaticalScannedOrderFingerprints.length===0&&values.fanaticalImportSummary===null,'Backup retained scan authority');
+  assert(values.fanaticalLastScanAttempt===null&&!$('#history-note').textContent.includes('incomplete'),'Restore retained stale failed-scan warning');
   assert($('#library-preview li').textContent.includes('Restored comic'),'Preview did not refresh');
   assert(values.fanaticalShowDiagnostics&&values.galacticLibraryExtensionId,'Restore removed settings');
   $('#remove-galactic').click();await wait();assert(!values.galacticLibraryExtensionId&&!$('#galactic-id').value,'Galactic removal failed');
@@ -132,6 +140,25 @@ try {
   finish({ok:true,scenario:'edition/package identity, component coverage and visible review details',route:location.pathname});
 }catch(error){finish({ok:false,error:error.message})}
 `;
+const orderChecks = `${common}
+try {
+  await wait();
+  const panel=document.querySelector('#fanatical-library-importer');
+  assert(panel,'Orders importer missing');
+  const quick=panel.querySelector('[data-import-mode="new"]');const full=panel.querySelector('[data-import-mode="all"]');const status=panel.querySelector('output');
+  quick.click();await new Promise(resolve=>setTimeout(resolve,20));
+  assert(quick.disabled&&full.disabled,'Scan controls were not disabled while fetching');
+  await wait();assert(status.textContent.includes('Quick scan checked 1 new order'),'Quick scan result missing');
+  assert(status.textContent.includes('silent server truncation'),'Unknown coverage was not exposed');
+  assert(!quick.disabled&&!full.disabled,'Scan controls did not recover');
+  scanFailure=true;full.click();await wait();
+  assert(status.textContent.includes('Scan incomplete')&&status.textContent.includes('previous purchases'),'Failed coverage warning missing');
+  assert(!quick.disabled&&!full.disabled,'Failed scan left controls disabled');
+  scanFailure=false;full.click();await wait();
+  assert(status.textContent.includes('Full scan checked 1 order'),'Successful rescan did not replace error');
+  finish({ok:true,scenario:'Orders importer coverage, failed scan and control recovery'});
+}catch(error){finish({ok:false,error:error.message})}
+`;
 const cards = (kind, items = products) => items.map(product => `<div class="three-column-row"><article class="${kind}"><div class="cover-container"><img alt="${product.name}"><h2 class="card-product-name">${product.name}</h2></div></article></div>`).join('');
 const catalogue = [2, 10, null].map((days, index) => `<li class="HitCardContainer"><article class="HitCard"><a href="https://www.fanatical.com/en/bundle/test-${index}"><img alt="Test ${index}"><h2>Test ${index}</h2></a>${days === null ? '' : `<div class="CountdownTimer__clock">${days} Days Left</div>`}</article></li>`).join('');
 const pendingResults = new Map();
@@ -148,6 +175,7 @@ const server = http.createServer((request, response) => {
   if (url === '/bundle-check.js') return send('text/javascript', bundleChecks);
   if (url === '/catalogue-check.js') return send('text/javascript', catalogueChecks);
   if (url === '/edition-check.js') return send('text/javascript', editionChecks);
+  if (url === '/order-check.js') return send('text/javascript', orderChecks);
   if (url.startsWith('/src/') && /^\/src\/[a-z-]+\.(?:js|mjs|css)$/u.test(url)) {
     return send(url.endsWith('.css') ? 'text/css' : 'text/javascript', fs.readFileSync(path.join(root, url.slice(1)), 'utf8'));
   }
@@ -155,6 +183,7 @@ const server = http.createServer((request, response) => {
     const html = fs.readFileSync(path.join(root, 'src/options.html'), 'utf8').replace('<head>', '<head><base href="/src/">').replace('<script src="shared.js">', '<script src="/mock.js"></script><script src="shared.js">').replace('</body>', '<script type="module" src="/options-check.js"></script></body>');
     return send('text/html', html);
   }
+  if (url === '/en/orders') return send('text/html', '<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"></head><body><main>Mock orders</main><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/content.js"></script><script type="module" src="/order-check.js"></script></body></html>');
   if (url === '/en/bundle/test-comics' || url === '/en/bundle/books' || url === '/en/pick-and-mix/test-mix' || url.endsWith('/test-editions')) {
     const isCatalogue = url.endsWith('/books');
     const isEdition = url.endsWith('/test-editions');
@@ -164,7 +193,7 @@ const server = http.createServer((request, response) => {
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
-  for (const [index, route] of ['/options', '/en/bundle/test-comics', '/en/pick-and-mix/test-mix', '/en/bundle/books', '/en/bundle/test-editions', '/en/pick-and-mix/test-editions'].entries()) {
+  for (const [index, route] of ['/options', '/en/bundle/test-comics', '/en/pick-and-mix/test-mix', '/en/bundle/books', '/en/bundle/test-editions', '/en/pick-and-mix/test-editions', '/en/orders'].entries()) {
     const result = await new Promise((resolve, reject) => {
       const child = spawn(chromePath, ['--headless', '--disable-gpu', '--no-first-run', '--no-default-browser-check', `--user-data-dir=${path.join(profileRoot, String(index))}`, `http://127.0.0.1:${server.address().port}${route}`], { windowsHide: true });
       child.stdout.resume(); child.stderr.resume();

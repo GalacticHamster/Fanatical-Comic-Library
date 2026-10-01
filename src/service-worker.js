@@ -45,31 +45,157 @@ async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerp
   try { token = String(JSON.parse(localStorage.getItem('bsauth') || '{}')?.token || ''); } catch { /* no signed-in token */ }
   if (!token) throw new Error('Sign in to Fanatical before importing purchases.');
   const unreadable = () => new Error('Fanatical returned unreadable or incomplete order data. Your library and scan history were not changed.');
+  const incomplete = (reason) => new Error(`Fanatical scan incomplete; order-history coverage could not be confirmed: ${reason} Your library and scan history were not changed.`);
+  const scanController = new AbortController();
+  const concurrency = 3; const maxAttempts = 3; const maxPages = 1000; const maxOrders = 100000;
+  let retries = 0; let cooldownUntil = 0;
+  const pause = (ms) => new Promise((resolve, reject) => {
+    if (scanController.signal.aborted) { reject(incomplete('Scan stopped after a failed request.')); return; }
+    const abort = () => { clearTimeout(timer); reject(incomplete('Scan stopped after a failed request.')); };
+    const timer = setTimeout(() => { scanController.signal.removeEventListener('abort', abort); resolve(); }, ms);
+    scanController.signal.addEventListener('abort', abort, { once: true });
+  });
+  const retryDelay = (header, attempt) => {
+    const backoff = 500 * (2 ** attempt) + Math.floor(Math.random() * 250);
+    if (!header) return backoff;
+    const delay = /^\d+$/u.test(header) ? Number(header) * 1000 : Date.parse(header) - Date.now();
+    // Do not retry earlier than Retry-After, or keep the page busy indefinitely.
+    if (delay > 30000) throw incomplete('Fanatical requested a longer retry delay. Please try scanning again later.');
+    if (!Number.isFinite(delay)) return backoff;
+    return Math.max(backoff, delay);
+  };
   const request = async (path) => {
-    const response = await fetch(path, { method: 'GET', credentials: 'same-origin', cache: 'no-store', headers: { accept: 'application/json', authorization: token } });
-    if (!response.ok) throw new Error(response.status === 401 ? 'Fanatical session expired. Sign in and try again.' : 'Fanatical order history is unavailable right now.');
-    if (response.status !== 200) throw unreadable();
-    let data;
-    try { data = await response.json(); } catch { throw unreadable(); }
-    if (path === '/api/user/orders') {
-      // Only the observed, unpaginated array contract is supported. Never
-      // rebuild from a first page or from an API/error envelope.
-      if (!Array.isArray(data)) throw unreadable();
-      const link = response.headers?.get('link') || '';
-      for (const relation of link.matchAll(/\brel\s*=\s*(?:"([^"]*)"|'([^']*)'|([^;\s,]+))/giu)) {
-        if ((relation[1] ?? relation[2] ?? relation[3]).toLowerCase().split(/\s+/u).includes('next')) throw unreadable();
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      while (cooldownUntil > Date.now()) await pause(cooldownUntil - Date.now());
+      if (scanController.signal.aborted) throw incomplete('Scan stopped after a failed request.');
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      scanController.signal.addEventListener('abort', abort, { once: true });
+      const timer = setTimeout(() => controller.abort(), 20000);
+      let response; let transportFailed = false;
+      try {
+        try {
+          response = await fetch(path, { method: 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal, headers: { accept: 'application/json', authorization: token } });
+        } catch { transportFailed = true; }
+        if (scanController.signal.aborted) throw incomplete('Scan stopped after a failed request.');
+        if (response?.status === 200) {
+          let data;
+          try { data = await response.json(); } catch (error) {
+            if (!controller.signal.aborted && error?.name !== 'TypeError') throw unreadable();
+            transportFailed = true;
+          }
+          if (!transportFailed) return { data, headers: response.headers };
+        }
+        // Do not leave retry/error response streams downloading in the background.
+        try { await response?.body?.cancel(); } catch { /* No ownership data is read from error bodies. */ }
+        if (!transportFailed && ![408, 429, 500, 502, 503, 504].includes(response?.status)) {
+          if (response?.status === 401 || response?.status === 403) throw incomplete('Fanatical session expired or access was denied. Sign in and try again.');
+          throw unreadable();
+        }
+      } finally {
+        clearTimeout(timer); scanController.signal.removeEventListener('abort', abort);
       }
-      const total = response.headers?.get('x-total-count');
-      if (total !== null && total !== undefined && (!/^\d+$/u.test(total) || Number(total) !== data.length)) throw unreadable();
-      const range = response.headers?.get('content-range');
-      if (range && !(data.length === 0 && /^(?:items|orders)\s+\*\/0$/iu.test(range))) {
-        const match = /^(?:items|orders)\s+0-(\d+)\/(\d+)$/iu.exec(range);
-        if (!match || Number(match[1]) + 1 !== data.length || Number(match[2]) !== data.length) throw unreadable();
+      if (attempt === maxAttempts - 1) throw incomplete('An order request failed after three attempts. Please try again later.');
+      const delay = retryDelay(response?.headers?.get('retry-after'), attempt);
+      retries++;
+      if ([429, 503].includes(response?.status)) cooldownUntil = Math.max(cooldownUntil, Date.now() + delay);
+      await pause(delay);
+    }
+    throw incomplete('An order request did not finish.');
+  };
+  const pagePath = (target, current) => {
+    let url;
+    try { url = new URL(target, `https://www.fanatical.com${current}`); } catch { throw incomplete('A pagination link was unreadable.'); }
+    if (url.origin !== 'https://www.fanatical.com' || url.pathname !== '/api/user/orders' || url.username || url.password || url.hash) throw incomplete('An unsupported pagination link was returned.');
+    url.searchParams.sort();
+    return url.pathname + url.search;
+  };
+  // Split Link entries/parameters without splitting commas in quoted dates or
+  // semicolons inside an angle-bracketed URL. Reject ambiguous header syntax.
+  const splitHeader = (value, separator) => {
+    const parts = []; let start = 0; let quoted = false; let angle = false; let escaped = false;
+    for (let i = 0; i < value.length; i++) {
+      const char = value[i];
+      if (escaped) { escaped = false; continue; }
+      if (quoted && char === '\\') { escaped = true; continue; }
+      if (!angle && char === '"') quoted = !quoted;
+      if (!quoted && char === '<') { if (angle) throw unreadable(); angle = true; }
+      if (!quoted && char === '>') { if (!angle) throw unreadable(); angle = false; }
+      if (!quoted && !angle && char === separator) { parts.push(value.slice(start, i).trim()); start = i + 1; }
+    }
+    if (quoted || angle || escaped) throw unreadable();
+    parts.push(value.slice(start).trim()); return parts;
+  };
+  const paginationLinks = (header, current) => {
+    const links = {};
+    if (!header) return links;
+    for (const entry of splitHeader(header, ',')) {
+      const match = /^<([^<>]+)>(.*)$/u.exec(entry);
+      if (!match) throw unreadable();
+      const parameters = splitHeader(match[2], ';');
+      if (parameters.shift() !== '') throw unreadable();
+      let relations = null;
+      for (const parameter of parameters) {
+        const param = /^([a-z0-9_-]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^\s";]+))$/iu.exec(parameter);
+        if (!param || param[1].toLowerCase() === 'anchor') throw unreadable();
+        if (param[1].toLowerCase() === 'rel') {
+          if (relations !== null) throw unreadable();
+          relations = (param[2] ?? param[3]).toLowerCase().split(/\s+/u);
+        }
+      }
+      if (!relations) throw unreadable();
+      for (const relation of relations.filter((rel) => ['next', 'last'].includes(rel))) {
+        if (links[relation]) throw incomplete('Pagination returned ambiguous next/last links.');
+        links[relation] = pagePath(match[1], current);
       }
     }
-    return data;
+    return links;
   };
-  const summaries = await request('/api/user/orders');
+  const summaries = []; const visitedPages = new Set(); const pageOrderIds = new Set();
+  let path = '/api/user/orders'; let expectedTotal = null; let ranged = false; let linked = false;
+  const acceptTotal = (value) => {
+    if (!Number.isSafeInteger(value) || value < 0 || value > maxOrders || (expectedTotal !== null && value !== expectedTotal)) throw incomplete('Pagination totals changed or were unreadable.');
+    expectedTotal = value;
+  };
+  while (path) {
+    if (visitedPages.has(path)) throw incomplete('Pagination repeated a page.');
+    if (visitedPages.size >= maxPages) throw incomplete('The 1,000-page safety limit was reached.');
+    visitedPages.add(path);
+    const { data, headers } = await request(path);
+    // Envelopes/query conventions are not guessed from a fabricated contract.
+    if (!Array.isArray(data)) throw unreadable();
+    const total = headers?.get('x-total-count');
+    if (total !== null && total !== undefined) {
+      if (!/^\d+$/u.test(total)) throw unreadable();
+      acceptTotal(Number(total));
+    }
+    const range = headers?.get('content-range');
+    if (ranged && !range) throw incomplete('Pagination omitted a previously supplied range.');
+    if (range) {
+      ranged = true;
+      if (data.length === 0 && summaries.length === 0 && /^(?:items|orders)\s+\*\/0$/iu.test(range)) acceptTotal(0);
+      else {
+        const match = /^(?:items|orders)\s+(\d+)-(\d+)\/(\d+)$/iu.exec(range);
+        if (!match || Number(match[1]) !== summaries.length || Number(match[2]) - Number(match[1]) + 1 !== data.length || Number(match[2]) >= Number(match[3])) throw incomplete('Pagination ranges have gaps, overlaps or unreadable bounds.');
+        acceptTotal(Number(match[3]));
+      }
+    }
+    if (summaries.length + data.length > maxOrders) throw incomplete('The 100,000-order safety limit was reached.');
+    for (const order of data) {
+      if (!order || typeof order._id !== 'string' || !safeIdInPage(order._id) || pageOrderIds.has(order._id)) throw incomplete('Pagination returned an unreadable or repeated order.');
+      pageOrderIds.add(order._id);
+      summaries.push(order);
+    }
+    if (summaries.length > maxOrders || (expectedTotal !== null && summaries.length > expectedTotal)) throw incomplete('Pagination exceeded its total or the 100,000-order safety limit.');
+    const links = paginationLinks(headers?.get('link'), path);
+    if (links.next) {
+      if (!data.length || (expectedTotal !== null && summaries.length >= expectedTotal)) throw incomplete('Pagination supplied a next page after an empty or final page.');
+      linked = true;
+    } else if ((expectedTotal !== null && summaries.length !== expectedTotal) || (links.last && links.last !== path)) {
+      throw incomplete('Fanatical returned only part of the history without a usable next-page link.');
+    }
+    path = links.next || null;
+  }
   const listed = new Set();
   const expectedProducts = new Map();
   const productCounts = (parents) => {
@@ -101,17 +227,30 @@ async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerp
     const digest = await crypto.subtle.digest('SHA-256', bytes);
     return [...new Uint8Array(digest)].map((part) => part.toString(16).padStart(2, '0')).join('');
   };
-  const completeWithFingerprints = await Promise.all(complete.map(async (order) => ({ order, fingerprint: await fingerprintOrderInPage(order._id) })));
+  const boundedMap = async (input, task) => {
+    const results = new Array(input.length); let cursor = 0; let failure = null;
+    const worker = async () => {
+      while (!failure && cursor < input.length) {
+        const index = cursor++;
+        try { results[index] = await task(input[index], index); }
+        catch (error) { if (!failure) { failure = error; scanController.abort(); } }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, input.length) }, worker));
+    if (failure) throw failure;
+    return results;
+  };
+  const completeWithFingerprints = await boundedMap(complete, async (order) => ({ order, fingerprint: await fingerprintOrderInPage(order._id) }));
   const known = new Set((Array.isArray(knownOrderFingerprints) ? knownOrderFingerprints : []).filter((fingerprint) => /^[a-f0-9]{64}$/iu.test(String(fingerprint))).map((fingerprint) => String(fingerprint).toLowerCase()));
-  const listedFingerprints = new Set(await Promise.all([...listed].map(fingerprintOrderInPage)));
+  const listedFingerprints = new Set(await boundedMap([...listed], fingerprintOrderInPage));
   if ([...known].some((fingerprint) => !listedFingerprints.has(fingerprint))) {
     throw new Error('Fanatical order history omits previously scanned orders, so complete coverage could not be confirmed. Your library and scan history were not changed.');
   }
   const toInspect = fullScan ? completeWithFingerprints : completeWithFingerprints.filter(({ fingerprint }) => !known.has(fingerprint));
-  const details = await Promise.all(toInspect.map(({ order }) => request(`/api/user/orders/${encodeURIComponent(order._id)}`)));
-  const items = new Map();
-  for (const [index, order] of details.entries()) {
-    if (!order || order._id !== toInspect[index].order._id || order.status !== 'COMPLETE' || !Array.isArray(order.items) || !order.items.length) throw unreadable();
+  const details = await boundedMap(toInspect, async ({ order: listedOrder }) => {
+    const { data: order } = await request(`/api/user/orders/${encodeURIComponent(listedOrder._id)}`);
+    const projectedItems = [];
+    if (!order || order._id !== listedOrder._id || order.status !== 'COMPLETE' || !Array.isArray(order.items) || !order.items.length) throw unreadable();
     const expected = expectedProducts.get(order._id);
     const actual = productCounts(order.items);
     if (actual.size !== expected.size || [...expected].some(([key, quantity]) => actual.get(key) !== quantity)) throw unreadable();
@@ -123,15 +262,19 @@ async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerp
           if (typeof leaf?._id !== 'string') throw unreadable();
           const projected = projectLeafInPage(leaf, parent, order);
           if (!projected) throw unreadable();
-          items.set(projected.sourceItemId, projected);
+          projectedItems.push(projected);
         }
       }
     }
-  }
+    return projectedItems;
+  });
+  const items = new Map();
+  for (const products of details) for (const product of products) items.set(product.sourceItemId, product);
   // `token`, summaries, details, and raw leaves remain in this execution world.
   return {
     schemaVersion: 1,
-    coverage: { complete: true, listedOrders: summaries.length, validatedOrders: details.length, emptyAccount: summaries.length === 0 },
+    coverage: { complete: true, listedOrders: summaries.length, validatedOrders: details.length, emptyAccount: summaries.length === 0,
+      pagesFetched: visitedPages.size, expectedTotal, paginationEvidence: ranged ? 'range' : expectedTotal !== null ? 'count' : linked ? 'link' : 'array-only', retries, concurrency },
     ordersScanned: toInspect.length,
     ordersAvailable: complete.length,
     orderFingerprints: completeWithFingerprints.map(({ fingerprint }) => fingerprint),
@@ -168,12 +311,14 @@ async function importPurchases({ fullScan = false } = {}) {
     ordersSkipped: Math.max(0, projected.ordersAvailable - projected.ordersScanned),
     addedProducts,
     ownedLeafProducts: merged.size,
-    historyCoverage: `${projected.coverage.emptyAccount ? 'Valid empty order history.' : `Validated ${projected.coverage.listedOrders} listed orders and ${projected.ordersScanned} requested completed-order details.`} Pagination has not yet been validated on a larger account.`
+    historyCoverage: `${projected.coverage.emptyAccount ? 'Valid empty order history.' : `Validated ${projected.coverage.listedOrders} listed orders across ${projected.coverage.pagesFetched} page(s) and ${projected.ordersScanned} requested completed-order details.`} ${projected.coverage.paginationEvidence === 'array-only' ? 'No pagination metadata: silent server truncation cannot be independently ruled out.' : projected.coverage.expectedTotal !== null ? 'All pages agree with the reported history total.' : 'Followed the next-page chain to its end; no independent history total was supplied.'}`,
+    coverage: projected.coverage
   };
   await chrome.storage.local.set({
     [STORAGE_ITEMS]: [...merged.values()].sort((a, b) => a.sourceItemId.localeCompare(b.sourceItemId)),
     [STORAGE_ORDER_FINGERPRINTS]: projected.orderFingerprints,
-    [STORAGE_SUMMARY]: summary
+    [STORAGE_SUMMARY]: summary,
+    fanaticalLastScanAttempt: { status: 'complete', scanMode: summary.scanMode, attemptedAt: importedAt }
   });
   return summary;
 }
@@ -199,9 +344,15 @@ async function fetchPublicBundle(path) {
   return result[0].result;
 }
 
+let purchaseScan = null;
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'FANATICAL_IMPORT_PURCHASES') {
-    importPurchases({ fullScan: message.fullScan === true }).then((summary) => sendResponse({ ok: true, summary })).catch((error) => sendResponse({ ok: false, error: String(error?.message ?? 'Import failed.') }));
+    if (purchaseScan) { sendResponse({ ok: false, error: 'A Fanatical purchase scan is already running. Wait for it to finish.' }); return true; }
+    purchaseScan = importPurchases({ fullScan: message.fullScan === true }).then((summary) => sendResponse({ ok: true, summary })).catch(async (error) => {
+      // Persist only an explicit coverage failure flag, never page/transport errors.
+      try { await chrome.storage.local.set({ fanaticalLastScanAttempt: { status: 'incomplete', scanMode: message.fullScan === true ? 'full' : 'quick', attemptedAt: new Date().toISOString() } }); } catch { /* Keep the on-page warning even when storage is unavailable. */ }
+      sendResponse({ ok: false, error: `Scan incomplete; previous purchases and successful scan history were kept. ${String(error?.message ?? 'Please try again.').slice(0, 500)}` });
+    }).finally(() => { purchaseScan = null; });
     return true;
   }
   if (message?.type === 'FANATICAL_GET_PUBLIC_BUNDLE') {

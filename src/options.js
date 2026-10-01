@@ -15,13 +15,15 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup } from './l
       fanaticalImportSummary: summary = null,
       fanaticalLibraryItems: items = [],
       galacticLibraryExtensionId: extensionId = '',
-      fanaticalShowDiagnostics: diagnostics = false
-    } = await chrome.storage.local.get({ fanaticalImportSummary: null, fanaticalLibraryItems: [], galacticLibraryExtensionId: '', fanaticalShowDiagnostics: false });
+      fanaticalShowDiagnostics: diagnostics = false,
+      fanaticalLastScanAttempt: attempt = null
+    } = await chrome.storage.local.get({ fanaticalImportSummary: null, fanaticalLibraryItems: [], galacticLibraryExtensionId: '', fanaticalShowDiagnostics: false, fanaticalLastScanAttempt: null });
     $('#last-import').textContent = summary
       ? `Last ${summary.scanMode === 'full' ? 'full' : 'quick'} scan: ${summary.addedProducts} item${summary.addedProducts === 1 ? '' : 's'} added; ${summary.ordersScanned} order${summary.ordersScanned === 1 ? '' : 's'} scanned${summary.ordersSkipped ? ` and ${summary.ordersSkipped} already-scanned order${summary.ordersSkipped === 1 ? '' : 's'} skipped` : ''} on ${new Date(summary.importedAt).toLocaleString()}.`
       : 'No Fanatical import has run yet.';
     $('#library-count').textContent = `${items.length} unique item${items.length === 1 ? '' : 's'} stored locally.`;
-    $('#history-note').textContent = summary?.historyCoverage ?? 'Order-history pagination has not yet been validated on a larger account.';
+    $('#history-note').textContent = `${attempt?.status === 'incomplete' ? 'Last scan incomplete: complete order-history coverage could not be confirmed. Previous purchases and the last successful scan were kept. ' : ''}${summary?.historyCoverage ?? 'No order-history coverage has been checked yet.'}`;
+    if (diagnostics && summary?.coverage) $('#history-note').textContent += ` ${summary.coverage.retries} retries; at most ${summary.coverage.concurrency} concurrent detail requests.`;
     $('#galactic-id').value = extensionId;
     $('#galactic-status').textContent = extensionId ? linkSaved : 'No Galactic Library link configured.';
     $('#fanatical-extension-id').textContent = chrome.runtime.id;
@@ -115,7 +117,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup } from './l
     if (!confirm('Clear every locally stored Fanatical title, scan history, and import summary?')) return;
     setLibraryBusy(true);
     try {
-      await chrome.storage.local.remove(['fanaticalLibraryItems', 'fanaticalImportSummary', 'fanaticalScannedOrderFingerprints']);
+      await chrome.storage.local.remove(['fanaticalLibraryItems', 'fanaticalImportSummary', 'fanaticalScannedOrderFingerprints', 'fanaticalLastScanAttempt']);
       $('#local-status').textContent = 'Library and scan history cleared.';
       await refresh();
     } catch { $('#local-status').textContent = 'Could not clear the library.'; }

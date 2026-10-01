@@ -29,7 +29,7 @@ test('backup records deduplicate by product ID, not by title', () => {
 });
 
 test('restore atomically clears scan authority but does not touch pairing or preferences', () => {
-  assert.deepEqual(backupRestoreState([item]), { fanaticalLibraryItems: [item], fanaticalImportSummary: null, fanaticalScannedOrderFingerprints: [] });
+  assert.deepEqual(backupRestoreState([item]), { fanaticalLibraryItems: [item], fanaticalImportSummary: null, fanaticalScannedOrderFingerprints: [], fanaticalLastScanAttempt: null });
   assert.deepEqual(parseLibraryBackup({ schemaVersion: 1, items: [] }), []);
 });
 

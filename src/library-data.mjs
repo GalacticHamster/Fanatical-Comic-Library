@@ -61,7 +61,15 @@ export function validateScanResult(value, { fullScan = false, knownOrderFingerpr
   if (value.items.some((item) => item?.source !== 'fanatical' || typeof item.sourceItemId !== 'string' || !safeId(item.sourceItemId) || !safeText(item.title) || !safeId(item.bundle?.sourceItemId) || !safeText(item.bundle?.title))) fail();
   const projected = sanitizeImportResult(value);
   if (projected.items.length !== value.items.length) fail();
-  return { ...projected, coverage: { complete: true, listedOrders: value.coverage.listedOrders, validatedOrders: value.coverage.validatedOrders, emptyAccount: value.coverage.emptyAccount } };
+  const coverage = value.coverage;
+  if (!integer(coverage.pagesFetched) || coverage.pagesFetched < 1 || coverage.pagesFetched > 1000 || coverage.listedOrders > 100000
+    || !integer(coverage.retries) || coverage.concurrency !== 3 || !['array-only', 'link', 'count', 'range'].includes(coverage.paginationEvidence)
+    || (coverage.expectedTotal !== null && (!integer(coverage.expectedTotal) || coverage.expectedTotal !== coverage.listedOrders))
+    || (['count', 'range'].includes(coverage.paginationEvidence) !== (coverage.expectedTotal !== null))
+    || (coverage.paginationEvidence === 'array-only' && coverage.pagesFetched !== 1)
+    || (coverage.paginationEvidence === 'link' && coverage.pagesFetched < 2)) fail();
+  return { ...projected, coverage: { complete: true, listedOrders: coverage.listedOrders, validatedOrders: coverage.validatedOrders, emptyAccount: coverage.emptyAccount,
+    pagesFetched: coverage.pagesFetched, expectedTotal: coverage.expectedTotal, paginationEvidence: coverage.paginationEvidence, retries: coverage.retries, concurrency: 3 } };
 }
 
 export function createLibraryBackup(items, summary, exportedAt = new Date().toISOString()) {
@@ -76,5 +84,5 @@ export function createLibraryBackup(items, summary, exportedAt = new Date().toIS
 }
 
 export function backupRestoreState(items) {
-  return { fanaticalLibraryItems: items, fanaticalImportSummary: null, fanaticalScannedOrderFingerprints: [] };
+  return { fanaticalLibraryItems: items, fanaticalImportSummary: null, fanaticalScannedOrderFingerprints: [], fanaticalLastScanAttempt: null };
 }

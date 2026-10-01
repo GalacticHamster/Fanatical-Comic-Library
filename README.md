@@ -58,10 +58,13 @@ fanaticalLibraryItems: Array<{
 
 fanaticalImportSummary: {
   importedAt, scanMode, ordersScanned, ordersAvailable, ordersSkipped,
-  addedProducts, ownedLeafProducts, historyCoverage
+  addedProducts, ownedLeafProducts, historyCoverage,
+  coverage: { complete, listedOrders, validatedOrders, emptyAccount,
+    pagesFetched, expectedTotal, paginationEvidence, retries, concurrency }
 }
 
 fanaticalScannedOrderFingerprints: string[] // SHA-256 fingerprints only
+fanaticalLastScanAttempt: { status: 'complete' | 'incomplete', scanMode, attemptedAt } | null
 
 galacticLibraryExtensionId: string
 fanaticalShowDiagnostics: boolean // off by default
@@ -91,9 +94,28 @@ under "Show new items only" and are excluded from confirmed-new tier coverage.
 Scans validate the observed order-list array and the identity/status/structure
 of every requested completed order before making a single storage update.
 Order details must include every product occurrence named in their summaries;
-unknown structures, missing leaves, invalid JSON, partial HTTP responses and
-pagination indicators abort the scan. Failed scans leave library records,
-scan fingerprints and the last successful summary unchanged.
+unknown structures, missing leaves, invalid JSON and partial HTTP responses
+abort the scan. Failed scans leave library records, scan fingerprints and the
+last successful summary unchanged. A separate last-attempt flag exposes an
+incomplete scan in settings, without saving raw error/response data.
+
+At most **three order-detail requests** run at once. Each GET has a 20-second
+timeout (including the body read) and at most three attempts. Network/timeouts,
+408, 429, 500, 502, 503 and 504 use exponential backoff plus jitter. Authentication
+errors and malformed successful responses are not retried. A server's
+`Retry-After` seconds or HTTP date is respected; 429/503 also pause queued
+requests. If the requested wait exceeds 30 seconds, the scan stops and asks you
+to try later instead of retrying early. A failed detail stops the queue and
+aborts other in-flight requests. Overlapping purchase scans are rejected.
+
+Order-list pages are fetched sequentially, following only explicit `Link`
+`rel="next"` URLs on the same HTTPS Fanatical order-list endpoint. The importer
+does not invent page/cursor parameters or assume an undocumented JSON envelope.
+It checks consistent total counts and contiguous ranges when supplied, and
+rejects repeated pages/orders, missing next links, changing totals, gaps and
+unsafe links. Safety caps are 1,000 pages and 100,000 listed orders; hitting a
+cap never commits partial results. Coverage reports page counts and whether
+evidence came from ranges, totals, a next-page chain, or just a bare array.
 
 A valid empty array is distinguished from an unreadable response. If the list
 omits previously scanned orders (including an unexpectedly empty list), the
@@ -116,6 +138,10 @@ signed-in flows still need the manual checks below.
 - Run a Quick scan while signed in; confirm its owned-leaf count and no
   sensitive data appears in extension storage/export. Run it again and confirm
   it skips already scanned orders; use a Full scan to rebuild all orders.
+- Check the coverage message on Orders and in settings. A bare-array response
+  should explicitly warn that silent server truncation cannot be ruled out.
+  If a scan fails, settings should show "Last scan incomplete" while keeping
+  the prior successful summary and purchases. A successful rescan clears it.
 - Reload the purchased tiered comic bundle; confirm all 47 matching leaf cards
   display **Owned** and duplicate badges do not appear after navigation.
 - Open a Pick & Mix bundle; confirm all pool cards receive non-interactive
@@ -142,10 +168,12 @@ signed-in flows still need the manual checks below.
 
 ## Known limitations
 
-- `/api/user/orders` pagination is not validated on a large history. Detectable
-  partial histories are rejected; only the observed unpaginated array contract
-  is supported. Silent server-side truncation without metadata or missing
-  known orders cannot be ruled out on a first scan.
+- A real large `/api/user/orders` history has not been captured. Synthetic
+  tests cover 1,000 orders across 25 pages, full/quick scans, bounded concurrency,
+  retries/timeouts, unsafe links and broken pagination. Array responses with
+  explicit next-page links are supported, but an undocumented pagination
+  envelope is rejected. Silent server-side truncation without metadata or
+  missing known orders cannot be ruled out, and is explicitly disclosed.
 - Unrecognized purchase layouts are rejected rather than silently skipped.
 - A game order containing activation data has not been live-tested; the
   allowlist and adversarial tests deliberately exclude those fields.
