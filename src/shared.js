@@ -445,13 +445,18 @@
     return match?.state === 'possible' ? (match.ownershipReview ? 'Check ownership' : 'Possible') : 'New';
   }
 
-  function upsertBadge(card, productId, match, badgeHost = card) {
+  function upsertBadge(card, productId, match, badgeHost = card, onInspect = null) {
     if (!card || !badgeHost || !productId || !global.document?.createElement) return null;
     // Fanatical's SPA can recycle a card node for a different product. Any
     // previous extension badge on that node is therefore stale, regardless
     // of its old product ID.
     for (const node of card.querySelectorAll?.('[data-fanatical-library-for]') ?? []) node.remove();
-    const badge = global.document.createElement('span');
+    const badge = global.document.createElement('button');
+    badge.type = 'button';
+    if (onInspect) {
+      badge.addEventListener?.('click', event => { event.preventDefault(); event.stopPropagation(); onInspect(); });
+      badge.addEventListener?.('keydown', event => { if (['Enter', ' '].includes(event.key)) event.stopPropagation(); });
+    }
     badge.dataset.fanaticalLibraryFor = productId;
     const state = match?.state ?? 'new';
     const statusClasses = ['owned', 'owned-elsewhere', 'partial', 'possible', 'new', 'unchecked'];
@@ -469,6 +474,56 @@
     badge.setAttribute?.('aria-label', `Fanatical Library: ${badge.textContent}`);
     badgeHost.append(badge);
     return badge;
+  }
+
+  function unitLabel(entry) {
+    return `${entry.series}${entry.run ? ` (${entry.run})` : ''} ${entry.unitType} ${entry.number}${entry.language ? ` [${entry.language}]` : ''}`;
+  }
+  function explanationLines(match, lastImport = null) {
+    const offered = match.offered || {};
+    const lines = [`Offered: ${offered.title || 'Unknown title'}`, `Status: ${overlayLabel(match)}`, `Basis: ${match.reason || 'Not found in checked libraries'}`];
+    const describe = (label, item) => {
+      const data = bibliographicFields(item);
+      const isbn = externalIds(item).isbn || (Array.isArray(item?.isbn) ? item.isbn.map(validIsbn).filter(Boolean).join(', ') : validIsbn(item?.isbn));
+      if (isbn) data.isbn = isbn;
+      const fields = Object.entries(data).map(([name, value]) => `${name}: ${Array.isArray(value) ? value.join(', ') : value}`);
+      lines.push(`${label}: ${fields.join(' · ') || 'No bibliographic identity supplied'}`);
+    };
+    describe('Offered evidence', offered);
+    if (match.lookupIncomplete) lines.push('Central lookup incomplete. An unavailable or omitted result is not proof of absence.');
+    lines.push(`Fanatical last successful import: ${lastImport || 'unknown'}. Synced libraries may not cover the entire purchase history.`);
+    if (match.localMatch?.reason && match.localMatch.reason !== match.reason) lines.push(`Local comparison: ${match.localMatch.reason}`);
+    const records = [match.item, match.localMatch?.item, ...(match.externalResult?.matches || []), ...(match.externalResult?.possibleMatches || []), ...(match.externalResult?.partialMatches || []),
+      ...(match.coverage?.covered || []).flatMap(entry => entry.evidence || []), ...(match.coverage?.possibleCovered || []).flatMap(entry => entry.evidence || [])].filter(Boolean);
+    const seen = new Set();
+    for (const record of records) {
+      const item = record.item || record; const provider = record.provider || 'fanatical';
+      const key = `${provider}:${record.itemRef || item.sourceItemId || item.title}`;
+      if (seen.has(key)) continue; seen.add(key);
+      lines.push(`Library item: ${item.title || 'Unnamed record'} · ${provider} · ${record.ownership || 'purchased locally'}`);
+      describe('Library evidence', record.evidence ? record.evidence : item);
+      const conflicts = identityConflicts(offered, record.evidence ? { ...record.evidence, title: item.title } : item, true);
+      if (conflicts.length) lines.push(`Differences: ${conflicts.join('; ')}`);
+      lines.push(`Relationship: ${record.relationship || 'local product/edition comparison'} · ${record.reason || match.localMatch?.reason || 'Local purchase assertion'}`);
+      if (typeof record.confidence === 'number' && Number.isFinite(record.confidence)) lines.push(`Confidence rule score: ${record.confidence}; this is not a calibrated probability.`);
+      lines.push(`Source: ${record.evidence?.source || 'Fanatical purchase import'} · observed ${record.evidence?.checkedAt || 'unknown'} · contents verified ${record.verifiedAt || 'unknown'}`);
+      if (item.purchaseDate) lines.push(`Purchase date: ${item.purchaseDate}`);
+      if (item.bundle?.title) lines.push(`Purchased bundle: ${item.bundle.title}`);
+    }
+    if (match.coverage?.total) {
+      lines.push(`Contents: ${match.coverage.owned}/${match.coverage.total} full units covered.`);
+      lines.push(match.coverage.contentsComplete ? 'Explicit contents describe the full offered content; this does not identify the physical/digital edition.' : 'Comparison targets do not establish the whole edition or its extras.');
+      if (match.coverage.scopeUncertain) lines.push('Run/language or contents scope needs confirmation.');
+      for (const [label, entries] of [['Covered', match.coverage.covered], ['Possible coverage', match.coverage.possibleCovered], ['Not confirmed covered', match.coverage.missing]]) {
+        if (entries.length) lines.push(`${label}: ${entries.slice(0, 100).map(unitLabel).join('; ')}${entries.length > 100 ? `; ${entries.length - 100} more` : ''}`);
+      }
+    }
+    for (const component of match.componentMatches || []) lines.push(`Component: ${component.offered?.title || 'Unknown'} · ${overlayLabel(component)} · ${component.reason || 'No matching evidence'}`);
+    return lines;
+  }
+
+  function centralReviewUrl(id) {
+    return /^[a-p]{32}$/u.test(String(id || '')) ? `chrome://extensions/?options=${id}` : null;
   }
 
   function isExtensionId(value) {
@@ -540,5 +595,5 @@
     return hours ? Number(hours[1]) / 24 : null;
   }
 
-  global.FanaticalLibrary = { normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, flattenProducts, resolveProduct, overlayLabel, upsertBadge, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
+  global.FanaticalLibrary = { normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
 }(globalThis));

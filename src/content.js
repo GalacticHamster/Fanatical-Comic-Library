@@ -619,6 +619,30 @@
     summary.append(label);
   }
 
+  function showEvidence(match, trigger) {
+    document.querySelector('#fanatical-library-evidence')?.remove();
+    const dialog = document.createElement('dialog'); dialog.id = 'fanatical-library-evidence'; dialog.className = 'fanatical-library-evidence';
+    dialog.setAttribute('aria-labelledby', 'fanatical-library-evidence-heading');
+    const heading = document.createElement('h2'); heading.id = 'fanatical-library-evidence-heading'; heading.textContent = match.offered?.title || 'Ownership evidence';
+    const close = document.createElement('button'); close.type = 'button'; close.textContent = 'Close'; close.autofocus = true;
+    close.addEventListener('click', () => dialog.close());
+    dialog.addEventListener('close', () => { dialog.remove(); if (trigger?.isConnected) trigger.focus(); });
+    const list = document.createElement('ul');
+    for (const text of F.explanationLines(match, state.lastImport)) { const row = document.createElement('li'); row.textContent = text; list.append(row); }
+    dialog.append(heading, close, list);
+    const review = document.createElement('button'); review.type = 'button'; review.textContent = 'Review in Galactic Library';
+    const output = document.createElement('p'); output.setAttribute('role', 'status');
+    review.addEventListener('click', async () => {
+      review.disabled = true;
+      try { const response = await chrome.runtime.sendMessage({ type: 'FANATICAL_OPEN_GALACTIC_REVIEW' }); output.textContent = response?.ok ? 'Opened Galactic Library. Use Ownership evidence, Contents, or Duplicate review, then refresh this comparison.' : response?.error || 'Open Galactic Library from its toolbar icon to review evidence.'; }
+      catch { output.textContent = 'Open Galactic Library from its toolbar icon to review evidence.'; }
+      finally { review.disabled = false; }
+    });
+    const refresh = document.createElement('button'); refresh.type = 'button'; refresh.textContent = 'Refresh central evidence';
+    refresh.addEventListener('click', () => { state.galactic.clear(); state.failed.clear(); state.revision++; state.summaryDirty = true; dialog.close(); schedule(true); });
+    dialog.append(review, refresh, output); document.body.append(dialog); dialog.showModal();
+  }
+
   function downloadTierList(parsed, matches) {
     const stateFor = (product) => matches[parsed.products.findIndex((candidate) => candidate.sourceItemId === product.sourceItemId)]?.state ?? 'new';
     const lines = [`Fanatical Library — ${parsed.title}`, ''];
@@ -714,8 +738,10 @@
       if (!entries.length) continue;
       const detailList = document.createElement('details'); detailList.className = 'fanatical-library-title-list'; const title = document.createElement('summary'); title.textContent = `${label} (${entries.length})`; detailList.append(title); const list = document.createElement('ol'); alphabetize(entries).forEach((product) => {
         const match = matches[parsed.products.findIndex((candidate) => candidate.sourceItemId === product.sourceItemId)];
-        const row = document.createElement('li'); row.textContent = product.title;
-        if (match?.editionDifference && match.item?.title) row.textContent += ` — ${match.reason}`;
+        const row = document.createElement('li');
+        const inspect = document.createElement('button'); inspect.type = 'button'; inspect.className = 'fanatical-library-inspect'; inspect.textContent = product.title;
+        inspect.addEventListener('click', () => showEvidence(match, inspect)); row.append(inspect);
+        if (match?.editionDifference && match.item?.title) row.append(` — ${match.reason}`);
         list.append(row);
       }); detailList.append(list); element.append(detailList);
     }
@@ -732,7 +758,8 @@
     observer?.disconnect();
     if (!hasStableSummary) showPanel('Fanatical Library: loading ownership status…');
     try {
-      const [parsed, stored] = await Promise.all([loadPublicBundle(current), chrome.storage.local.get({ fanaticalLibraryItems: [], galacticLibraryExtensionId: '', fanaticalShowNewItemsOnly: false, fanaticalShowDiagnostics: false })]);
+      const [parsed, stored] = await Promise.all([loadPublicBundle(current), chrome.storage.local.get({ fanaticalLibraryItems: [], fanaticalImportSummary: null, galacticLibraryExtensionId: '', fanaticalShowNewItemsOnly: false, fanaticalShowDiagnostics: false })]);
+      state.lastImport = stored.fanaticalImportSummary?.importedAt || null;
       diagnosticsEnabled = Boolean(stored.fanaticalShowDiagnostics);
       if (!state.showNewOnlyLoaded) {
         state.showNewOnly = Boolean(stored.fanaticalShowNewItemsOnly);
@@ -745,7 +772,8 @@
       const matches = parsed.products.map((product) => status(product, stored.fanaticalLibraryItems, localUnits));
       parsed.products.forEach((product, index) => {
         const card = cardFor(product); if (!card) return;
-        F.upsertBadge(card, product.sourceItemId, matches[index], card.querySelector('.cover-container') ?? card);
+        let badge;
+        badge = F.upsertBadge(card, product.sourceItemId, matches[index], card.querySelector('.cover-container') ?? card, () => showEvidence(matches[index], badge));
         upsertCardTitle(card, product, matches[index]);
       });
       // While New-only is active, the visible Pick & Mix rows live in our

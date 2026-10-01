@@ -16,7 +16,7 @@ const editionBase = { source: 'fanatical', sourceItemId: 'edition-base-123456', 
 const editionBonus = { _id: 'edition-bonus-123456', name: 'Space Adventure Bonus Content', type: 'game', steam: { id: 42 } };
 const editionProducts = [
   { _id: 'edition-deluxe-123456', name: 'Space Adventure Deluxe Edition', type: 'game', steam: { id: 42 } },
-  { _id: 'edition-ultimate-123456', name: 'Space Adventure Ultimate Edition', type: 'game', steam: { id: 42 }, components: [{ _id: editionBase.sourceItemId, name: editionBase.title, type: 'game', steam: { id: 42 } }, editionBonus] }
+  { _id: 'edition-ultimate-123456', name: 'Space Adventure Ultimate Edition', type: 'game', steam: { id: 42 }, componentsComplete: true, components: [{ _id: editionBase.sourceItemId, name: editionBase.title, type: 'game', steam: { id: 42 } }, editionBonus] }
 ];
 const editionBundle = { _id: 'edition-bundle-123456', name: 'Test editions', slug: 'test-editions', bundles: [{ price: { USD: 100 }, games: editionProducts }], products: editionProducts, tiers: [{ quantity: 2, price: { USD: 100 } }] };
 const mock = `
@@ -57,6 +57,17 @@ try {
   assert(document.querySelectorAll('[data-fanatical-library-for]').length===4,'Missing card badges');
   assert([...document.querySelectorAll('.card-product-name')].map(node=>node.textContent).join('|')==='Comic #2|Comic #10|External comic|New comic','Natural sorting changed');
   assert(document.querySelector('.fanatical-library-owned-elsewhere-badge'),'Missing external match');
+  const badge=document.querySelector('.fanatical-library-owned-elsewhere-badge');
+  assert(badge.tagName==='BUTTON','Badge is not keyboard accessible');badge.click();
+  const inspector=document.querySelector('#fanatical-library-evidence');
+  assert(inspector?.open&&inspector.textContent.includes('Offered: External comic'),'Evidence inspector did not open');
+  assert(inspector.textContent.includes('unknown'),'Unknown freshness was not disclosed');
+  inspector.querySelector('button').click();await wait();assert(!document.querySelector('#fanatical-library-evidence'),'Evidence inspector did not close');
+  assert(document.activeElement===badge,'Closing inspector did not restore focus');
+  const minimize=document.querySelector('.fanatical-library-summary-minimize');minimize.click();
+  assert(document.querySelector('.fanatical-library-summary-minimized'),'Summary did not minimize');
+  document.querySelector('.fanatical-library-summary-expand').click();
+  assert(!document.querySelector('.fanatical-library-summary-minimized'),'Summary did not expand');
   if(!location.pathname.includes('pick-and-mix')) assert(document.querySelector('.fanatical-library-buy-recommendation')?.textContent.endsWith('$1.00'),'Higher owned-only tier replaced the cheapest complete-new tier');
   await chrome.storage.local.set({fanaticalShowDiagnostics:true});await wait();
   assert(diagnostics()?.textContent.includes('4 products parsed; 4 distinct cards found'),'Missing bundle counts');

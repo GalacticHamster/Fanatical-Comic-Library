@@ -354,6 +354,15 @@ async function fetchPublicBundle(path) {
 
 let purchaseScan = null;
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'FANATICAL_OPEN_GALACTIC_REVIEW') {
+    if (!chrome.runtime.id || _sender?.id !== chrome.runtime.id) { sendResponse({ ok: false, error: 'Untrusted review request.' }); return false; }
+    chrome.storage.local.get({ galacticLibraryExtensionId: '' }).then(async stored => {
+      const url = globalThis.FanaticalLibrary.centralReviewUrl(stored.galacticLibraryExtensionId);
+      if (!url) { sendResponse({ ok: false, error: 'Open Galactic Library from its toolbar icon and choose Manage library to review ownership and contents.' }); return; }
+      await chrome.tabs.create({ url }); sendResponse({ ok: true });
+    }).catch(() => sendResponse({ ok: false, error: 'Open Galactic Library from its toolbar icon to review ownership and contents.' }));
+    return true;
+  }
   if (message?.type === 'FANATICAL_IMPORT_PURCHASES') {
     if (purchaseScan) { sendResponse({ ok: false, error: 'A Fanatical purchase scan is already running. Wait for it to finish.' }); return true; }
     purchaseScan = importPurchases({ fullScan: message.fullScan === true }).then((summary) => sendResponse({ ok: true, summary })).catch(async (error) => {

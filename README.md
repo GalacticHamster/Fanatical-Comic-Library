@@ -114,6 +114,15 @@ game packages remain Possible in either direction, with the actual owned title.
 "New" means not found in the libraries checked, whose purchase-history coverage
 is not guaranteed by the companion API.
 
+Click a badge or a title in the summary to open its keyboard-accessible evidence
+inspector. It shows the actual library titles, edition/contents relationships,
+ownership status, source, rule score (not a probability), observed/review dates,
+and coverage limitations. Missing dates are shown as unknown. Private purchase
+IDs and download URLs are not included. The inspector can refresh central
+evidence and open Galactic Library's options for ownership/contents review.
+Navigation uses the configured pairing and Chrome's extension settings route;
+an unsupported addon ID receives toolbar instructions.
+
 ## Scan safety
 
 Scans validate the observed order-list array and the identity/status/structure
@@ -169,8 +178,8 @@ signed-in flows still need the manual checks below.
   the prior successful summary and purchases. A successful rescan clears it.
 - Reload the purchased tiered comic bundle; confirm all 47 matching leaf cards
   display **Owned** and duplicate badges do not appear after navigation.
-- Open a Pick & Mix bundle; confirm all pool cards receive non-interactive
-  status badges and that selecting/removing products does not produce an
+- Open a Pick & Mix bundle; confirm all pool cards receive interactive
+  evidence badges and that selecting/removing products does not produce an
   extension-initiated basket request.
 - Confirm a signed-out import reports a sign-in/session error without exposing
   token data.
