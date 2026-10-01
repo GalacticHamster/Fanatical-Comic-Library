@@ -51,6 +51,22 @@ test('HTTP-success malformed order lists never alter purchases, summary or finge
   }
 });
 
+test('serialized purchase importer retains only bounded bibliographic leaves for matching', async () => {
+  const expanded = structuredClone(detail);
+  Object.assign(expanded.items[0].bundles[0].games[0], {
+    type: 'manga', authors: ['Writer', { key: 'SECRET-AUTHOR' }], language: 'en', run: '2020', series: 'Saga', issue: '1/2', edition: 'First', publisher: 'Publisher',
+    token: 'SECRET-TOKEN', metadata: { downloadUrl: 'SECRET-URL' }
+  });
+  const run = harness({ details: { [orderId]: expanded } });
+  await run.scan();
+  const item = run.stored.fanaticalLibraryItems[0];
+  assert.equal(item.mediaType, 'book');
+  assert.deepEqual(item.authors, ['Writer']);
+  assert.equal(item.run, '2020'); assert.equal(item.language, 'en'); assert.equal(item.issue, '1/2');
+  assert.equal(JSON.stringify(run.receipts).includes('SECRET'), false);
+  assert.equal(JSON.stringify(item).includes('SECRET'), false);
+});
+
 test('invalid JSON, partial HTTP success and unusable pagination indicators preserve the library', async () => {
   for (const config of [{ invalidJSON: true }, { status: 206 }, { headers: { link: '</api/user/orders?page=2>; rel="next"' } }, { headers: { link: '</api/user/orders?page=2>; rel="prev next"' } }, { headers: { 'x-total-count': '2' } }, { headers: { 'content-range': 'items 0-0/2' } }, { headers: { 'content-range': 'items 1-1/2' } }]) {
     const run = harness(config);

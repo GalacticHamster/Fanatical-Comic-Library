@@ -30,6 +30,7 @@ if(location.pathname.includes('test-editions')) values.fanaticalLibraryItems=[${
 if(location.pathname.includes('test-contents')) values.fanaticalLibraryItems=[{source:'fanatical',sourceItemId:'owned-issue-123456',title:'Saga #1',mediaType:'book',run:'2020',language:'en'}];
 if(location.pathname==='/options') values.fanaticalLastScanAttempt={status:'incomplete'};
 globalThis.scanFailure = false;
+globalThis.centralMode = 'normal';
 globalThis.requests = [];
 globalThis.chrome = {runtime:{id:'a'.repeat(32),sendMessage:async(first,second)=>{
   const message=second||first; requests.push(message);
@@ -38,12 +39,15 @@ globalThis.chrome = {runtime:{id:'a'.repeat(32),sendMessage:async(first,second)=
     await new Promise(resolve=>setTimeout(resolve,100));
     return scanFailure?{ok:false,error:'Scan incomplete; previous purchases and successful scan history were kept.'}:{ok:true,summary:{ordersScanned:1,ordersSkipped:0,addedProducts:1,ownedLeafProducts:1,historyCoverage:'No pagination metadata: silent server truncation cannot be independently ruled out.'}};
   }
+  if(message.type==='MATCH_ITEMS'&&centralMode==='reject')return {ok:false,apiVersion:1};
+  if(message.type==='MATCH_ITEMS'&&centralMode==='legacy')return {ok:true,apiVersion:1,results:message.items.map(item=>({requestId:item.requestId,matches:[]}))};
   if(message.type==='MATCH_ITEMS'&&location.pathname.includes('test-contents'))return {ok:true,apiVersion:1,results:message.items.map(item=>{
     const evidence={provider:'kindle',title:'Saga Complete Collection',ownership:'owned',relationship:'contains',itemRef:'opaque-saga',reason:'Reviewed full issues',confidence:1,evidence:{source:'Reviewed publisher contents',checkedAt:'2026-08-01'},verifiedAt:'2026-08-01'};
     const entries=item.contents||[];const covered=entries.filter(entry=>['2','5'].includes(entry.number)).map(entry=>({...entry,evidence:[evidence]}));
-    return {requestId:item.requestId,matches:[],possibleMatches:[],partialMatches:covered.length?[evidence]:[],coverage:entries.length?{total:entries.length,owned:covered.length,complete:covered.length===entries.length,scopeUncertain:false,covered,possibleCovered:[],missing:entries.filter(entry=>!['2','5'].includes(entry.number))}:null};
+    const uncertain={provider:'kindle',title:'Saga #8',ownership:'unknown',relationship:'same-work',itemRef:'opaque-uncertain',reason:'Title candidate; ownership needs confirmation',evidence:{source:'Kindle import',checkedAt:null}};
+    return {requestId:item.requestId,matches:[],possibleMatches:item.title==='Saga #8'?[uncertain]:[],partialMatches:covered.length?[evidence]:[],coverage:entries.length?{total:entries.length,owned:covered.length,complete:covered.length===entries.length,scopeUncertain:false,covered,possibleCovered:[],missing:entries.filter(entry=>!['2','5'].includes(entry.number))}:null};
   })};
-  if(message.type==='MATCH_ITEMS')return {ok:true,apiVersion:1,results:message.items.map(item=>({requestId:item.requestId,matches:item.title==='External comic'?[{provider:'humble',ownership:'owned'}]:[]}))};
+  if(message.type==='MATCH_ITEMS')return {ok:true,apiVersion:1,results:message.items.map(item=>({requestId:item.requestId,matches:item.title==='External comic'?[{provider:'humble',title:'External comic',ownership:'owned',relationship:'same-edition',evidence:{source:'Reviewed same-edition relationship',checkedAt:null}}]:[]}))};
   if(message.type==='FANATICAL_GET_PUBLIC_BUNDLE')return {ok:true,bundle:message.path.includes('test-contents')?(message.path.includes('pick-and-mix')?${JSON.stringify(contentsBundle)}:${JSON.stringify({ ...contentsBundle, products: undefined, tiers: undefined })}):message.path.includes('test-editions')?${JSON.stringify(editionBundle)}:message.path.includes('pick-and-mix')?${JSON.stringify({ ...bundle, products, tiers: [{ quantity: 2, price: { USD: 100 } }] })}:${JSON.stringify(bundle)}};
 }},storage:{local:{get:async defaults=>({...defaults,...values}),set:async changes=>{Object.assign(values,changes); const events={};for(const key in changes)events[key]={newValue:changes[key]};listeners.forEach(listener=>listener(events,'local'));},remove:async key=>{delete values[key];listeners.forEach(listener=>listener({[key]:{newValue:undefined}},'local'));}},onChanged:{addListener:listener=>listeners.push(listener)}},tabs:{create(){}}};
 globalThis.confirmAnswer = true;
@@ -196,6 +200,19 @@ try {
   const inspector=document.querySelector('#fanatical-library-evidence');
   assert(inspector?.textContent.includes('Reviewed publisher contents')&&inspector.textContent.includes('2026-08-01'),'Central contents evidence/freshness missing from inspector');
   inspector.querySelector('button').click();await wait();
+  const reading=()=>document.querySelector('.fanatical-library-reading');
+  assert(reading()?.textContent.includes('issue 5: Covered · not offered here'),'Central ownership of an intervening issue was missed');
+  assert(reading().textContent.includes('issue 7: Not confirmed covered · not offered here'),'Reading gap outside the offer was not surfaced');
+  const reminders=()=>document.querySelector('.fanatical-library-reminders');
+  assert(reminders()?.textContent.includes('unknown ownership')&&reminders().textContent.includes('Observation date unavailable'),'Central ownership/freshness reminders missing');
+  centralMode='legacy';reminders().querySelector('button').click();await wait();
+  assert(content()?.textContent.includes('0 additional'),'Legacy title lookup falsely established unit absence');
+  assert(reading().textContent.includes('issue 7: Not checked'),'Missing central contents capability falsely established a reading gap');
+  centralMode='reject';reminders().querySelector('button').click();await wait();
+  assert(document.querySelectorAll('.fanatical-library-unchecked-badge').length===3,'Failed lookups were presented as New');
+  assert(!document.querySelector('.fanatical-library-buy-recommendation'),'Failed lookups produced a buy recommendation');
+  centralMode='normal';reminders().querySelector('button').click();await wait();
+  assert(content().textContent.includes('4 additional · 2 covered · 0 uncertain'),'Successful retry did not restore central coverage');
   finish({ok:true,scenario:'central contents union, distinct unit value, tier/selection counts',route:location.pathname});
 }catch(error){finish({ok:false,error:error.message})}
 `;

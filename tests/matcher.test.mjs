@@ -99,7 +99,7 @@ test('different media types cannot be owned by title or ISBN', () => {
 
 test('Galactic exact matches are owned elsewhere, never Fanatical owned', () => {
   const result = F.mergeGalactic({ state: 'new', provenance: null }, { matches: [{ provider: 'steam', ownership: 'owned' }] });
-  assert.deepEqual(JSON.parse(JSON.stringify(result)), { state: 'owned-elsewhere', provenance: 'steam', reason: 'exact Galactic Library match' });
+  assert.equal(result.state, 'owned-elsewhere'); assert.equal(result.provenance, 'steam'); assert.equal(result.reason, 'exact Galactic Library match');
 });
 
 test('local ownership remains authoritative over Galactic data', () => {

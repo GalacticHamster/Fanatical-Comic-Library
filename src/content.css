@@ -37,6 +37,9 @@
 .fanatical-library-contents { margin:.6rem 0; font-size:.8rem; font-weight:400; }
 .fanatical-library-contents summary { font-weight:700; cursor:pointer; }
 .fanatical-library-contents ul { max-height:10rem; overflow:auto; padding-left:1.25rem; }
+.fanatical-library-reading,.fanatical-library-reminders { margin:.6rem 0; font-size:.8rem; font-weight:400; }
+.fanatical-library-reading summary,.fanatical-library-reminders summary { font-weight:700; cursor:pointer; }
+.fanatical-library-reading ol,.fanatical-library-reminders ul { max-height:10rem; overflow:auto; padding-left:1.25rem; }
 .fanatical-library-card-edition-note { display:block; margin-top:.2rem; color:#f4cc73; font-weight:400; }
 .fanatical-library-diagnostics { margin-top:.6rem; font-size:.75rem; font-weight:400; }
 .fanatical-library-diagnostics summary { cursor:pointer; font-weight:700; }

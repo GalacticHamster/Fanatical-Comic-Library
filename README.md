@@ -53,6 +53,7 @@ checkout, account-mutation, telemetry, backend, or remote-storage feature.
 fanaticalLibraryItems: Array<{
   source: 'fanatical', sourceItemId, title, slug?, mediaType,
   externalIds?: { steamAppId?, isbn? }, drm?, platforms?, formats?,
+  authors?, language?, edition?, series?, run?, volume?, issue?, publisher?,
   bundle: { sourceItemId, title, slug? }, purchaseDate
 }>
 
@@ -105,6 +106,10 @@ respect both the 500-item and 20,000-unit API limits. Failed, omitted, or
 incompatible responses stay incomplete and can be retried; they never count as
 confirmed-new. Successful responses are cached by their full query evidence
 for the current page, and reset when the library or pairing changes.
+Older title-only book responses need a validated identifier or compatible
+title-and-author evidence to establish edition ownership. If central contents
+coverage is unavailable, unit gaps and additional-content totals remain
+unconfirmed even when a title lookup succeeds.
 
 Unicode scripts and meaningful edition labels are retained. ISBN checksums are
 validated and ISBN-10/13 compared equivalently. Normalized book titles without
@@ -132,6 +137,23 @@ not add units to the additional-content total. Offers without enumerable
 contents are disclosed separately. These counts describe content not found
 in the checked libraries; they do not establish edition identity or a complete
 purchase history.
+
+Series coverage queries bounded intervening issue/volume numbers using the same
+central contents API. It separates series/run, language, annuals/specials, and
+fractional units. Covered issues outside the current offer can close a gap;
+units not offered here are labeled separately. Unknown scope, unavailable
+central coverage and bounded spans are disclosed. Numeric ordering describes
+the compared span, not a complete series bibliography or publisher chronology.
+
+Central evidence reminders flag unknown/temporary ownership, missing observation
+dates, observations older than 30 days, older contents reviews, uncertain scope,
+and unavailable coverage. They do not revoke recorded permanent ownership.
+Use the item inspectors to open central review or refresh the comparison after
+sync/review. The current Galactic Library API exposes matching/contents evidence
+and dates; it has no expiry-reminder feed. Rental/key expiry dates, notification
+schedules, reading progress and complete series enumeration remain unavailable
+through this interface. No additional enrichment engine or reminder storage is
+created in Fanatical.
 
 ## Scan safety
 

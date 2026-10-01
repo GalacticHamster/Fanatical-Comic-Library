@@ -270,11 +270,14 @@
     host.append(label);
     label.textContent = product.title;
     label.title = product.title;
-    if (match?.editionDifference && match.item?.title) {
+    if (['possible', 'partial'].includes(match?.state) && match.item?.title) {
       label.setAttribute('aria-hidden', 'false');
       label.classList.add('fanatical-library-card-title-with-match');
       const note = document.createElement('span'); note.className = 'fanatical-library-card-edition-note';
-      note.textContent = `${match.state === 'partial' ? `Partial package (${match.owned}/${match.total} components)` : 'Different edition/package; extras not verified'} — owned: ${match.item.title}`;
+      const permanent = !match.item.provider || ['owned', 'claimed'].includes(match.item.ownership);
+      const relation = product.mediaType === 'game' ? (match.state === 'partial' ? `Partial package (${match.owned}/${match.total} components)` : 'Different edition/package; extras not verified')
+        : match.state === 'partial' ? `Partial contents (${match.owned}/${match.total} full units)` : permanent ? 'Related edition; identity needs review' : 'Ownership needs review';
+      note.textContent = `${relation} — ${permanent ? 'owned' : 'library item'}: ${match.item.title}`;
       note.title = match.reason; label.append(note);
     }
   }
@@ -367,20 +370,24 @@
   const parse = F.parseBundle;
 
   async function loadPublicBundle(current) {
-    if (state.url === location.href && state.parsed) return state.parsed;
+    const pageUrl = location.href;
+    if (state.url === pageUrl && state.parsed) return state.parsed;
     const response = await chrome.runtime.sendMessage({ type: 'FANATICAL_GET_PUBLIC_BUNDLE', path: current.endpoint });
     if (!response?.ok) throw new Error(response?.error ?? 'Fanatical bundle data is unavailable.');
-    state.parsed = parse(response.bundle, current.kind); state.url = location.href; state.galactic.clear();
-    return state.parsed;
+    const parsed = parse(response.bundle, current.kind);
+    if (pageUrl === location.href) { state.parsed = parsed; state.url = pageUrl; state.galactic.clear(); state.requests.clear(); state.failed.clear(); }
+    return parsed;
   }
 
   async function queryGalactic(products, extensionId) {
     state.galacticEnabled = F.isExtensionId(extensionId);
     if (!state.galacticEnabled) { state.galacticStatus = 'Not configured.'; return; }
     const requests = [...new Map(F.galacticRequestItems(products).map(request => { request.requestId = requestId(request); return [request.requestId, request]; })).values()].filter(request => !state.galactic.has(request.requestId));
+    if (!requests.length && !state.galactic.size) { state.galacticStatus = 'No unresolved supported items to check; pairing has not been tested on this page.'; return; }
     const revision = state.revision;
+    const pageUrl = location.href;
     const lookup = await F.queryGalacticItems(requests, message => chrome.runtime.sendMessage(extensionId, message));
-    if (revision !== state.revision) return;
+    if (revision !== state.revision || pageUrl !== location.href) return;
     for (const [id, result] of lookup.results) { state.galactic.set(id, result); state.failed.delete(id); }
     for (const id of lookup.failed) state.failed.add(id);
     state.galacticStatus = state.failed.size ? `Incomplete: ${state.failed.size} lookups failed; absence is not established.` : `Available. ${state.galactic.size} items checked; not found means not found in synced libraries.`;
@@ -394,12 +401,12 @@
   }
   function externalResult(product) {
     const request = F.galacticRequestItems([product])[0];
-    return request ? state.galactic.get(requestId(request)) : null;
+    return request ? state.galactic.get(requestId(request)) || (state.galacticEnabled ? { matches: [], lookupIncomplete: true } : null) : null;
   }
   function status(product, localItems, localUnits) {
     const result = externalResult(product);
     const match = F.resolveProduct(product, localItems, localUnits, externalResult);
-    if (state.galacticEnabled && !result && ['game', 'book', 'audiobook'].includes(product.mediaType)) {
+    if (state.galacticEnabled && (!result || result.lookupIncomplete) && match.state !== 'owned' && ['game', 'book', 'audiobook'].includes(product.mediaType)) {
       match.lookupIncomplete = true;
       if (match.state === 'new') { match.state = 'unchecked'; match.reason = 'Central lookup incomplete; no absence claim is available.'; }
     }
@@ -635,15 +642,17 @@
     dialog.append(heading, close, list);
     const review = document.createElement('button'); review.type = 'button'; review.textContent = 'Review in Galactic Library';
     const output = document.createElement('p'); output.setAttribute('role', 'status');
-    review.addEventListener('click', async () => {
-      review.disabled = true;
-      try { const response = await chrome.runtime.sendMessage({ type: 'FANATICAL_OPEN_GALACTIC_REVIEW' }); output.textContent = response?.ok ? 'Opened Galactic Library. Use Ownership evidence, Contents, or Duplicate review, then refresh this comparison.' : response?.error || 'Open Galactic Library from its toolbar icon to review evidence.'; }
-      catch { output.textContent = 'Open Galactic Library from its toolbar icon to review evidence.'; }
-      finally { review.disabled = false; }
-    });
+    review.addEventListener('click', () => openCentralReview(review, output));
     const refresh = document.createElement('button'); refresh.type = 'button'; refresh.textContent = 'Refresh central evidence';
     refresh.addEventListener('click', () => { state.galactic.clear(); state.failed.clear(); state.revision++; state.summaryDirty = true; dialog.close(); schedule(true); });
     dialog.append(review, refresh, output); document.body.append(dialog); dialog.showModal();
+  }
+
+  async function openCentralReview(button, output) {
+    button.disabled = true;
+    try { const response = await chrome.runtime.sendMessage({ type: 'FANATICAL_OPEN_GALACTIC_REVIEW' }); output.textContent = response?.ok ? 'Opened Galactic Library. Use Ownership evidence, Contents, or Duplicate review, then refresh this comparison.' : response?.error || 'Open Galactic Library from its toolbar icon to review evidence.'; }
+    catch { output.textContent = 'Open Galactic Library from its toolbar icon to review evidence.'; }
+    finally { button.disabled = false; }
   }
 
   function downloadTierList(parsed, matches) {
@@ -682,6 +691,7 @@
     heading.textContent = `Your Fanatical items: ${counts.owned} owned${counts.elsewhere ? ` \u00b7 ${counts.elsewhere} elsewhere` : ''} \u00b7 ${counts.new} new${counts.partial ? ` \u00b7 ${counts.partial} partial` : ''}${counts.possible ? ` \u00b7 ${counts.possible} possible` : ''}`;
     if (counts.unchecked) heading.textContent += ` · ${counts.unchecked} not checked`;
     appendContentsSummary(element, parsed, matches);
+    appendReadingSummary(element, matches);
     const purchase = (Array.isArray(localItems) ? localItems : []).find((item) => item?.bundle?.sourceItemId === parsed.sourceItemId);
     if (purchase?.purchaseDate) {
       const notice = document.createElement('p'); notice.className = 'fanatical-library-purchased';
@@ -745,7 +755,7 @@
         const row = document.createElement('li');
         const inspect = document.createElement('button'); inspect.type = 'button'; inspect.className = 'fanatical-library-inspect'; inspect.textContent = product.title;
         inspect.addEventListener('click', () => showEvidence(match, inspect)); row.append(inspect);
-        if (match?.editionDifference && match.item?.title) row.append(` — ${match.reason}`);
+        if (['possible', 'partial'].includes(match?.state) && match.item?.title) row.append(` — ${match.reason}`);
         list.append(row);
       }); detailList.append(list); element.append(detailList);
     }
@@ -783,6 +793,48 @@
     summary.append(details);
   }
 
+  function appendReadingSummary(summary, matches) {
+    const rows = state.reading || [];
+    if (rows.length || state.readingLimits?.unknownScope) {
+      const details = document.createElement('details'); details.className = 'fanatical-library-reading';
+      const heading = document.createElement('summary'); heading.textContent = 'Series coverage and reading gaps'; details.append(heading);
+      const note = document.createElement('p'); note.textContent = 'Numeric order within known series/run/language. Gaps cover the compared span, not a complete bibliography or publisher reading order.'; details.append(note);
+      if (state.readingLimits?.unknownScope) { const text = document.createElement('p'); text.textContent = `${state.readingLimits.unknownScope} offered units lack confirmed scope; no reading gaps inferred for them.`; details.append(text); }
+      if (state.readingLimits?.limited) { const text = document.createElement('p'); text.textContent = 'Large spans were bounded; only the displayed targets were compared.'; details.append(text); }
+      for (const row of rows) {
+        const title = document.createElement('strong'); title.textContent = `${row.label}: ${row.coverage.owned}/${row.coverage.total} full units confirmed covered`; details.append(title);
+        if (row.lookupIncomplete) { const text = document.createElement('p'); text.textContent = 'Central coverage unavailable; gaps cannot be confirmed from this comparison.'; details.append(text); }
+        const confirmed = new Set(row.coverage.covered.map(F.contentKey)); const possible = new Set(row.coverage.possibleCovered.map(F.contentKey));
+        const list = document.createElement('ol');
+        const ordered = [...row.entries].sort((left, right) => {
+          const a = Number(left.number); const b = Number(right.number);
+          return Number.isFinite(a) && Number.isFinite(b) ? a - b : titleCollator.compare(left.number, right.number);
+        });
+        for (const entry of ordered.slice(0, 100)) {
+          const id = F.contentKey(entry); const status = confirmed.has(id) ? 'Covered' : possible.has(id) ? 'Possible coverage' : row.lookupIncomplete ? 'Not checked' : 'Not confirmed covered';
+          const item = document.createElement('li'); item.textContent = `${entry.unitType} ${entry.number}: ${status}${row.offeredKeys.has(id) ? ' · offered here' : ' · not offered here'}`; list.append(item);
+        }
+        if (ordered.length > 100) { const item = document.createElement('li'); item.textContent = `${ordered.length - 100} more compared units`; list.append(item); }
+        details.append(list);
+      }
+      summary.append(details);
+    }
+    const reminders = F.centralReminders([...matches, ...rows]);
+    if (reminders.length || state.failed.size) {
+      const details = document.createElement('details'); details.className = 'fanatical-library-reminders';
+      const heading = document.createElement('summary'); heading.textContent = `Central evidence reminders (${reminders.length + (state.failed.size ? 1 : 0)})`; details.append(heading);
+      const list = document.createElement('ul');
+      if (state.failed.size) { const row = document.createElement('li'); row.textContent = 'Some central lookups failed. Refresh this comparison before deciding that an item is absent.'; list.append(row); }
+      for (const reminder of reminders.slice(0, 100)) { const row = document.createElement('li'); row.textContent = `${reminder.title} · ${reminder.provider}: ${reminder.text}`; list.append(row); }
+      if (reminders.length > 100) { const row = document.createElement('li'); row.textContent = `${reminders.length - 100} more evidence reminders; open the item inspectors to review them.`; list.append(row); }
+      const refresh = document.createElement('button'); refresh.type = 'button'; refresh.textContent = 'Refresh central evidence'; refresh.className = 'fanatical-library-download';
+      refresh.addEventListener('click', () => { state.galactic.clear(); state.failed.clear(); state.revision++; state.summaryDirty = true; schedule(true); });
+      const review = document.createElement('button'); review.type = 'button'; review.textContent = 'Review in Galactic Library'; review.className = 'fanatical-library-download';
+      const output = document.createElement('p'); output.setAttribute('role', 'status'); review.addEventListener('click', () => openCentralReview(review, output));
+      details.append(list, refresh, review, output); summary.append(details);
+    }
+  }
+
   async function render() {
     if (state.rendering) return; const current = route(); if (!current) return;
     const hasStableSummary = !state.summaryDirty && state.url === location.href && Boolean(document.querySelector('[data-fanatical-library-summary]'));
@@ -793,6 +845,7 @@
     if (!hasStableSummary) showPanel('Fanatical Library: loading ownership status…');
     try {
       const [parsed, stored] = await Promise.all([loadPublicBundle(current), chrome.storage.local.get({ fanaticalLibraryItems: [], fanaticalImportSummary: null, galacticLibraryExtensionId: '', fanaticalShowNewItemsOnly: false, fanaticalShowDiagnostics: false })]);
+      if (revision !== state.revision || pageUrl !== location.href) return;
       state.lastImport = stored.fanaticalImportSummary?.importedAt || null;
       diagnosticsEnabled = Boolean(stored.fanaticalShowDiagnostics);
       if (!state.showNewOnlyLoaded) {
@@ -800,11 +853,14 @@
         state.showNewOnlyLoaded = true;
       }
       const allProducts = F.flattenProducts(parsed.products);
-      await queryGalactic(allProducts.filter(product => F.classify(product, stored.fanaticalLibraryItems).state !== 'owned'), stored.galacticLibraryExtensionId);
+      const reading = F.readingTargets(parsed.products);
+      await queryGalactic([...allProducts.filter(product => F.classify(product, stored.fanaticalLibraryItems).state !== 'owned'), ...reading.queries.map(query => query.item)], stored.galacticLibraryExtensionId);
       if (revision !== state.revision || pageUrl !== location.href) return;
       const ownedOffers = parsed.products.filter(product => F.classify(product, stored.fanaticalLibraryItems).state === 'owned');
       const localUnits = F.localContents([...stored.fanaticalLibraryItems, ...ownedOffers]);
       const matches = parsed.products.map((product) => status(product, stored.fanaticalLibraryItems, localUnits));
+      state.reading = F.readingCoverage(reading, [...localUnits, ...F.editionContentsEvidence(matches)], externalResult, state.galacticEnabled);
+      state.readingLimits = reading;
       parsed.products.forEach((product, index) => {
         const card = cardFor(product); if (!card) return;
         let badge;

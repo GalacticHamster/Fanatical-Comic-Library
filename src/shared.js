@@ -5,6 +5,7 @@
   const ROMAN = new Map([['i', '1'], ['ii', '2'], ['iii', '3'], ['iv', '4'], ['v', '5'], ['vi', '6'], ['vii', '7'], ['viii', '8'], ['ix', '9'], ['x', '10']]);
   const FORMAT_WORDS = /\b(?:pdf|cbz|cbr|epub|mobi)\b/giu;
   const indexCache = new WeakMap();
+  const contentsIndexCache = new WeakMap();
 
   function normalizeTitle(value) {
     let result = String(value ?? '').normalize('NFKC')
@@ -21,7 +22,7 @@
 
   function mediaType(value) {
     const type = String(value ?? '').toLowerCase();
-    if (type.includes('comic') || type === 'book') return 'book';
+    if (type.includes('comic') || ['book', 'ebook', 'manga', 'graphic_novel', 'graphic novel'].includes(type)) return 'book';
     if (type.includes('audio') && type.includes('book')) return 'audiobook';
     if (type.includes('audio')) return 'audio';
     if (type.includes('software') || type.includes('asset')) return 'software';
@@ -48,7 +49,7 @@
   }
 
   function editionBase(value) {
-    return normalizeTitle(value).replace(/\s+(?:(?:base(?: game)?|standard|digital deluxe|deluxe|gold|platinum|complete|ultimate|definitive|premium|collectors?|anniversary|remastered|enhanced|goty|game of the year)(?: edition)?|(?:\d+(?:st|nd|rd|th)?|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|revised|updated|expanded|annotated|new)(?:\s+(?:revised|updated))?\s+(?:edition|ed)|soundtrack|dlc|expansion|season pass|bonus content|complete pack|ultimate collection|collection|trilogy)$/iu, '').trim();
+    return normalizeTitle(value).replace(/\s+(?:(?:base(?: game)?|standard|digital deluxe|deluxe|gold|platinum|complete|ultimate|definitive|premium|collectors?|anniversary|remastered|enhanced|goty|game of the year)(?: edition| version)?|(?:\d+(?:st|nd|rd|th)?|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|revised|updated|expanded|annotated|new)(?:\s+(?:revised|updated))?\s+(?:edition|ed)|[\p{L}\p{N}]+ (?:edition|version)|soundtrack|dlc|expansion|season pass|bonus content|complete pack|ultimate collection|collection|trilogy)$/iu, '').trim();
   }
 
   function gamePackageIdentity(title) {
@@ -59,7 +60,7 @@
     if (/\bseason pass\b/u.test(key)) qualifiers.add('season pass');
     if (/\bbonus content\b/u.test(key)) qualifiers.add('bonus content');
     if (/\bdirectors? cut\b/u.test(key)) qualifiers.add('directors cut');
-    for (const match of key.matchAll(/\b([a-z0-9]+) edition\b/gu)) {
+    for (const match of key.matchAll(/([\p{L}\p{N}]+) (?:edition|version)(?:\s|$)/gu)) {
       const name = match[1].replace(/^collector$/u, 'collectors').replace(/^remaster$/u, 'remastered');
       if (!['standard', 'base', 'digital'].includes(name) && !(name === 'year' && qualifiers.has('goty')) && !(name === 'cut' && qualifiers.has('directors cut')) && !(name === 'pass' && qualifiers.has('season pass'))) qualifiers.add(name);
     }
@@ -196,6 +197,12 @@
     for (const field of ['series', 'run', 'issue', 'volume', ...(edition ? ['edition', 'language'] : [])]) {
       if (left[field] && right[field] && scopeKey(left[field]) !== scopeKey(right[field])) reasons.push(`Different ${field}`);
     }
+    const offeredUnits = offerContents({ ...left, title: candidate.title }).entries;
+    const ownedUnits = offerContents({ ...right, title: owned.title }).entries;
+    if (offeredUnits.length === 1 && ownedUnits.length === 1) {
+      for (const name of ['series', 'run', 'unitType']) if (offeredUnits[0][name] && ownedUnits[0][name] && scopeKey(offeredUnits[0][name]) !== scopeKey(ownedUnits[0][name])) reasons.push(`Different ${name}`);
+      if (numberKey(offeredUnits[0].number) !== numberKey(ownedUnits[0].number)) reasons.push('Different issue/volume');
+    }
     if (edition) {
       const l = externalIds(candidate).isbn; const r = externalIds(owned).isbn || validIsbn(owned.evidence?.isbn?.[0]);
       if (l && r && l !== r) reasons.push('Different validated ISBNs');
@@ -207,7 +214,7 @@
 
   function relationshipMatch(item, library) {
     const candidateBase = editionBase(item.title);
-    if (!candidateBase) return null;
+    if (!candidateBase || /^(?:the|a|an|edition|version|game|book|volume)$/u.test(candidateBase)) return null;
     for (const owned of makeIndexes(library).byBase.get(`${mediaType(item.mediaType ?? item.type)}:${candidateBase}`) ?? []) {
       if (!compatibleMedia(item.mediaType ?? item.type, owned.mediaType ?? owned.type)) continue;
       const ownedBase = editionBase(owned.title);
@@ -257,6 +264,8 @@
     if (steamProvesProduct) return { state: 'owned', provenance: 'fanatical', item: steam, reason: 'exact Steam App ID' };
     const isbn = ids.isbn && (indexes.byIsbn.get(ids.isbn) ?? []).find(owned => !identityConflicts(item, owned, true).length);
     if (isbn && compatibleMedia(media, isbn.mediaType ?? isbn.type)) return { state: 'owned', provenance: 'fanatical', item: isbn, reason: 'exact ISBN' };
+    const isbnRelated = (indexes.byIsbn.get(ids.isbn) ?? []).find(owned => compatibleMedia(media, owned.mediaType ?? owned.type) && !identityConflicts(item, owned).length);
+    if (isbnRelated) return { state: 'possible', provenance: 'fanatical', item: isbnRelated, reason: `Owned "${isbnRelated.title}"; offered "${item.title}". Shared validated ISBN but ${identityConflicts(item, isbnRelated, true).join('; ') || 'edition identity needs review'}.` };
     if (steamDifference) return packageRelationship(item, steamDifference, 'Shared Steam App ID identifies the base game only');
     const titleDifference = titleMatches.find((owned) => differentGamePackage(item, owned));
     if (titleDifference) return packageRelationship(item, titleDifference, 'Normalized title hides a package difference');
@@ -268,37 +277,11 @@
     return { state: 'new', provenance: null };
   }
 
-  function galacticOwnershipReview(result) {
-    return (Array.isArray(result?.matches) ? result.matches : []).find((match) => match?.ownership && match.ownership !== 'owned' && match.ownership !== 'claimed');
-  }
-
-  function galacticPossible(result) {
-    return (Array.isArray(result?.possibleMatches) ? result.possibleMatches : []).find((match) => match?.ownership === 'owned' || match?.ownership === 'claimed');
-  }
-
-  function legacyMergeGalactic(local, result, product) {
-    // Exact local ownership is always authoritative; external data never turns
-    // a Fanatical item into a claim about Fanatical ownership.
-    if (local?.state === 'owned' || local?.state === 'partial') return local;
-    const ownedMatches = (Array.isArray(result?.matches) ? result.matches : []).filter((match) => match?.ownership === 'owned' || match?.ownership === 'claimed');
-    const differs = (match) => product && match?.title && differentGamePackage(product, { ...match, mediaType: product.mediaType ?? product.type });
-    const exact = ownedMatches.find((match) => !differs(match) && !(local?.editionDifference && !match?.title));
-    if (exact) return { state: 'owned-elsewhere', provenance: exact.provider, reason: 'exact Galactic Library match' };
-    if (local?.state === 'possible') return local;
-    const editionMatch = ownedMatches.find(differs);
-    if (editionMatch) return { ...packageRelationship(product, editionMatch, 'Galactic Library game relationship'), provenance: editionMatch.provider };
-    const review = galacticOwnershipReview(result);
-    if (review) return { state: 'possible', provenance: review.provider, ownershipReview: true, reason: `exact Galactic Library match with ${review.ownership} ownership status` };
-    const possible = galacticPossible(result);
-    if (possible && differs(possible)) return { ...packageRelationship(product, possible, 'Galactic Library edition relationship'), provenance: possible.provider };
-    return possible ? { state: 'possible', provenance: possible.provider, reason: 'possible Galactic Library relationship' } : (local ?? { state: 'new', provenance: null });
-  }
-
   function offerContents(item) {
     const explicit = contentsMetadata(item);
     if (explicit.contents?.length || explicit.contentsCoverageUnknown) return { entries: explicit.contents ?? [], complete: explicit.contentsComplete === true, uncertain: explicit.contentsCoverageUnknown === true, source: 'Explicit catalog contents' };
     // Title ranges are comparison targets, never an owned collection assertion.
-    const match = /^(.*?)\s+(?:\(([^)]+)\)\s*)?(?:(vol(?:ume)?s?\.?|issues?)\s*|#)(\d+(?:\.\d+|\/\d+)?)(?:\s*[-–]\s*(\d+))?\s*$/iu.exec(String(item?.title ?? ''));
+    const match = /^(.*?)\s+(?:\((\d{4})\)\s*)?(?:(vol(?:ume)?s?\.?|issues?)\s*|#)(\d+(?:\.\d+|\/\d+)?)(?:\s*[-–]\s*(\d+))?\s*$/iu.exec(String(item?.title ?? ''));
     if (!match || !match[1].trim()) return { entries: [], complete: false, uncertain: false };
     const series = item.series || match[1].trim(); const run = item.run || match[2] || ''; const language = item.language || '';
     const first = numberKey(match[4]); const last = match[5] ? Number(match[5]) : null;
@@ -323,15 +306,19 @@
   }
   function coverageFor(target, local, result) {
     const unitToken = entry => JSON.stringify([scopeKey(entry.series), entry.unitType, numberKey(entry.number)]);
-    const index = new Map();
-    for (const entry of [...local, ...(result?.coverage?.covered ?? []), ...(result?.coverage?.possibleCovered ?? []).map(entry => ({ ...entry, uncertain: true }))]) {
-      const id = unitToken(entry); const rows = index.get(id) ?? []; rows.push(entry); index.set(id, rows);
-    }
+    const build = entries => {
+      const index = new Map();
+      for (const entry of entries) { const id = unitToken(entry); const rows = index.get(id) ?? []; rows.push(entry); index.set(id, rows); }
+      return index;
+    };
+    if (!contentsIndexCache.has(local)) contentsIndexCache.set(local, build(local));
+    const localIndex = contentsIndexCache.get(local);
+    const externalIndex = build([...(result?.coverage?.covered ?? []), ...(result?.coverage?.possibleCovered ?? []).map(entry => ({ ...entry, uncertain: true }))]);
     const units = [...new Map(target.entries.filter(entry => entry.completeness === 'full').map(entry => [contentKey(entry), entry])).values()];
     const covered = []; const missing = []; const possibleCovered = [];
     for (const entry of units) {
       const confirmed = []; const possible = [];
-      for (const candidate of index.get(unitToken(entry)) ?? []) {
+      for (const candidate of [...(localIndex.get(unitToken(entry)) ?? []), ...(externalIndex.get(unitToken(entry)) ?? [])]) {
         if (candidate.completeness !== 'full') continue;
         if (entry.run && candidate.run && scopeKey(entry.run) !== scopeKey(candidate.run) || entry.language && candidate.language && scopeKey(entry.language) !== scopeKey(candidate.language)) continue;
         const evidence = (candidate.evidence ?? []).filter(record => permanent(record) && (record.provider !== 'fanatical' || record.item));
@@ -347,22 +334,31 @@
   }
 
   function mergeGalactic(local, result, product, coverage = null) {
-    if (!product) return legacyMergeGalactic(local, result, product);
+    if (!product && local?.state === 'owned') return local;
+    product ||= local?.offered || {};
     const records = (result?.matches ?? []).filter(record => record.provider !== 'fanatical');
+    const strongEdition = record => {
+      if (!['book', 'audiobook'].includes(mediaType(product.mediaType)) || record.relationship === 'same-edition') return true;
+      const isbn = externalIds(product).isbn;
+      const isbns = Array.isArray(record.evidence?.isbn) ? record.evidence.isbn : [record.evidence?.isbn];
+      const authors = bibliographicFields(product).authors;
+      return Boolean(isbn && isbns.map(validIsbn).includes(isbn)
+        || normalizeTitle(product.title) === normalizeTitle(record.title) && authors?.some(author => bibliographicFields(record.evidence || record).authors?.map(scopeKey).includes(scopeKey(author))));
+    };
     const exact = records.find(record => permanent(record) && !(local.editionDifference && !record.title) && record.relationship !== 'same-work' && record.relationship !== 'contains'
-      && !identityConflicts(product, record, true).length && !differentGamePackage(product, { ...record, mediaType: product.mediaType }));
+      && strongEdition(record) && !identityConflicts(product, record, true).length && !differentGamePackage(product, { ...record, mediaType: product.mediaType }));
     let match = local;
     if (local.state !== 'owned') {
       if (exact) match = { state: 'owned-elsewhere', provenance: exact.provider, item: exact, reason: exact.reason || 'exact Galactic Library match' };
       else if (coverage?.owned) {
         const external = coverage.covered.flatMap(entry => entry.evidence).find(record => record.provider !== 'fanatical');
-        match = { state: coverage.complete && coverage.contentsComplete ? (external ? 'owned-elsewhere' : 'owned') : 'partial',
+        match = { state: coverage.complete && coverage.contentsComplete ? (external ? 'owned-elsewhere' : 'owned') : 'partial', item: coverage.covered[0]?.evidence[0],
           provenance: external?.provider || 'fanatical', owned: coverage.owned, total: coverage.total, reason: 'Verified full contents across owned collections' };
       }
       else if (local.state === 'new') {
         const possible = [...records, ...(result?.possibleMatches ?? [])].find(record => record.provider !== 'fanatical');
         if (possible) match = { state: 'possible', provenance: possible.provider, item: possible, ownershipReview: !permanent(possible),
-          reason: `Library item "${possible.title || 'Unnamed record'}": ${possible.reason || possible.relationship || 'Related edition needs review'}${!permanent(possible) ? `; ${possible.ownership || 'unknown'} ownership` : ''}.`, editionDifference: true };
+          reason: `Library item "${possible.title || 'Unnamed record'}": ${possible.reason || possible.relationship || 'Related edition needs review'}${!permanent(possible) ? `; ${possible.ownership || 'unknown'} ownership` : ''}.`, editionDifference: permanent(possible) && possible.title !== product.title };
         else if (coverage?.possibleCovered.length) match = { state: 'possible', provenance: coverage.possibleCovered[0]?.evidence[0]?.provider, reason: 'Potential contents coverage needs run/language confirmation' };
       }
     }
@@ -397,23 +393,30 @@
   }
   function resolveProduct(product, library, localUnits, lookup, depth = 0) {
     const local = classify(product, library);
-    const result = lookup(product);
+    const queried = lookup(product);
+    const result = local.state === 'owned' && queried?.lookupIncomplete ? null : queried;
     const target = offerContents(product);
     const coverage = target.entries.length ? coverageFor(target, localUnits, result) : null;
     const resolved = mergeGalactic(local, result, product, coverage);
+    resolved.contentsLookupIncomplete = target.entries.length > 0 && Boolean(result) && !result.coverage;
+    resolved.lookupIncomplete = result?.lookupIncomplete === true && local.state !== 'owned';
+    if (resolved.lookupIncomplete && resolved.state === 'new') resolved.state = 'unchecked';
     if (depth > 4 || ['owned', 'owned-elsewhere'].includes(resolved.state) || !product.components?.length) return resolved;
     const components = [...new Map(product.components.map(item => [item.sourceItemId || `${item.mediaType}:${normalizeTitle(item.title)}`, item])).values()];
     const matches = components.map(item => resolveProduct(item, library, localUnits, lookup, depth + 1));
     const owned = matches.filter(match => ['owned', 'owned-elsewhere'].includes(match.state)).length;
     resolved.componentMatches = matches;
+    resolved.lookupIncomplete ||= matches.some(match => match.lookupIncomplete);
     if (owned) {
-      resolved.state = owned === components.length && product.componentsComplete === true && !product.componentCoverageUnknown ? 'owned-elsewhere' : 'partial';
+      resolved.state = product.componentCoverageUnknown ? 'possible' : owned === components.length && product.componentsComplete === true ? 'owned-elsewhere' : 'partial';
       resolved.owned = owned; resolved.total = components.length;
       resolved.reason = `Verified ${owned}/${components.length} listed components${product.componentsComplete === true ? '' : '; full package contents are not established'}.`;
       if (resolved.item?.title) resolved.reason += ` owned "${resolved.item.title}"; offered "${product.title}".`;
-    } else if (matches.some(match => match.state === 'possible') && resolved.state === 'new') {
+      if (product.componentCoverageUnknown) resolved.reason += ' Some component metadata is unreadable.';
+    } else if (matches.some(match => match.state === 'possible') && ['new', 'unchecked'].includes(resolved.state)) {
       resolved.state = 'possible'; resolved.reason = 'Related library items for listed components need review.';
     }
+    if (resolved.lookupIncomplete && resolved.state === 'new') resolved.state = 'unchecked';
     return resolved;
   }
   async function queryGalacticItems(requests, send, timeoutMs = 3500) {
@@ -425,7 +428,9 @@
         if (!response?.ok || response.apiVersion !== 1 || !Array.isArray(response.results)) throw new Error('Unsuccessful companion lookup');
         for (const request of batch) {
           const rows = response.results.filter(result => result?.requestId === request.requestId);
-          if (rows.length !== 1 || !Array.isArray(rows[0].matches)) failed.add(request.requestId);
+          const valid = row => Array.isArray(row?.matches) && ['possibleMatches', 'partialMatches'].every(field => row[field] === undefined || Array.isArray(row[field]))
+            && (!row.coverage || typeof row.coverage === 'object' && ['covered', 'possibleCovered', 'missing'].every(field => Array.isArray(row.coverage[field])));
+          if (rows.length !== 1 || !valid(rows[0])) failed.add(request.requestId);
           else results.set(request.requestId, rows[0]);
         }
       } catch { batch.forEach(request => failed.add(request.requestId)); }
@@ -490,7 +495,9 @@
       lines.push(`${label}: ${fields.join(' · ') || 'No bibliographic identity supplied'}`);
     };
     describe('Offered evidence', offered);
+    if (offered.mediaType && !['game', 'book', 'audiobook'].includes(mediaType(offered.mediaType))) lines.push(`Central lookup does not support ${offered.mediaType}; this offer uses local Fanatical evidence only.`);
     if (match.lookupIncomplete) lines.push('Central lookup incomplete. An unavailable or omitted result is not proof of absence.');
+    if (match.contentsLookupIncomplete) lines.push('Central contents coverage was not supplied; unit absence cannot be established from this lookup.');
     lines.push(`Fanatical last successful import: ${lastImport || 'unknown'}. Synced libraries may not cover the entire purchase history.`);
     if (match.localMatch?.reason && match.localMatch.reason !== match.reason) lines.push(`Local comparison: ${match.localMatch.reason}`);
     const records = [match.item, match.localMatch?.item, ...(match.externalResult?.matches || []), ...(match.externalResult?.possibleMatches || []), ...(match.externalResult?.partialMatches || []),
@@ -543,12 +550,12 @@
       const available = parsed.kind !== 'pick-mix' || product.availability?.regionAvailable !== false && product.availability?.soldOut !== true && product.availability?.storeVisible !== false;
       if (!available) continue;
       if (!target.entries.length) { noContentsProducts++; continue; }
-      if (match.lookupIncomplete || match.state === 'unchecked' || target.uncertain) incompleteProducts++;
+      if (match.lookupIncomplete || match.contentsLookupIncomplete || match.state === 'unchecked' || target.uncertain) incompleteProducts++;
       const units = new Set();
       for (const entry of target.entries) {
         if (entry.completeness !== 'full' || covered.has(contentKey(entry))) continue;
         const id = contentKey(entry);
-        if (match.lookupIncomplete || match.state === 'unchecked' || target.uncertain || !entry.run || !entry.language || uncertain.has(id)) uncertain.set(id, entry);
+        if (match.lookupIncomplete || match.contentsLookupIncomplete || match.state === 'unchecked' || target.uncertain || !entry.run || !entry.language || uncertain.has(id)) uncertain.set(id, entry);
         else if (!['owned', 'owned-elsewhere'].includes(match.state)) { additional.set(id, entry); units.add(id); }
         else uncertain.set(id, entry);
       }
@@ -566,6 +573,86 @@
       return { price, additional: totals.size };
     }) : [];
     return { additional: [...additional.values()], covered: [...covered.values()], uncertain: [...uncertain.values()], noContentsProducts, incompleteProducts, tiers };
+  }
+
+  function readingTargets(products) {
+    const groups = new Map(); let unknownScope = 0; let budget = 20000; let limited = false;
+    for (const item of products) {
+      const target = offerContents(item);
+      for (const entry of target.entries) {
+        if (entry.completeness !== 'full') continue;
+        if (!entry.run || !entry.language || target.uncertain) { unknownScope++; continue; }
+        const id = JSON.stringify([scopeKey(entry.series), scopeKey(entry.run), entry.unitType, scopeKey(entry.language)]);
+        const group = groups.get(id) || { ...entry, offered: new Map() }; group.offered.set(contentKey(entry), entry); groups.set(id, group);
+      }
+    }
+    const queries = [];
+    for (const group of groups.values()) {
+      if (budget <= 0 || queries.length >= 100) { limited = true; break; }
+      const offered = [...group.offered.values()]; let entries = offered;
+      const numbers = offered.map(entry => Number(entry.number)).filter(Number.isFinite);
+      const first = Math.ceil(numbers.reduce((value, number) => Math.min(value, number), Infinity)); const last = Math.floor(numbers.reduce((value, number) => Math.max(value, number), -Infinity));
+      let bounded = false;
+      if (['issue', 'volume'].includes(group.unitType) && numbers.length === offered.length && last >= first) {
+        if (last - first < 2000 && last - first < budget) {
+          const template = offered[0];
+          entries = [...new Map([...offered, ...Array.from({ length: last - first + 1 }, (_, index) => ({ ...template, number: String(first + index) }))].map(entry => [contentKey(entry), entry])).values()];
+        } else bounded = true;
+      }
+      if (entries.length > Math.min(2000, budget)) { entries = entries.slice(0, Math.min(2000, budget)); bounded = true; }
+      budget -= entries.length; limited ||= bounded;
+      queries.push({ entries, offeredKeys: new Set(group.offered.keys()), bounded,
+        item: { sourceItemId: `reading-${queries.length + 1}`, title: `${group.series} reading coverage`.slice(0, 500), mediaType: 'book', series: group.series, run: group.run, language: group.language, contents: entries, contentsComplete: false },
+        label: `${group.series} (${group.run}) · ${group.unitType} · ${group.language}` });
+    }
+    return { queries, unknownScope, limited };
+  }
+  function readingCoverage(targets, local, lookup, centralEnabled = false) {
+    return targets.queries.map(query => {
+      const result = lookup(query.item);
+      return { ...query, coverage: coverageFor({ entries: query.entries, complete: false, uncertain: false }, local, result),
+        lookupIncomplete: centralEnabled && !result?.coverage, externalResult: result, offered: query.item };
+    });
+  }
+
+  function editionContentsEvidence(matches) {
+    const entries = [];
+    for (const match of matches) {
+      if (match.state !== 'owned-elsewhere' || !match.offered?.contents?.length) continue;
+      const source = match.item;
+      if (!source || !permanent(source) || ['contains', 'same-work'].includes(source.relationship)) continue;
+      const target = offerContents(match.offered);
+      if (target.uncertain) continue;
+      for (const entry of target.entries) if (entry.completeness === 'full') entries.push({ ...entry, evidence: [{ ...source, relationship: 'contains',
+        reason: 'Confirmed offered edition plus explicit Fanatical catalog contents', evidence: { ...source.evidence, source: `${source.evidence?.source || source.provider}; explicit Fanatical catalog contents` } }] });
+    }
+    return entries;
+  }
+
+  function centralReminders(matches, now = Date.now()) {
+    const reminders = []; const seen = new Set();
+    const add = (record, type, text) => {
+      const id = `${record.provider}:${record.itemRef || record.title}:${type}`;
+      if (seen.has(id)) return; seen.add(id);
+      reminders.push({ type, title: record.title || 'Unnamed central item', provider: record.provider || 'central library', text });
+    };
+    for (const match of matches) {
+      const result = match.externalResult;
+      if (!result) continue;
+      const records = [...(result.matches || []), ...(result.possibleMatches || []), ...(result.partialMatches || []), ...(match.coverage?.covered || []).flatMap(entry => entry.evidence || []), ...(match.coverage?.possibleCovered || []).flatMap(entry => entry.evidence || [])];
+      for (const record of records) {
+        if (record.provider === 'fanatical') continue;
+        if (!permanent(record) && !['owned', 'owned-elsewhere'].includes(match.state)) add(record, 'ownership', `${record.ownership || 'unknown'} ownership${['rental', 'borrowed', 'subscription'].includes(record.ownership) ? '; temporary access does not establish permanent ownership. Expiry dates are unavailable here.' : '; confirm purchase or permanent claim in Galactic Library.'}`);
+        const observed = Date.parse(record.evidence?.checkedAt || '');
+        const reviewed = Date.parse(record.verifiedAt || '');
+        if (!Number.isFinite(observed)) add(record, 'freshness', 'Observation date unavailable; check provider sync and ownership evidence in Galactic Library.');
+        else if (now - observed > 30 * 86400000) add(record, 'freshness', `Last observed ${record.evidence.checkedAt}; refresh provider sync. Age does not revoke a recorded permanent purchase.`);
+        if (Number.isFinite(reviewed) && now - reviewed > 30 * 86400000) add(record, 'contents', `Contents reviewed ${record.verifiedAt}; review edition/contents if the offer differs.`);
+      }
+      if (match.coverage?.possibleCovered.length) reminders.push({ type: 'scope', title: match.offered?.title, provider: 'Galactic Library', text: 'Possible coverage needs run/language confirmation; review its contents scope.' });
+      if (match.contentsLookupIncomplete) reminders.push({ type: 'coverage', title: match.offered?.title, provider: 'Galactic Library', text: 'Central contents coverage was not supplied. Refresh or update the paired library before treating units as absent.' });
+    }
+    return reminders;
   }
 
   function isExtensionId(value) {
@@ -637,5 +724,5 @@
     return hours ? Number(hours[1]) / 24 : null;
   }
 
-  global.FanaticalLibrary = { normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
+  global.FanaticalLibrary = { normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
 }(globalThis));

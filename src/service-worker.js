@@ -15,7 +15,7 @@ async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerp
   const formatsInPage = (downloads) => [...new Set((Array.isArray(downloads) ? downloads : []).flatMap((download) => (Array.isArray(download?.files) ? download.files : []).map((file) => safeTextInPage(file?.format, 32).toLowerCase())).filter(Boolean))].sort();
   const mediaTypeInPage = (value) => {
     const type = safeTextInPage(value).toLowerCase();
-    if (type.includes('comic') || type === 'book') return 'book';
+    if (type.includes('comic') || ['book', 'ebook', 'manga', 'graphic_novel', 'graphic novel'].includes(type)) return 'book';
     if (type.includes('audio') && type.includes('book')) return 'audiobook';
     if (type === 'game') return 'game';
     if (type.includes('software') || type.includes('asset')) return 'software';

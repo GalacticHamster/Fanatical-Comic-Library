@@ -8,9 +8,11 @@ const record = (extra = {}) => ({ provider: 'kindle', title: 'Owned collection',
 const product = (extra = {}) => ({ sourceItemId: 'product-123456', title: 'Saga collection', mediaType: 'book', contents: [unit(1), unit(2)], contentsComplete: true, ...extra });
 
 test('Unicode titles remain distinct and meaningful package labels survive normalization', () => {
+  assert.equal(F.mediaType('manga'), 'book');
+  assert.equal(F.galacticRequestItems([{ sourceItemId: 'manga-123456', title: '進撃の巨人 Vol. 1', mediaType: 'manga' }])[0].mediaType, 'book');
   assert.equal(F.normalizeTitle('進撃の巨人 Vol. 1'), '進撃の巨人 vol 1');
   assert.notEqual(F.titleKey('進撃の巨人'), F.titleKey('鋼の錬金術師'));
-  for (const edition of ['Deluxe', 'Gold', 'Platinum', 'Ultimate']) {
+  for (const edition of ['Deluxe', 'Gold', 'Platinum', 'Ultimate', 'Super', 'Ruby']) {
     const base = { sourceItemId: 'base-123456', title: 'Hades', mediaType: 'game' };
     const variant = { sourceItemId: 'other-123456', title: `Hades ${edition} Edition`, mediaType: 'game' };
     assert.equal(F.classify(base, [variant]).state, 'possible');
@@ -37,6 +39,17 @@ test('invalid ISBNs cannot establish identity or enter central identifiers', () 
   assert.equal(F.validIsbn('0306406152'), '9780306406157');
   const request = F.galacticRequestItems([product({ externalIds: { isbn: '9781234567890' } })])[0];
   assert.equal(request.identifiers, undefined);
+});
+test('a shared validated identifier with an edition/language conflict remains Possible even for renamed titles', () => {
+  const owned = { sourceItemId: 'owned-123456', title: 'Earlier title', mediaType: 'book', language: 'en', externalIds: { isbn: '0306406152' } };
+  const offer = { title: 'Renamed title', mediaType: 'book', language: 'ja', externalIds: { isbn: '9780306406157' } };
+  const match = F.classify(offer, [owned]);
+  assert.equal(match.state, 'possible'); assert.match(match.reason, /Different language/);
+});
+test('known numbered-volume and run conflicts cannot be overridden by a duplicated valid ISBN', () => {
+  const owned = { sourceItemId: 'owned-123456', title: 'Saga (2020) Vol. 1', mediaType: 'book', externalIds: { isbn: '9780306406157' } };
+  assert.equal(F.classify({ ...owned, sourceItemId: 'offer-123456', title: 'Saga (2020) Vol. 2' }, [owned]).state, 'new');
+  assert.equal(F.classify({ ...owned, sourceItemId: 'offer-123456', title: 'Saga (2021) Vol. 1' }, [owned]).state, 'new');
 });
 test('requests transfer bibliographic evidence and explicit contents without purchase-bearing leaves', () => {
   const request = F.galacticRequestItems([product({ externalIds: { isbn: '0306406152' }, authors: ['Writer'], run: '2020', language: 'en', key: 'SECRET', bundle: { sourceItemId: 'SECRET' } })])[0];
@@ -68,6 +81,13 @@ test('same-work, contains and temporary exact records cannot imply ownership of 
   }
   assert.equal(F.mergeGalactic({ state: 'new' }, { matches: [record({ provider: 'fanatical', relationship: 'same-edition' })] }, product()).state, 'new');
 });
+test('older title-only book matches remain Possible while compatible identifier evidence can prove an edition', () => {
+  const legacy = { matches: [record({ title: 'Saga collection', relationship: undefined })] };
+  assert.equal(F.mergeGalactic({ state: 'new' }, legacy, product()).state, 'possible');
+  const identified = product({ externalIds: { isbn: '9780306406157' } });
+  legacy.matches[0].evidence.isbn = ['0306406152'];
+  assert.equal(F.mergeGalactic({ state: 'new' }, legacy, identified).state, 'owned-elsewhere');
+});
 test('coverage unions scoped local and central contents, including fraction equivalence', () => {
   const local = F.localContents([{ sourceItemId: 'local-123456', title: 'Saga #1', run: '2020', language: 'en' }]);
   const result = { coverage: { covered: [{ ...unit(2), evidence: [record()] }] } };
@@ -98,6 +118,17 @@ test('enumerated game components resolve across local and central ownership', ()
   const lookup = item => item === extra ? { matches: [record({ title: extra.title, relationship: 'same-edition', provider: 'steam' })] } : null;
   assert.equal(F.resolveProduct(offer, [local], [], lookup).state, 'partial');
   assert.equal(F.resolveProduct({ ...offer, componentsComplete: true }, [local], [], lookup).state, 'owned-elsewhere');
+  assert.equal(F.resolveProduct({ ...offer, componentCoverageUnknown: true }, [local], [], lookup).state, 'possible');
+});
+test('non-Latin package qualifiers cannot turn a shared base App ID into edition ownership', () => {
+  const base = { sourceItemId: 'base-123456', title: 'Hades', mediaType: 'game', externalIds: { steamAppId: '42' } };
+  assert.equal(F.classify({ ...base, sourceItemId: 'other-123456', title: 'Hades 幻想 Edition' }, [base]).state, 'possible');
+});
+test('a missing component lookup cannot make an unresolved package a confirmed-new purchase', () => {
+  const component = { sourceItemId: 'component-123456', title: 'Hades soundtrack', mediaType: 'game' };
+  const offer = { sourceItemId: 'offer-123456', title: 'Hades Deluxe Edition', mediaType: 'game', components: [component] };
+  const match = F.resolveProduct(offer, [], [], item => item === component ? { matches: [], lookupIncomplete: true } : { matches: [] });
+  assert.equal(match.state, 'unchecked'); assert.equal(match.lookupIncomplete, true);
 });
 test('batch limits apply to both item counts and total contents, including large catalogs', () => {
   const rows = Array.from({ length: 501 }, (_, index) => ({ requestId: String(index), title: 'Title', mediaType: 'book' }));
