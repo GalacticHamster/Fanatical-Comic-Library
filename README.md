@@ -72,9 +72,25 @@ fanaticalCatalogueFilters: { hidePurchased, endingSoon }
 The export uses the same allowlisted ownership data; scan fingerprints are
 local importer state and are not exported.
 
+## Scan safety
+
+Scans validate the observed order-list array and the identity/status/structure
+of every requested completed order before making a single storage update.
+Order details must include every product occurrence named in their summaries;
+unknown structures, missing leaves, invalid JSON, partial HTTP responses and
+pagination indicators abort the scan. Failed scans leave library records,
+scan fingerprints and the last successful summary unchanged.
+
+A valid empty array is distinguished from an unreadable response. If the list
+omits previously scanned orders (including an unexpectedly empty list), the
+scan refuses to declare complete coverage. This conservative guard also means
+switching Fanatical accounts requires exporting and clearing the previous
+account's local library first. No raw order IDs or response bodies leave the
+page context.
+
 ## Automated checks
 
-Run `npm test` for parser, matching, privacy, backup validation and options
+Run `npm test` for parser, matching, privacy, scan safety, backup validation and options
 behavior tests. Run `npm run browser-check` for real-DOM checks in isolated
 headless Chrome profiles, using mock data on localhost (no signed-in session).
 Set `CHROME_PATH` if Chrome is not installed at its usual Windows path.
@@ -108,7 +124,11 @@ signed-in flows still need the manual checks below.
 
 ## Known limitations
 
-- `/api/user/orders` pagination is not validated on a large history.
+- `/api/user/orders` pagination is not validated on a large history. Detectable
+  partial histories are rejected; only the observed unpaginated array contract
+  is supported. Silent server-side truncation without metadata or missing
+  known orders cannot be ruled out on a first scan.
+- Unrecognized purchase layouts are rejected rather than silently skipped.
 - A game order containing activation data has not been live-tested; the
   allowlist and adversarial tests deliberately exclude those fields.
 - Product-card DOM selectors are heuristic and need validation across all

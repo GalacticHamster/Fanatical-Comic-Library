@@ -46,6 +46,24 @@ export function parseLibraryBackup(value) {
   return sanitizeImportResult(value).items;
 }
 
+/** Do not let tolerant sanitization turn a broken scan into an empty rebuild. */
+export function validateScanResult(value, { fullScan = false, knownOrderFingerprints = [] } = {}) {
+  const fail = () => { throw new Error('Fanatical scan was unreadable or incomplete. Your library and scan history were not changed.'); };
+  const integer = (number) => Number.isSafeInteger(number) && number >= 0;
+  if (!value || value.schemaVersion !== 1 || value.coverage?.complete !== true || !integer(value.ordersScanned) || !integer(value.ordersAvailable)
+    || !integer(value.coverage.listedOrders) || value.coverage.listedOrders < value.ordersAvailable || value.coverage.validatedOrders !== value.ordersScanned
+    || value.coverage.emptyAccount !== (value.coverage.listedOrders === 0) || !Array.isArray(value.items) || !Array.isArray(value.orderFingerprints)) fail();
+  const fingerprints = value.orderFingerprints;
+  if (fingerprints.length !== value.ordersAvailable || fingerprints.some((fingerprint) => typeof fingerprint !== 'string' || !/^[a-f0-9]{64}$/u.test(fingerprint)) || new Set(fingerprints).size !== fingerprints.length) fail();
+  const known = new Set(knownOrderFingerprints);
+  const expected = fullScan ? value.ordersAvailable : fingerprints.filter((fingerprint) => !known.has(fingerprint)).length;
+  if (value.ordersScanned !== expected || (expected > 0 && !value.items.length) || (expected === 0 && value.items.length)) fail();
+  if (value.items.some((item) => item?.source !== 'fanatical' || typeof item.sourceItemId !== 'string' || !safeId(item.sourceItemId) || !safeText(item.title) || !safeId(item.bundle?.sourceItemId) || !safeText(item.bundle?.title))) fail();
+  const projected = sanitizeImportResult(value);
+  if (projected.items.length !== value.items.length) fail();
+  return { ...projected, coverage: { complete: true, listedOrders: value.coverage.listedOrders, validatedOrders: value.coverage.validatedOrders, emptyAccount: value.coverage.emptyAccount } };
+}
+
 export function createLibraryBackup(items, summary, exportedAt = new Date().toISOString()) {
   // Scan metadata is informational only: restore never trusts its skip history.
   const safeSummary = summary && ['full', 'quick'].includes(summary.scanMode) ? {
