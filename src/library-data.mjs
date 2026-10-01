@@ -1,4 +1,5 @@
 // Shared by the purchase importer and backup UI. Never persist raw input.
+import './shared.js';
 const safeText = (value, max = 500) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 export const safeId = (value) => /^[a-zA-Z0-9_-]{6,128}$/u.test(String(value ?? '')) ? String(value) : '';
 const safeDate = (value) => typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? new Date(value).toISOString() : null;
@@ -21,6 +22,7 @@ export function sanitizeImportResult(value) {
       ...(safeText(candidate?.slug, 300) ? { slug: safeText(candidate.slug, 300) } : {}),
       mediaType: ['game', 'book', 'audiobook', 'software', 'audio', 'elearning', 'other'].includes(candidate?.mediaType) ? candidate.mediaType : 'other',
       ...(Object.keys(externalIds).length ? { externalIds } : {}),
+      ...globalThis.FanaticalLibrary.bibliographicFields(candidate),
       ...(safeList(candidate?.drm).length ? { drm: safeList(candidate.drm) } : {}),
       ...(safeList(candidate?.platforms).length ? { platforms: safeList(candidate.platforms) } : {}),
       ...(safeList(candidate?.formats).length ? { formats: safeList(candidate.formats) } : {}),

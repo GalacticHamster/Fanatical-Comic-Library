@@ -29,11 +29,19 @@ async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerp
     const steam = leaf?.steam?.id === undefined || leaf?.steam?.id === null ? '' : String(leaf.steam.id);
     const isbn = safeTextInPage(leaf?.isbn, 32).replace(/[^0-9X]/giu, '');
     const externalIds = { ...(steam ? { steamAppId: steam } : {}), ...(isbn ? { isbn } : {}) };
+    const catalog = {};
+    for (const name of ['language', 'edition', 'series', 'run', 'volume', 'issue', 'publisher']) {
+      if (safeTextInPage(leaf?.[name])) catalog[name] = safeTextInPage(leaf[name]);
+    }
+    const authors = Array.isArray(leaf?.authors) ? leaf.authors : typeof leaf?.author === 'string' ? [leaf.author] : [];
+    const names = [...new Set(authors.map(value => safeTextInPage(value)).filter(Boolean))].slice(0, 50);
+    if (names.length) catalog.authors = names;
     return {
       source: 'fanatical', sourceItemId, title,
       ...(safeTextInPage(leaf?.slug, 300) ? { slug: safeTextInPage(leaf.slug, 300) } : {}),
       mediaType: mediaTypeInPage(leaf?.display_type ?? leaf?.type),
       ...(Object.keys(externalIds).length ? { externalIds } : {}),
+      ...catalog,
       ...(trueKeysInPage(leaf?.drm).length ? { drm: trueKeysInPage(leaf.drm) } : {}),
       ...(trueKeysInPage(leaf?.platforms ?? leaf?.os).length ? { platforms: trueKeysInPage(leaf.platforms ?? leaf.os) } : {}),
       ...(formatsInPage(leaf?.downloads).length ? { formats: formatsInPage(leaf.downloads) } : {}),

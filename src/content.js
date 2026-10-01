@@ -3,7 +3,7 @@
   const F = globalThis.FanaticalLibrary;
   if (!F) return;
   const titleCollator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
-  const state = { url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false, showNewOnlyLoaded: false, pickMixReflow: [], summaryDirty: false, summaryMinimized: false };
+  const state = { url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), requests: new Map(), failed: new Set(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false, showNewOnlyLoaded: false, pickMixReflow: [], summaryDirty: false, summaryMinimized: false, revision: 0 };
   const catalogueState = { items: null, filters: null, rendering: false };
   let observer = null;
   let diagnosticsEnabled = false;
@@ -375,26 +375,35 @@
   }
 
   async function queryGalactic(products, extensionId) {
-    state.galactic.clear();
     state.galacticEnabled = F.isExtensionId(extensionId);
     if (!state.galacticEnabled) { state.galacticStatus = 'Not configured.'; return; }
-    const requests = F.galacticRequestItems(products);
-    if (!requests.length) { state.galacticStatus = 'No compatible new items to check.'; return; }
-    let timeout;
-    state.galacticStatus = `Checking ${requests.length} item${requests.length === 1 ? '' : 's'}…`;
-    try {
-      for (let offset = 0; offset < requests.length; offset += 500) {
-        const response = await Promise.race([chrome.runtime.sendMessage(extensionId, { type: 'MATCH_ITEMS', apiVersion: 1, items: requests.slice(offset, offset + 500) }), new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('timeout')), 3500); })]);
-        if (response?.ok && response.apiVersion === 1 && Array.isArray(response.results)) for (const result of response.results) state.galactic.set(String(result?.requestId), result);
-      }
-      const exact = [...state.galactic.values()].filter((result) => (Array.isArray(result?.matches) ? result.matches : []).some((match) => match?.ownership === 'owned' || match?.ownership === 'claimed')).length;
-      state.galacticStatus = `Available. ${exact} exact external match${exact === 1 ? '' : 'es'}.`;
-    } catch { state.galactic.clear(); state.galacticStatus = 'Unavailable; showing local Fanatical results only.'; } finally { clearTimeout(timeout); }
+    const requests = [...new Map(F.galacticRequestItems(products).map(request => { request.requestId = requestId(request); return [request.requestId, request]; })).values()].filter(request => !state.galactic.has(request.requestId));
+    const revision = state.revision;
+    const lookup = await F.queryGalacticItems(requests, message => chrome.runtime.sendMessage(extensionId, message));
+    if (revision !== state.revision) return;
+    for (const [id, result] of lookup.results) { state.galactic.set(id, result); state.failed.delete(id); }
+    for (const id of lookup.failed) state.failed.add(id);
+    state.galacticStatus = state.failed.size ? `Incomplete: ${state.failed.size} lookups failed; absence is not established.` : `Available. ${state.galactic.size} items checked; not found means not found in synced libraries.`;
   }
 
-  function status(product, localItems) {
-    const local = F.classify(product, localItems);
-    return F.mergeGalactic(local, state.galactic.get(product.sourceItemId), product);
+  function requestId(request) {
+    const { requestId: ignored, ...evidence } = request;
+    const key = JSON.stringify(evidence);
+    if (!state.requests.has(key)) state.requests.set(key, `fan-${state.requests.size + 1}`);
+    return state.requests.get(key);
+  }
+  function externalResult(product) {
+    const request = F.galacticRequestItems([product])[0];
+    return request ? state.galactic.get(requestId(request)) : null;
+  }
+  function status(product, localItems, localUnits) {
+    const result = externalResult(product);
+    const match = F.resolveProduct(product, localItems, localUnits, externalResult);
+    if (state.galacticEnabled && !result && ['game', 'book', 'audiobook'].includes(product.mediaType)) {
+      match.lookupIncomplete = true;
+      if (match.state === 'new') { match.state = 'unchecked'; match.reason = 'Central lookup incomplete; no absence claim is available.'; }
+    }
+    return match;
   }
 
   function cardContainer(anchor) {
@@ -630,12 +639,13 @@
   }
 
   function renderSummary(parsed, matches, localItems) {
-    const counts = { owned: 0, elsewhere: 0, partial: 0, possible: 0, new: 0 };
+    const counts = { owned: 0, elsewhere: 0, partial: 0, possible: 0, new: 0, unchecked: 0 };
     for (const match of matches) {
       if (match.state === 'owned') counts.owned++;
       else if (match.state === 'owned-elsewhere') counts.elsewhere++;
       else if (match.state === 'partial') counts.partial++;
       else if (match.state === 'possible') counts.possible++;
+      else if (match.state === 'unchecked') counts.unchecked++;
       else counts.new++;
     }
     const detail = parsed.kind === 'pick-mix' ? ` Available unowned: ${matches.filter((match, i) => match.state === 'new' && parsed.products[i].availability.regionAvailable && !parsed.products[i].availability.soldOut).length}. Selected (page UI): ${selectedCount(parsed.products)}.` : '';
@@ -643,6 +653,7 @@
     const element = panel();
     const heading = document.createElement('strong'); heading.textContent = `Your Fanatical items: ${counts.owned} owned${counts.elsewhere ? ` · ${counts.elsewhere} elsewhere` : ''} · ${counts.new} new${counts.possible ? ` · ${counts.possible} possible` : ''}`; element.append(heading);
     heading.textContent = `Your Fanatical items: ${counts.owned} owned${counts.elsewhere ? ` \u00b7 ${counts.elsewhere} elsewhere` : ''} \u00b7 ${counts.new} new${counts.partial ? ` \u00b7 ${counts.partial} partial` : ''}${counts.possible ? ` \u00b7 ${counts.possible} possible` : ''}`;
+    if (counts.unchecked) heading.textContent += ` · ${counts.unchecked} not checked`;
     const purchase = (Array.isArray(localItems) ? localItems : []).find((item) => item?.bundle?.sourceItemId === parsed.sourceItemId);
     if (purchase?.purchaseDate) {
       const notice = document.createElement('p'); notice.className = 'fanatical-library-purchased';
@@ -698,7 +709,7 @@
       tierDownload = document.createElement('button'); tierDownload.type = 'button'; tierDownload.className = 'fanatical-library-download'; tierDownload.textContent = 'Download complete tier list'; tierDownload.addEventListener('click', () => downloadTierList(parsed, matches));
     }
     if (detail || rates) { const extra = document.createElement('div'); extra.textContent = `${detail}${rates ? ` USD: ${rates}.` : ''}`; element.append(extra); }
-    for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partially owned'], ['possible', 'Possible matches']]) {
+    for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'Not found'], ['partial', 'Partially owned'], ['possible', 'Possible matches'], ['unchecked', 'Not checked']]) {
       const entries = parsed.products.filter((_product, index) => (state === 'owned-elsewhere' ? matches[index].state === 'owned-elsewhere' : matches[index].state === state));
       if (!entries.length) continue;
       const detailList = document.createElement('details'); detailList.className = 'fanatical-library-title-list'; const title = document.createElement('summary'); title.textContent = `${label} (${entries.length})`; detailList.append(title); const list = document.createElement('ol'); alphabetize(entries).forEach((product) => {
@@ -716,6 +727,7 @@
     if (state.rendering) return; const current = route(); if (!current) return;
     const hasStableSummary = !state.summaryDirty && state.url === location.href && Boolean(document.querySelector('[data-fanatical-library-summary]'));
     state.rendering = true;
+    const revision = state.revision; const pageUrl = location.href;
     const startedAt = performance.now();
     observer?.disconnect();
     if (!hasStableSummary) showPanel('Fanatical Library: loading ownership status…');
@@ -726,8 +738,11 @@
         state.showNewOnly = Boolean(stored.fanaticalShowNewItemsOnly);
         state.showNewOnlyLoaded = true;
       }
-      await queryGalactic(parsed.products.filter((product) => F.classify(product, stored.fanaticalLibraryItems).state === 'new'), stored.galacticLibraryExtensionId);
-      const matches = parsed.products.map((product) => status(product, stored.fanaticalLibraryItems));
+      const allProducts = F.flattenProducts(parsed.products);
+      await queryGalactic(allProducts.filter(product => F.classify(product, stored.fanaticalLibraryItems).state !== 'owned'), stored.galacticLibraryExtensionId);
+      if (revision !== state.revision || pageUrl !== location.href) return;
+      const localUnits = F.localContents(stored.fanaticalLibraryItems);
+      const matches = parsed.products.map((product) => status(product, stored.fanaticalLibraryItems, localUnits));
       parsed.products.forEach((product, index) => {
         const card = cardFor(product); if (!card) return;
         F.upsertBadge(card, product.sourceItemId, matches[index], card.querySelector('.cover-container') ?? card);
@@ -766,6 +781,7 @@
     } finally {
       state.rendering = false;
       observer?.observe(document.documentElement, { childList: true, subtree: true });
+      if (revision !== state.revision || pageUrl !== location.href) schedule(true);
     }
   }
 
@@ -794,7 +810,9 @@
   observer.observe(document.documentElement, { childList: true, subtree: true });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
-    if (changes.fanaticalLibraryItems || changes.galacticLibraryExtensionId) state.summaryDirty = true;
+    if (changes.fanaticalLibraryItems || changes.galacticLibraryExtensionId) {
+      state.summaryDirty = true; state.revision++; state.galactic.clear(); state.failed.clear();
+    }
     if (changes.fanaticalLibraryItems || changes.fanaticalShowDiagnostics) catalogueState.items = null;
     if (changes.fanaticalCatalogueFilters) catalogueState.filters = catalogueFilters(changes.fanaticalCatalogueFilters.newValue);
     schedule(true);

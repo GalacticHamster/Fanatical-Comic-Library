@@ -3,14 +3,14 @@
   'use strict';
 
   const ROMAN = new Map([['i', '1'], ['ii', '2'], ['iii', '3'], ['iv', '4'], ['v', '5'], ['vi', '6'], ['vii', '7'], ['viii', '8'], ['ix', '9'], ['x', '10']]);
-  const FORMAT_WORDS = /\b(?:pdf|cbz|cbr|epub|mobi|kindle|digital\s+edition|soundtrack)\b/giu;
-  const EDITION_WORDS = /\b(?:\d+(?:st|nd|rd|th)|first|second|third|revised|updated|expanded|deluxe|gold|complete|ultimate|collector'?s?)\s*(?:edition|ed\.?|version)?\b/giu;
+  const FORMAT_WORDS = /\b(?:pdf|cbz|cbr|epub|mobi)\b/giu;
+  const indexCache = new WeakMap();
 
   function normalizeTitle(value) {
-    let result = String(value ?? '').normalize('NFKD').replace(/[\u0300-\u036f]/gu, '')
+    let result = String(value ?? '').normalize('NFKC')
       .toLowerCase().replace(/&/gu, ' and ').replace(FORMAT_WORDS, ' ')
       .replace(/\bvolume\b|\bvol\.?\b/giu, ' vol ').replace(/[’'`]/gu, '')
-      .replace(/[^a-z0-9]+/gu, ' ').trim();
+      .replace(/[^\p{L}\p{N}\p{M}]+/gu, ' ').trim();
     result = result.replace(/\b(i|ii|iii|iv|v|vi|vii|viii|ix|x)\b/gu, (word) => ROMAN.get(word) ?? word);
     return result.replace(/\s+/gu, ' ');
   }
@@ -43,18 +43,18 @@
     const isbn = item?.externalIds?.isbn ?? item?.isbn;
     return {
       ...(steam !== undefined && steam !== null && String(steam) !== '' ? { steamAppId: String(steam) } : {}),
-      ...(isbn ? { isbn: String(isbn).replace(/[^0-9X]/giu, '') } : {})
+      ...(validIsbn(isbn) ? { isbn: validIsbn(isbn) } : {})
     };
   }
 
   function editionBase(value) {
-    return titleKey(value).replace(EDITION_WORDS, ' ').replace(/\s+/gu, ' ').trim();
+    return normalizeTitle(value).replace(/\s+(?:(?:base(?: game)?|standard|digital deluxe|deluxe|gold|platinum|complete|ultimate|definitive|premium|collectors?|anniversary|remastered|enhanced|goty|game of the year)(?: edition)?|(?:\d+(?:st|nd|rd|th)?|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|revised|updated|expanded|annotated|new)(?:\s+(?:revised|updated))?\s+(?:edition|ed)|soundtrack|dlc|expansion|season pass|bonus content|complete pack|ultimate collection|collection|trilogy)$/iu, '').trim();
   }
 
   function gamePackageIdentity(title) {
-    const key = String(title ?? '').normalize('NFKD').toLowerCase().replace(/[’']/gu, '').replace(/[^a-z0-9]+/gu, ' ').trim();
+    const key = scopeKey(title);
     const qualifiers = new Set();
-    for (const match of key.matchAll(/\b(deluxe|gold|complete|ultimate|definitive|premium|collectors?|goty|enhanced|anniversary|remaster(?:ed)?|soundtrack|dlc|expansion|pack|package|bundle|collection|upgrade)\b/gu)) qualifiers.add(match[1].replace(/^collector$/u, 'collectors').replace(/^remaster$/u, 'remastered'));
+    for (const match of key.matchAll(/\b(deluxe|gold|platinum|complete|ultimate|definitive|premium|collectors?|goty|enhanced|anniversary|remaster(?:ed)?|soundtrack|dlc|expansion|pack|package|bundle|collection|upgrade)\b/gu)) qualifiers.add(match[1].replace(/^collector$/u, 'collectors').replace(/^remaster$/u, 'remastered'));
     if (/\bgame of the year\b/u.test(key)) qualifiers.add('goty');
     if (/\bseason pass\b/u.test(key)) qualifiers.add('season pass');
     if (/\bbonus content\b/u.test(key)) qualifiers.add('bonus content');
@@ -90,7 +90,7 @@
       if (!title) { incomplete = true; continue; }
       components.push({ sourceItemId: String(entry.sourceItemId ?? entry._id ?? ''), title,
         mediaType: mediaType(entry.mediaType ?? entry.display_type ?? entry.type ?? fallbackMedia), externalIds: externalIds(entry),
-        ...bibliographicFields(entry), ...contentsMetadata(entry),
+        ...bibliographicFields(entry), ...contentsMetadata(entry), componentsComplete: entry.componentsComplete === true,
         ...componentMetadata(entry.components, fallbackMedia, depth + 1) });
     }
     return { components, ...(incomplete ? { componentCoverageUnknown: true } : {}) };
@@ -145,6 +145,8 @@
         unitType: entry.unitType, number: numberKey(entry.number).slice(0, 500), language: typeof entry.language === 'string' ? entry.language.trim().slice(0, 500) : '', completeness: entry.completeness };
       if (unit.number) contents.push(unit); else incomplete = true;
     }
+    const excerptKeys = new Set(contents.filter(entry => entry.completeness === 'excerpt').map(contentKey));
+    if (contents.some(entry => entry.completeness === 'full' && excerptKeys.has(contentKey(entry)))) incomplete = true;
     return { contents: [...new Map(contents.map(entry => [contentKey(entry) + ':' + entry.completeness, entry])).values()],
       contentsComplete: raw.contentsComplete === true && !incomplete,
       ...(incomplete ? { contentsCoverageUnknown: true } : {}) };
@@ -169,28 +171,50 @@
   }
 
   function makeIndexes(items) {
-    const byId = new Map(); const bySteam = new Map(); const byIsbn = new Map(); const byTitle = new Map();
+    if (indexCache.has(items)) return indexCache.get(items);
+    const byId = new Map(); const bySteam = new Map(); const byIsbn = new Map(); const byTitle = new Map(); const byBase = new Map();
     for (const item of items ?? []) {
-      if (!item || !item.sourceItemId) continue;
-      byId.set(String(item.sourceItemId), item);
+      if (!item) continue;
+      if (item.sourceItemId) byId.set(String(item.sourceItemId), item);
       const ids = externalIds(item);
       if (ids.steamAppId) bySteam.set(ids.steamAppId, [...(bySteam.get(ids.steamAppId) ?? []), item]);
-      if (ids.isbn) byIsbn.set(ids.isbn, item);
+      if (ids.isbn) byIsbn.set(ids.isbn, [...(byIsbn.get(ids.isbn) ?? []), item]);
       const key = `${mediaType(item.mediaType ?? item.type)}:${titleKey(item.title)}`;
       if (item.title) byTitle.set(key, [...(byTitle.get(key) ?? []), item]);
+      const base = `${mediaType(item.mediaType ?? item.type)}:${editionBase(item.title)}`;
+      if (item.title) byBase.set(base, [...(byBase.get(base) ?? []), item]);
     }
-    return { byId, bySteam, byIsbn, byTitle };
+    const index = { byId, bySteam, byIsbn, byTitle, byBase };
+    indexCache.set(items, index);
+    return index;
+  }
+
+  function identityConflicts(candidate, owned, edition = false) {
+    const left = bibliographicFields(candidate); const right = bibliographicFields(owned.evidence ? { ...owned.evidence, title: owned.title } : owned);
+    const reasons = [];
+    if (left.authors?.length && right.authors?.length && !left.authors.some(author => right.authors.map(scopeKey).includes(scopeKey(author)))) reasons.push('Different known authors');
+    for (const field of ['series', 'run', 'issue', 'volume', ...(edition ? ['edition', 'language'] : [])]) {
+      if (left[field] && right[field] && scopeKey(left[field]) !== scopeKey(right[field])) reasons.push(`Different ${field}`);
+    }
+    if (edition) {
+      const l = externalIds(candidate).isbn; const r = externalIds(owned).isbn || validIsbn(owned.evidence?.isbn?.[0]);
+      if (l && r && l !== r) reasons.push('Different validated ISBNs');
+      if (editionBase(candidate.title) === editionBase(owned.title) && normalizeTitle(candidate.title) !== normalizeTitle(owned.title)
+        && (mediaType(candidate.mediaType) !== 'game' || gamePackageIdentity(candidate.title) !== gamePackageIdentity(owned.title))) reasons.push('Different edition/package wording');
+    }
+    return reasons;
   }
 
   function relationshipMatch(item, library) {
     const candidateBase = editionBase(item.title);
     if (!candidateBase) return null;
-    for (const owned of library) {
+    for (const owned of makeIndexes(library).byBase.get(`${mediaType(item.mediaType ?? item.type)}:${candidateBase}`) ?? []) {
       if (!compatibleMedia(item.mediaType ?? item.type, owned.mediaType ?? owned.type)) continue;
       const ownedBase = editionBase(owned.title);
       if (ownedBase !== candidateBase) continue;
+      if (identityConflicts(item, owned).length) continue;
       const differs = titleKey(item.title) !== titleKey(owned.title);
-      if (differs) return { item: owned, reason: /\b(?:edition|deluxe|gold|complete|ultimate|revised|updated)\b/iu.test(`${item.title} ${owned.title}`) ? 'edition relationship' : 'qualified title relationship' };
+      if (differs) return { item: owned, reason: `Owned "${owned.title}"; offered "${item.title}". Related edition/package; ${identityConflicts(item, owned, true).join('; ') || 'edition identity needs review'}.` };
     }
     return null;
   }
@@ -211,7 +235,7 @@
     if (uniqueComponents.length) {
       const componentMatches = uniqueComponents.map((component) => classify(component, library, visited, true));
       const owned = componentMatches.filter((match) => match.state === 'owned').length;
-      if (owned === uniqueComponents.length && !item.componentCoverageUnknown) return { state: 'owned', provenance: 'fanatical', reason: 'all enumerable components owned' };
+      if (owned === uniqueComponents.length && !item.componentCoverageUnknown && item.componentsComplete === true) return { state: 'owned', provenance: 'fanatical', reason: 'all enumerable components owned' };
       if (owned) {
         const evidence = steamDifference ?? componentMatches.find((match) => match.state === 'owned' && match.item)?.item;
         return { state: item.componentCoverageUnknown ? 'possible' : 'partial', provenance: 'fanatical', owned, total: uniqueComponents.length,
@@ -221,18 +245,24 @@
     }
     const hasComponents = uniqueComponents.length > 0 || item?.componentCoverageUnknown === true;
     const titleMatches = indexes.byTitle.get(`${media}:${titleKey(item?.title)}`) ?? [];
-    const exact = titleMatches.find((owned) => !differentGamePackage(item, owned));
+    const compatibleTitles = titleMatches.filter(owned => !identityConflicts(item, owned).length);
+    const literal = value => String(value ?? '').normalize('NFKC').trim().toLowerCase();
+    const exact = compatibleTitles.find((owned) => !differentGamePackage(item, owned) && !identityConflicts(item, owned, true).length
+      && (media === 'game' && normalizeTitle(item.title) === normalizeTitle(owned.title)
+        || compatibleTitles.length === 1 && literal(item.title) === literal(owned.title)
+        || normalizeTitle(item.title) === normalizeTitle(owned.title) && bibliographicFields(item).authors?.some(author => bibliographicFields(owned).authors?.map(scopeKey).includes(scopeKey(author)))));
     if (exact && !hasComponents) return { state: 'owned', provenance: 'fanatical', item: exact, reason: 'exact normalized title' };
     const steam = steamMatches.find((owned) => !differentGamePackage(item, owned));
-    const steamProvesProduct = steam && !hasComponents && !componentProof && (media !== 'game' || !gamePackageIdentity(item?.title));
+    const steamProvesProduct = steam && !hasComponents && !componentProof && !identityConflicts(item, steam, true).length && (media !== 'game' || !gamePackageIdentity(item?.title));
     if (steamProvesProduct) return { state: 'owned', provenance: 'fanatical', item: steam, reason: 'exact Steam App ID' };
-    const isbn = ids.isbn && indexes.byIsbn.get(ids.isbn);
+    const isbn = ids.isbn && (indexes.byIsbn.get(ids.isbn) ?? []).find(owned => !identityConflicts(item, owned, true).length);
     if (isbn && compatibleMedia(media, isbn.mediaType ?? isbn.type)) return { state: 'owned', provenance: 'fanatical', item: isbn, reason: 'exact ISBN' };
     if (steamDifference) return packageRelationship(item, steamDifference, 'Shared Steam App ID identifies the base game only');
     const titleDifference = titleMatches.find((owned) => differentGamePackage(item, owned));
     if (titleDifference) return packageRelationship(item, titleDifference, 'Normalized title hides a package difference');
     if (hasComponents && (steam || exact)) return packageRelationship(item, steam || exact, 'Package component coverage is unknown');
     if (steam) return packageRelationship(item, steam, 'Shared Steam App ID does not verify this product/component');
+    if (compatibleTitles.length) return { state: 'possible', provenance: 'fanatical', item: compatibleTitles[0], reason: `Owned "${compatibleTitles[0].title}"; offered "${item.title}". ${identityConflicts(item, compatibleTitles[0], true).join('; ') || 'Normalized title needs edition/author evidence'}.` };
     const relation = relationshipMatch(item ?? {}, library);
     if (relation) return media === 'game' ? packageRelationship(item, relation.item, relation.reason) : { state: 'possible', provenance: 'fanatical', item: relation.item, reason: relation.reason };
     return { state: 'new', provenance: null };
@@ -246,7 +276,7 @@
     return (Array.isArray(result?.possibleMatches) ? result.possibleMatches : []).find((match) => match?.ownership === 'owned' || match?.ownership === 'claimed');
   }
 
-  function mergeGalactic(local, result, product) {
+  function legacyMergeGalactic(local, result, product) {
     // Exact local ownership is always authoritative; external data never turns
     // a Fanatical item into a claim about Fanatical ownership.
     if (local?.state === 'owned' || local?.state === 'partial') return local;
@@ -264,12 +294,148 @@
     return possible ? { state: 'possible', provenance: possible.provider, reason: 'possible Galactic Library relationship' } : (local ?? { state: 'new', provenance: null });
   }
 
+  function offerContents(item) {
+    const explicit = contentsMetadata(item);
+    if (explicit.contents?.length || explicit.contentsCoverageUnknown) return { entries: explicit.contents ?? [], complete: explicit.contentsComplete === true, uncertain: explicit.contentsCoverageUnknown === true, source: 'Explicit catalog contents' };
+    // Title ranges are comparison targets, never an owned collection assertion.
+    const match = /^(.*?)\s+(?:\(([^)]+)\)\s*)?(?:(vol(?:ume)?s?\.?|issues?)\s*|#)(\d+(?:\.\d+|\/\d+)?)(?:\s*[-–]\s*(\d+))?\s*$/iu.exec(String(item?.title ?? ''));
+    if (!match || !match[1].trim()) return { entries: [], complete: false, uncertain: false };
+    const series = item.series || match[1].trim(); const run = item.run || match[2] || ''; const language = item.language || '';
+    const first = numberKey(match[4]); const last = match[5] ? Number(match[5]) : null;
+    if (last !== null && (!Number.isInteger(Number(first)) || last < Number(first) || last - Number(first) >= 2000)) return { entries: [], complete: false, uncertain: true };
+    const numbers = last === null ? [first] : Array.from({ length: last - Number(first) + 1 }, (_, index) => String(Number(first) + index));
+    return { entries: numbers.map(number => ({ series, run, language, unitType: /^vol/iu.test(match[3] || '') ? 'volume' : 'issue', number, completeness: 'full' })), complete: false, uncertain: false, source: 'Title-derived comparison targets' };
+  }
+
+  const permanent = record => ['owned', 'claimed'].includes(record?.ownership);
+  function localContents(items) {
+    const entries = [];
+    for (const item of items) {
+      const target = offerContents(item);
+      if (target.uncertain || /\b(?:sample|excerpt|preview)\b/iu.test(item.title)) continue;
+      // Explicit metadata or a single purchased issue/volume supplies evidence.
+      if (!item.contents?.length && target.entries.length !== 1) continue;
+      const conflicts = new Set(target.entries.filter(entry => entry.completeness === 'excerpt').map(contentKey));
+      for (const entry of target.entries) if (entry.completeness === 'full' && !conflicts.has(contentKey(entry))) entries.push({ ...entry, evidence: [{ provider: 'fanatical', ownership: 'owned', title: item.title, relationship: 'contains', item,
+        reason: target.source, evidence: { source: 'Fanatical purchase metadata', checkedAt: item.purchaseDate || null } }] });
+    }
+    return entries;
+  }
+  function coverageFor(target, local, result) {
+    const unitToken = entry => JSON.stringify([scopeKey(entry.series), entry.unitType, numberKey(entry.number)]);
+    const index = new Map();
+    for (const entry of [...local, ...(result?.coverage?.covered ?? []), ...(result?.coverage?.possibleCovered ?? []).map(entry => ({ ...entry, uncertain: true }))]) {
+      const id = unitToken(entry); const rows = index.get(id) ?? []; rows.push(entry); index.set(id, rows);
+    }
+    const units = [...new Map(target.entries.filter(entry => entry.completeness === 'full').map(entry => [contentKey(entry), entry])).values()];
+    const covered = []; const missing = []; const possibleCovered = [];
+    for (const entry of units) {
+      const confirmed = []; const possible = [];
+      for (const candidate of index.get(unitToken(entry)) ?? []) {
+        if (candidate.completeness !== 'full') continue;
+        if (entry.run && candidate.run && scopeKey(entry.run) !== scopeKey(candidate.run) || entry.language && candidate.language && scopeKey(entry.language) !== scopeKey(candidate.language)) continue;
+        const evidence = (candidate.evidence ?? []).filter(record => permanent(record) && (record.provider !== 'fanatical' || record.item));
+        if (!candidate.uncertain && entry.run && entry.language && candidate.run && candidate.language && contentKey(entry) === contentKey(candidate)) confirmed.push(...evidence);
+        else possible.push(...evidence);
+      }
+      if (confirmed.length) covered.push({ ...entry, evidence: confirmed });
+      else { missing.push(entry); if (possible.length) possibleCovered.push({ ...entry, evidence: possible }); }
+    }
+    const scopeUncertain = target.uncertain || units.some(entry => !entry.run || !entry.language) || possibleCovered.length > 0;
+    return { total: units.length, owned: covered.length, complete: units.length > 0 && units.length === covered.length && !scopeUncertain,
+      contentsComplete: target.complete, scopeUncertain, covered, possibleCovered, missing };
+  }
+
+  function mergeGalactic(local, result, product, coverage = null) {
+    if (!product) return legacyMergeGalactic(local, result, product);
+    const records = (result?.matches ?? []).filter(record => record.provider !== 'fanatical');
+    const exact = records.find(record => permanent(record) && !(local.editionDifference && !record.title) && record.relationship !== 'same-work' && record.relationship !== 'contains'
+      && !identityConflicts(product, record, true).length && !differentGamePackage(product, { ...record, mediaType: product.mediaType }));
+    let match = local;
+    if (local.state !== 'owned') {
+      if (exact) match = { state: 'owned-elsewhere', provenance: exact.provider, item: exact, reason: exact.reason || 'exact Galactic Library match' };
+      else if (coverage?.owned) {
+        const external = coverage.covered.flatMap(entry => entry.evidence).find(record => record.provider !== 'fanatical');
+        match = { state: coverage.complete && coverage.contentsComplete ? (external ? 'owned-elsewhere' : 'owned') : 'partial',
+          provenance: external?.provider || 'fanatical', owned: coverage.owned, total: coverage.total, reason: 'Verified full contents across owned collections' };
+      }
+      else if (local.state === 'new') {
+        const possible = [...records, ...(result?.possibleMatches ?? [])].find(record => record.provider !== 'fanatical');
+        if (possible) match = { state: 'possible', provenance: possible.provider, item: possible, ownershipReview: !permanent(possible),
+          reason: `Library item "${possible.title || 'Unnamed record'}": ${possible.reason || possible.relationship || 'Related edition needs review'}${!permanent(possible) ? `; ${possible.ownership || 'unknown'} ownership` : ''}.`, editionDifference: true };
+        else if (coverage?.possibleCovered.length) match = { state: 'possible', provenance: coverage.possibleCovered[0]?.evidence[0]?.provider, reason: 'Potential contents coverage needs run/language confirmation' };
+      }
+    }
+    return { ...match, offered: product, localMatch: local, externalResult: result, coverage };
+  }
   function galacticRequestItems(products) {
     const supported = new Set(['game', 'book', 'audiobook']);
-    return (Array.isArray(products) ? products : []).filter((product) => product?.sourceItemId && typeof product?.title === 'string' && supported.has(mediaType(product.mediaType))).map((product) => ({ requestId: String(product.sourceItemId), title: product.title.trim().slice(0, 500), mediaType: mediaType(product.mediaType) })).filter((product) => product.title);
+    return (Array.isArray(products) ? products : []).filter((product) => product?.sourceItemId && typeof product?.title === 'string' && supported.has(mediaType(product.mediaType))).map((product) => {
+      const data = bibliographicFields(product); delete data.publisher;
+      const isbn = externalIds(product).isbn; const target = offerContents(product);
+      return { requestId: String(product.sourceItemId).slice(0, 500), title: product.title.trim().slice(0, 500), mediaType: mediaType(product.mediaType), excludeProviders: ['fanatical'], ...data,
+        ...(isbn ? { identifiers: { isbn } } : {}), ...(target.entries.length ? { contents: target.entries, contentsComplete: target.complete } : {}) };
+    }).filter(product => product.title);
+  }
+
+  function galacticBatches(requests) {
+    const batches = []; let batch = []; let units = 0;
+    for (const item of requests) {
+      const size = item.contents?.length || 0;
+      if (size > 2000) throw new Error('Too many contents targets');
+      if (batch.length === 500 || units + size > 20000) { batches.push(batch); batch = []; units = 0; }
+      batch.push(item); units += size;
+    }
+    if (batch.length) batches.push(batch);
+    return batches;
+  }
+  function flattenProducts(products) {
+    const rows = []; const seen = new Set();
+    const visit = (item, depth) => { if (!item || seen.has(item) || depth > 4) return; seen.add(item); rows.push(item); for (const component of item.components ?? []) visit(component, depth + 1); };
+    for (const item of products) visit(item, 0);
+    return rows;
+  }
+  function resolveProduct(product, library, localUnits, lookup, depth = 0) {
+    const local = classify(product, library);
+    const result = lookup(product);
+    const target = offerContents(product);
+    const coverage = target.entries.length ? coverageFor(target, localUnits, result) : null;
+    const resolved = mergeGalactic(local, result, product, coverage);
+    if (depth > 4 || ['owned', 'owned-elsewhere'].includes(resolved.state) || !product.components?.length) return resolved;
+    const components = [...new Map(product.components.map(item => [item.sourceItemId || `${item.mediaType}:${normalizeTitle(item.title)}`, item])).values()];
+    const matches = components.map(item => resolveProduct(item, library, localUnits, lookup, depth + 1));
+    const owned = matches.filter(match => ['owned', 'owned-elsewhere'].includes(match.state)).length;
+    resolved.componentMatches = matches;
+    if (owned) {
+      resolved.state = owned === components.length && product.componentsComplete === true && !product.componentCoverageUnknown ? 'owned-elsewhere' : 'partial';
+      resolved.owned = owned; resolved.total = components.length;
+      resolved.reason = `Verified ${owned}/${components.length} listed components${product.componentsComplete === true ? '' : '; full package contents are not established'}.`;
+      if (resolved.item?.title) resolved.reason += ` owned "${resolved.item.title}"; offered "${product.title}".`;
+    } else if (matches.some(match => match.state === 'possible') && resolved.state === 'new') {
+      resolved.state = 'possible'; resolved.reason = 'Related library items for listed components need review.';
+    }
+    return resolved;
+  }
+  async function queryGalacticItems(requests, send, timeoutMs = 3500) {
+    const results = new Map(); const failed = new Set();
+    for (const batch of galacticBatches(requests)) {
+      let timeout;
+      try {
+        const response = await Promise.race([send({ type: 'MATCH_ITEMS', apiVersion: 1, items: batch }), new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('timeout')), timeoutMs); })]);
+        if (!response?.ok || response.apiVersion !== 1 || !Array.isArray(response.results)) throw new Error('Unsuccessful companion lookup');
+        for (const request of batch) {
+          const rows = response.results.filter(result => result?.requestId === request.requestId);
+          if (rows.length !== 1 || !Array.isArray(rows[0].matches)) failed.add(request.requestId);
+          else results.set(request.requestId, rows[0]);
+        }
+      } catch { batch.forEach(request => failed.add(request.requestId)); }
+      finally { clearTimeout(timeout); }
+    }
+    return { results, failed };
   }
 
   function overlayLabel(match) {
+    if (match?.state === 'unchecked') return 'Not checked';
     if (match?.state === 'owned') return 'Owned';
     if (match?.state === 'owned-elsewhere') {
       const provider = String(match.provenance ?? 'another library');
@@ -288,7 +454,7 @@
     const badge = global.document.createElement('span');
     badge.dataset.fanaticalLibraryFor = productId;
     const state = match?.state ?? 'new';
-    const statusClasses = ['owned', 'owned-elsewhere', 'partial', 'possible', 'new'];
+    const statusClasses = ['owned', 'owned-elsewhere', 'partial', 'possible', 'new', 'unchecked'];
     for (const node of [card, ...(card.querySelectorAll?.('.fanatical-library-badge-host') ?? [])]) {
       for (const name of statusClasses) node.classList?.remove(`fanatical-library-card-${name}`, `fanatical-library-${name}-item`);
       node.classList?.remove('fanatical-library-badge-host');
@@ -374,5 +540,5 @@
     return hours ? Number(hours[1]) / 24 : null;
   }
 
-  global.FanaticalLibrary = { normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, mergeGalactic, galacticRequestItems, overlayLabel, upsertBadge, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
+  global.FanaticalLibrary = { normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, flattenProducts, resolveProduct, overlayLabel, upsertBadge, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
 }(globalThis));

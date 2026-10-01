@@ -3,7 +3,7 @@
 A standalone, browser-local Chrome MV3 extension that annotates Fanatical
 standard/tiered bundles and Pick & Mix offers using locally imported Fanatical
 purchase metadata. It optionally asks a paired Galactic Library extension for
-title-only matches for games, books/comics, and audiobooks.
+identity and reviewed contents evidence for games, books/comics, and audiobooks.
 
 ## Load in Chrome
 
@@ -85,9 +85,34 @@ and the summary's review list, without enabling diagnostics.
 
 When the public product data explicitly lists components, each component is
 checked separately. Only verified component ownership counts toward **Partial**;
-all listed components must be verified to claim the full package. Components
+all listed components must be verified and `componentsComplete: true` must
+explicitly establish an exhaustive list to claim the full package. Components
 are not guessed from marketing text. Possible/Partial packages stay visible
 under "Show new items only" and are excluded from confirmed-new tier coverage.
+
+The live parser retains allowlisted authors, validated ISBNs, edition,
+series/run, language, and explicit `contents` entries. Unit entries use the
+Galactic Library schema (`series`, `run`, `unitType`, `number`, `language`,
+`completeness`). Whole-product content ownership additionally requires
+`contentsComplete: true`. Ranges parsed from issue/volume titles are query
+targets only. Unknown run/language and excerpts cannot establish full coverage.
+
+Local Possible and Partial items, plus explicitly enumerated components, are
+checked centrally. Scoped contents coverage is combined across current local
+Fanatical purchases and reviewed central collections. Central Fanatical records
+are excluded so stale copies do not appear as ownership elsewhere. Requests
+respect both the 500-item and 20,000-unit API limits. Failed, omitted, or
+incompatible responses stay incomplete and can be retried; they never count as
+confirmed-new. Successful responses are cached by their full query evidence
+for the current page, and reset when the library or pairing changes.
+
+Unicode scripts and meaningful edition labels are retained. ISBN checksums are
+validated and ISBN-10/13 compared equivalently. Normalized book titles without
+identity evidence remain Possible; an unambiguous literal local purchase title
+or exact Fanatical product ID remains usable. Known related book editions and
+game packages remain Possible in either direction, with the actual owned title.
+"New" means not found in the libraries checked, whose purchase-history coverage
+is not guaranteed by the companion API.
 
 ## Scan safety
 

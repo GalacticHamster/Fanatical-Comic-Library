@@ -65,14 +65,14 @@ test('compatible Steam IDs prove local ownership', () => {
 });
 
 test('ISBN identifies compatible books', () => {
-  const result = F.classify({ sourceItemId: 'book-123456', title: 'A Revised Name', mediaType: 'book', externalIds: { isbn: '978-1-23-456789-0' } }, [owned({ mediaType: 'book', externalIds: { isbn: '9781234567890' } })]);
+  const result = F.classify({ sourceItemId: 'book-123456', title: 'A Revised Name', mediaType: 'book', externalIds: { isbn: '0-306-40615-2' } }, [owned({ mediaType: 'book', externalIds: { isbn: '9780306406157' } })]);
   assert.equal(result.state, 'owned');
   assert.equal(result.reason, 'exact ISBN');
 });
 
 test('normalization removes punctuation and normalizes Roman numerals', () => {
   assert.equal(F.titleKey("The Hero's Journey, Vol. II"), 'heros journey vol 2');
-  assert.equal(F.classify({ title: "Hello, World!: A Programmer's Guide", mediaType: 'book' }, [owned({ title: 'Hello World A Programmers Guide', mediaType: 'book' })]).state, 'owned');
+  assert.equal(F.classify({ title: "Hello, World!: A Programmer's Guide", mediaType: 'book' }, [owned({ title: 'Hello World A Programmers Guide', mediaType: 'book' })]).state, 'possible');
 });
 
 test('game edition relationships are possible rather than owned', () => {
@@ -115,8 +115,8 @@ test('MATCH_ITEMS candidates include only Galactic-supported media with stable r
     { sourceItemId: 'software-123456', title: 'App', mediaType: 'software' }
   ]);
   assert.deepEqual(JSON.parse(JSON.stringify(requests)), [
-    { requestId: 'game-123456', title: 'Game', mediaType: 'game' },
-    { requestId: 'book-123456', title: 'Comic', mediaType: 'book' }
+    { requestId: 'game-123456', title: 'Game', mediaType: 'game', excludeProviders: ['fanatical'] },
+    { requestId: 'book-123456', title: 'Comic', mediaType: 'book', excludeProviders: ['fanatical'] }
   ]);
 });
 

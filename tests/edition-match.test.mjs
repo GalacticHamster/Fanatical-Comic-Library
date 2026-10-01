@@ -52,7 +52,7 @@ test('one known component yields verified Partial even when all component App ID
 });
 
 test('all explicitly known components can prove a package fully owned; duplicates count once', () => {
-  const match = F.classify({ ...deluxe, components: [base, base, bonus] }, [base, { ...bonus, source: 'fanatical' }]);
+  const match = F.classify({ ...deluxe, componentsComplete: true, components: [base, base, bonus] }, [base, { ...bonus, source: 'fanatical' }]);
   assert.equal(match.state, 'owned');
   assert.equal(match.reason, 'all enumerable components owned');
 });
@@ -105,7 +105,7 @@ test('Galactic edition relationships retain the owned title and do not bypass kn
     assert.equal(match.provenance, 'steam');
   }
   const local = F.classify(deluxe, [base]);
-  assert.equal(F.mergeGalactic(local, { matches: [{ provider: 'steam', ownership: 'owned' }] }, deluxe), local);
+  assert.equal(F.mergeGalactic(local, { matches: [{ provider: 'steam', ownership: 'owned' }] }, deluxe).state, local.state);
   assert.equal(F.mergeGalactic(local, { matches: [{ ...related, title: deluxe.title }] }, deluxe).state, 'owned-elsewhere');
 });
 
