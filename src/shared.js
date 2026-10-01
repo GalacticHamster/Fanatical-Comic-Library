@@ -173,6 +173,32 @@
     return /^[a-p]{32}$/u.test(id) || /^[a-z0-9](?:[a-z0-9._+-]*[a-z0-9])?@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/iu.test(id);
   }
 
+  function standardTierCoverage(parsed, matches) {
+    const confirmedNewIds = new Set(parsed.products.filter((_product, index) => matches[index]?.state === 'new').map((product) => product.sourceItemId));
+    const priceFor = (group) => {
+      const value = group.price?.USD;
+      if ((typeof value !== 'number' && typeof value !== 'string') || (typeof value === 'string' && !value.trim())) return null;
+      const price = Number(value);
+      return Number.isFinite(price) && price >= 0 ? price : null;
+    };
+    const ordered = parsed.groups.map((group) => ({ group, price: priceFor(group) }))
+      .sort((left, right) => (left.price ?? Infinity) - (right.price ?? Infinity));
+    const coveredIds = new Set();
+    const coveredNewIds = new Set();
+    let recommendedPrice = null;
+    const tiers = ordered.map(({ group, price }) => {
+      for (const product of group.products) {
+        coveredIds.add(product.sourceItemId);
+        if (confirmedNewIds.has(product.sourceItemId)) coveredNewIds.add(product.sourceItemId);
+      }
+      // Tiers are cumulative. Stop at the cheapest priced tier covering the
+      // complete confirmed-new set, not the last tier with any new products.
+      if (recommendedPrice === null && price !== null && confirmedNewIds.size > 0 && coveredNewIds.size === confirmedNewIds.size) recommendedPrice = price;
+      return { group, price, total: coveredIds.size, confirmedNew: coveredNewIds.size };
+    });
+    return { tiers, recommendedPrice };
+  }
+
   function catalogueOffer(href, origin = 'https://www.fanatical.com') {
     let url;
     try { url = new URL(href, origin); } catch { return null; }
@@ -211,5 +237,5 @@
     return hours ? Number(hours[1]) / 24 : null;
   }
 
-  global.FanaticalLibrary = { normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, classify, mergeGalactic, galacticRequestItems, overlayLabel, upsertBadge, isExtensionId, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
+  global.FanaticalLibrary = { normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, classify, mergeGalactic, galacticRequestItems, overlayLabel, upsertBadge, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
 }(globalThis));

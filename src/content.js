@@ -672,32 +672,17 @@
       element.append(possible);
     }
     let tierDownload = null;
-    let recommendedTierPrice = null;
     if (parsed.kind === 'standard' && parsed.groups.length) {
-      const byId = new Map(parsed.products.map((product, index) => [product.sourceItemId, matches[index]]));
+      const { tiers, recommendedPrice } = F.standardTierCoverage(parsed, matches);
       const list = document.createElement('ul'); list.className = 'fanatical-library-tier-list';
-      let cumulativeTotal = 0; let cumulativeOwned = 0; let cumulativeElsewhere = 0; let cumulativePartial = 0; let cumulativePossible = 0;
-      const orderedGroups = [...parsed.groups].sort((left, right) => Number(left.price?.USD ?? Number.MAX_SAFE_INTEGER) - Number(right.price?.USD ?? Number.MAX_SAFE_INTEGER));
-      orderedGroups.forEach((group, index) => {
-        const groupCounts = { owned: 0, elsewhere: 0, partial: 0, possible: 0, new: 0 };
-        for (const product of group.products) {
-          const match = byId.get(product.sourceItemId);
-          if (match?.state === 'owned') groupCounts.owned++;
-          else if (match?.state === 'owned-elsewhere') groupCounts.elsewhere++;
-          else if (match?.state === 'partial') groupCounts.partial++;
-          else if (match?.state === 'possible') groupCounts.possible++;
-          else groupCounts.new++;
-        }
-        cumulativeTotal += group.products.length; cumulativeOwned += groupCounts.owned; cumulativeElsewhere += groupCounts.elsewhere; cumulativePartial += groupCounts.partial; cumulativePossible += groupCounts.possible;
-        const confirmedNew = cumulativeTotal - cumulativeOwned - cumulativeElsewhere - cumulativePartial - cumulativePossible;
-        const price = Number(group.price?.USD); const priceText = Number.isFinite(price) ? `$${(price / 100).toFixed(2)} tier` : `Tier ${index + 1}`; const perNew = confirmedNew && Number.isFinite(price) ? ` · $${(price / 100 / confirmedNew).toFixed(2)} per confirmed-new item` : '';
-        if (confirmedNew && Number.isFinite(price)) recommendedTierPrice = price;
-        const line = document.createElement('li'); line.textContent = `${priceText}: ${confirmedNew} confirmed new / ${cumulativeTotal} items${perNew}`; list.append(line);
+      tiers.forEach(({ price, total, confirmedNew }, index) => {
+        const priceText = price !== null ? `$${(price / 100).toFixed(2)} tier` : `Tier ${index + 1}`; const perNew = confirmedNew && price !== null ? ` · $${(price / 100 / confirmedNew).toFixed(2)} per confirmed-new item` : '';
+        const line = document.createElement('li'); line.textContent = `${priceText}: ${confirmedNew} confirmed new / ${total} items${perNew}`; list.append(line);
       });
       element.append(list);
-      if (recommendedTierPrice !== null) {
+      if (recommendedPrice !== null) {
         const recommendation = document.createElement('p'); recommendation.className = 'fanatical-library-buy-recommendation';
-        recommendation.textContent = `Lowest tier containing all confirmed-new items: $${(recommendedTierPrice / 100).toFixed(2)}`;
+        recommendation.textContent = `Lowest tier containing all confirmed-new items: $${(recommendedPrice / 100).toFixed(2)}`;
         recommendation.title = 'Possible and partially owned items are excluded from this recommendation.';
         element.append(recommendation);
       }

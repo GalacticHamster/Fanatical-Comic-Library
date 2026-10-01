@@ -11,7 +11,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const chromePath = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'Fanatical-ui-check-'));
 const products = ['Comic #10', 'Comic #2', 'External comic', 'New comic'].map((name, index) => ({ _id: `product-12345${index}`, name, slug: `comic-${index}`, type: 'book', regionAvailable: true }));
-const bundle = { _id: 'bundle-123456', name: 'Test comics', slug: 'test-comics', bundles: [{ price: { USD: 100 }, games: products }] };
+const bundle = { _id: 'bundle-123456', name: 'Test comics', slug: 'test-comics', bundles: [{ price: { USD: 100 }, games: [products[1], products[3]] }, { price: { USD: 1000 }, games: [products[0], products[2]] }] };
 const mock = `
 globalThis.addEventListener('error', event => {fetch('/result?route='+encodeURIComponent(location.pathname),{method:'POST',body:JSON.stringify({ok:false,error:event.message})})});
 const listeners = [];
@@ -43,6 +43,7 @@ try {
   assert(document.querySelectorAll('[data-fanatical-library-for]').length===4,'Missing card badges');
   assert([...document.querySelectorAll('.card-product-name')].map(node=>node.textContent).join('|')==='Comic #2|Comic #10|External comic|New comic','Natural sorting changed');
   assert(document.querySelector('.fanatical-library-owned-elsewhere-badge'),'Missing external match');
+  if(!location.pathname.includes('pick-and-mix')) assert(document.querySelector('.fanatical-library-buy-recommendation')?.textContent.endsWith('$1.00'),'Higher owned-only tier replaced the cheapest complete-new tier');
   await chrome.storage.local.set({fanaticalShowDiagnostics:true});await wait();
   assert(diagnostics()?.textContent.includes('4 products parsed; 4 distinct cards found'),'Missing bundle counts');
   assert(diagnostics().textContent.includes('exact Galactic Library match'),'Missing external match reason');
@@ -59,6 +60,7 @@ try {
   await chrome.storage.local.remove('galacticLibraryExtensionId');await wait();
   assert(!document.querySelector('.fanatical-library-owned-elsewhere-badge'),'Removing Galactic link retained external ownership');
   assert(document.querySelectorAll('.fanatical-library-new-badge').length===3,'External card did not return to local matching');
+  if(!location.pathname.includes('pick-and-mix')) assert(document.querySelector('.fanatical-library-buy-recommendation')?.textContent.endsWith('$10.00'),'Recommendation did not increase when the higher tier gained a confirmed-new item');
   await chrome.storage.local.set({fanaticalShowDiagnostics:false});await wait();
   assert(!diagnostics(),'Diagnostics did not turn off');
   finish({ok:true,scenario:'bundle diagnostics, filtering, Galactic removal'});
