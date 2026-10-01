@@ -364,22 +364,7 @@
     });
   }
 
-  function plainProduct(raw) {
-    if (!raw?._id || typeof raw?.name !== 'string') return null;
-    const externalIds = {};
-    if (raw?.steam?.id !== undefined && raw.steam.id !== null) externalIds.steamAppId = String(raw.steam.id);
-    if (raw?.isbn) externalIds.isbn = String(raw.isbn).replace(/[^0-9X]/giu, '');
-    return { sourceItemId: String(raw._id), title: raw.name.trim(), slug: String(raw.slug ?? ''), mediaType: F.mediaType(raw.display_type ?? raw.type), externalIds,
-      ...F.componentMetadata(raw.components, raw.display_type ?? raw.type), availability: { soldOut: raw.soldOut === true, regionAvailable: raw.regionAvailable !== false } };
-  }
-
-  function parse(raw, kind) {
-    const pickMix = kind === 'pick-mix' || (Array.isArray(raw?.products) && Array.isArray(raw?.tiers));
-    const groups = pickMix ? [] : (Array.isArray(raw?.bundles) ? raw.bundles : []).map((group) => ({ price: group?.price ?? {}, products: (Array.isArray(group?.games) ? group.games : []).map(plainProduct).filter(Boolean) }));
-    const products = pickMix ? raw.products.map(plainProduct).filter(Boolean) : groups.flatMap((group) => group.products);
-    const tiers = pickMix ? raw.tiers.map((tier) => ({ quantity: Number(tier?.quantity ?? 0), price: tier?.price ?? {} })).filter((tier) => tier.quantity > 0) : [];
-    return { kind: pickMix ? 'pick-mix' : 'standard', sourceItemId: String(raw?._id ?? ''), title: String(raw?.name ?? ''), products, groups, tiers };
-  }
+  const parse = F.parseBundle;
 
   async function loadPublicBundle(current) {
     if (state.url === location.href && state.parsed) return state.parsed;

@@ -84,14 +84,88 @@
     if (!Array.isArray(raw) || depth >= 4) return { componentCoverageUnknown: true };
     let incomplete = false;
     const components = [];
+    if (raw.length > 2000) return { componentCoverageUnknown: true };
     for (const entry of raw) {
       const title = typeof (entry?.title ?? entry?.name) === 'string' ? (entry.title ?? entry.name).trim().slice(0, 500) : '';
       if (!title) { incomplete = true; continue; }
       components.push({ sourceItemId: String(entry.sourceItemId ?? entry._id ?? ''), title,
         mediaType: mediaType(entry.mediaType ?? entry.display_type ?? entry.type ?? fallbackMedia), externalIds: externalIds(entry),
+        ...bibliographicFields(entry), ...contentsMetadata(entry),
         ...componentMetadata(entry.components, fallbackMedia, depth + 1) });
     }
     return { components, ...(incomplete ? { componentCoverageUnknown: true } : {}) };
+  }
+
+  function validIsbn(value) {
+    const isbn = String(value ?? '').replace(/[^0-9X]/giu, '').toUpperCase();
+    if (/^\d{9}[\dX]$/u.test(isbn)) {
+      if ([...isbn].reduce((sum, digit, index) => sum + (digit === 'X' ? 10 : Number(digit)) * (10 - index), 0) % 11) return '';
+      const base = `978${isbn.slice(0, 9)}`;
+      return base + ((10 - [...base].reduce((sum, digit, index) => sum + Number(digit) * (index % 2 ? 3 : 1), 0) % 10) % 10);
+    }
+    return /^97[89]\d{10}$/u.test(isbn) && [...isbn].reduce((sum, digit, index) => sum + Number(digit) * (index % 2 ? 3 : 1), 0) % 10 === 0 ? isbn : '';
+  }
+
+  // Only catalog identity leaves survive. No raw metadata, purchase IDs or URLs.
+  function bibliographicFields(raw) {
+    const result = {};
+    for (const name of ['language', 'edition', 'series', 'run', 'volume', 'issue', 'publisher']) {
+      if (typeof raw?.[name] === 'string' && raw[name].trim()) result[name] = raw[name].trim().slice(0, 500);
+    }
+    const authors = Array.isArray(raw?.authors) ? raw.authors : typeof raw?.author === 'string' ? [raw.author] : [];
+    const names = [...new Set(authors.filter(value => typeof value === 'string').map(value => value.trim().slice(0, 500)).filter(Boolean))].slice(0, 50);
+    if (names.length) result.authors = names;
+    return result;
+  }
+
+  function scopeKey(value) {
+    return String(value ?? '').normalize('NFKC').toLowerCase().replace(/&/gu, ' and ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/gu, ' ');
+  }
+  function numberKey(value) {
+    const text = String(value ?? '').trim();
+    const fraction = /^(\d+)\/(\d+)$/u.exec(text);
+    if (fraction && Number(fraction[2])) return String(Number(fraction[1]) / Number(fraction[2]));
+    return /^\d+(?:\.\d+)?$/u.test(text) ? String(Number(text)) : scopeKey(text);
+  }
+  function contentKey(entry) {
+    return JSON.stringify([scopeKey(entry.series), scopeKey(entry.run), entry.unitType, numberKey(entry.number), scopeKey(entry.language)]);
+  }
+  function contentsMetadata(raw) {
+    if (raw?.contents === undefined) return {};
+    if (!Array.isArray(raw.contents) || raw.contents.length > 2000) return { contentsCoverageUnknown: true };
+    let incomplete = false;
+    const contents = [];
+    for (const entry of raw.contents) {
+      if (!entry || typeof entry.series !== 'string' || !entry.series.trim()
+        || !['issue', 'volume', 'annual', 'special', 'component'].includes(entry.unitType)
+        || typeof entry.number !== 'string' || !entry.number.trim()
+        || !['full', 'excerpt'].includes(entry.completeness)
+        || ['issue', 'volume', 'annual'].includes(entry.unitType) && (!/^\d+(?:\.\d+|\/\d+)?$/u.test(entry.number.trim()) || /\/0+$/u.test(entry.number.trim()))) { incomplete = true; continue; }
+      const unit = { series: entry.series.trim().slice(0, 500), run: typeof entry.run === 'string' ? entry.run.trim().slice(0, 500) : '',
+        unitType: entry.unitType, number: numberKey(entry.number).slice(0, 500), language: typeof entry.language === 'string' ? entry.language.trim().slice(0, 500) : '', completeness: entry.completeness };
+      if (unit.number) contents.push(unit); else incomplete = true;
+    }
+    return { contents: [...new Map(contents.map(entry => [contentKey(entry) + ':' + entry.completeness, entry])).values()],
+      contentsComplete: raw.contentsComplete === true && !incomplete,
+      ...(incomplete ? { contentsCoverageUnknown: true } : {}) };
+  }
+
+  function plainProduct(raw) {
+    if (!raw?._id || typeof raw.name !== 'string' || !raw.name.trim()) return null;
+    return { sourceItemId: String(raw._id), title: raw.name.trim().slice(0, 500), slug: typeof raw.slug === 'string' ? raw.slug.trim() : '',
+      mediaType: mediaType(raw.display_type ?? raw.type), externalIds: externalIds(raw), drm: trueKeys(raw.drm), platforms: trueKeys(raw.platforms ?? raw.os),
+      ...bibliographicFields(raw), ...contentsMetadata(raw), ...componentMetadata(raw.components, raw.display_type ?? raw.type),
+      componentsComplete: raw.componentsComplete === true,
+      availability: { soldOut: raw.soldOut === true, lowStock: raw.low_stock === true, regionAvailable: raw.regionAvailable !== false, storeVisible: raw.storeVisible !== false } };
+  }
+  function parseBundle(raw, routeKind = 'standard') {
+    if (!raw || !raw._id || typeof raw.name !== 'string' || !raw.name.trim()) throw new Error('Fanatical bundle response is missing its identity.');
+    const pickMix = routeKind === 'pick-mix' || Array.isArray(raw.products) && Array.isArray(raw.tiers);
+    const groups = pickMix ? [] : (Array.isArray(raw.bundles) ? raw.bundles : []).map((group, index) => ({ index, price: group?.price ?? null, products: (Array.isArray(group?.games) ? group.games : []).map(plainProduct).filter(Boolean) }));
+    const products = pickMix ? (Array.isArray(raw.products) ? raw.products : []).map(plainProduct).filter(Boolean) : groups.flatMap(group => group.products);
+    const tiers = pickMix ? (Array.isArray(raw.tiers) ? raw.tiers : []).map(tier => ({ id: String(tier?._id ?? ''), quantity: Number(tier?.quantity ?? 0), price: tier?.price ?? {} })).filter(tier => tier.quantity > 0) : groups.map(group => ({ id: String(group.index), price: group.price }));
+    const bundle = { sourceItemId: String(raw._id), title: raw.name.trim(), slug: typeof raw.slug === 'string' ? raw.slug.trim() : '' };
+    return { kind: pickMix ? 'pick-mix' : 'standard', ...bundle, bundle, products, groups, tiers, order: pickMix && Array.isArray(raw.ordering) ? raw.ordering.map(String) : [] };
   }
 
   function makeIndexes(items) {
@@ -300,5 +374,5 @@
     return hours ? Number(hours[1]) / 24 : null;
   }
 
-  global.FanaticalLibrary = { normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, classify, mergeGalactic, galacticRequestItems, overlayLabel, upsertBadge, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
+  global.FanaticalLibrary = { normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, mergeGalactic, galacticRequestItems, overlayLabel, upsertBadge, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
 }(globalThis));
