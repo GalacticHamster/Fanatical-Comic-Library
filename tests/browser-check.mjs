@@ -34,6 +34,11 @@ globalThis.centralMode = 'normal';
 globalThis.requests = [];
 globalThis.chrome = {runtime:{id:'a'.repeat(32),sendMessage:async(first,second)=>{
   const message=second||first; requests.push(message);
+  if(message.type==='FANATICAL_STORE'){
+    const {createSyncStore}=await import('/src/library-data.mjs');
+    globalThis.fixtureStore??=createSyncStore(chrome.storage.local);
+    try{return {ok:true,result:await fixtureStore.execute(message.operation,message.args)};}catch(error){return {ok:false,error:error.message};}
+  }
   if(message.type==='PING')return {ok:true,apiVersion:1,appVersion:'0.1.0'};
   if(message.type==='FANATICAL_IMPORT_PURCHASES'){
     await new Promise(resolve=>setTimeout(resolve,100));

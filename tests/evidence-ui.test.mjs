@@ -1,3 +1,4 @@
+import { createSyncStore } from '../src/library-data.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -20,7 +21,7 @@ test('central review navigation trusts stored pairing and own sender, never call
   const urls = []; let listener; let id = 'b'.repeat(32);
   const chrome = { runtime: { id: 'a'.repeat(32), onMessage: { addListener(handler) { listener = handler; } } },
     storage: { local: { get: async () => ({ galacticLibraryExtensionId: id }) } }, tabs: { create: async data => urls.push(data.url) } };
-  vm.runInNewContext(source, { chrome, FanaticalLibrary: F });
+  vm.runInNewContext(source, { chrome, FanaticalLibrary: F, createSyncStore });
   const send = sender => new Promise(resolve => listener({ type: 'FANATICAL_OPEN_GALACTIC_REVIEW', url: 'https://evil.example' }, sender, resolve));
   assert.equal((await send({ id: 'other' })).ok, false); assert.equal(urls.length, 0);
   assert.equal((await send({ id: chrome.runtime.id })).ok, true);

@@ -121,7 +121,7 @@
         const next = {};
         for (const input of panel.querySelectorAll('input[data-catalogue-filter]')) next[input.dataset.catalogueFilter] = input.checked;
         catalogueState.filters = catalogueFilters(next);
-        chrome.storage.local.set({ fanaticalCatalogueFilters: catalogueState.filters }).catch(() => {});
+        F.storageSet({ fanaticalCatalogueFilters: catalogueState.filters }).catch(() => {});
         schedule(true);
       });
       document.body.append(panel);
@@ -348,7 +348,10 @@
     const full = document.createElement('button'); full.type = 'button'; full.dataset.importMode = 'all'; full.textContent = 'Full scan all purchases'; full.title = 'Reprocesses every completed order and rebuilds the local Fanatical library.';
     actions.append(quick, full);
     const status = document.createElement('output'); status.setAttribute('aria-live', 'polite');
-    panel.append(heading, description, actions, status);
+    const profileControls=document.createElement('div');
+    profileControls.innerHTML='<label>Account/profile label <input data-profile-label maxlength="100" placeholder="e.g. personal"></label><br><label><input type="checkbox" data-profile-confirm> Signed-in account matches this label</label><br><label><input type="checkbox" data-profile-switch> Switch active profile on full rescan</label>';
+    chrome.storage.local.get({fanaticalProfileLabel:''}).then(saved=>{const input=profileControls.querySelector('[data-profile-label]');if(!input.value)input.value=saved.fanaticalProfileLabel;}).catch(()=>{});
+    panel.append(heading, description, profileControls, actions, status);
     document.body.prepend(panel);
     const buttons = [quick, full];
     for (const button of buttons) button.addEventListener('click', async () => {
@@ -357,7 +360,7 @@
       buttons.forEach((control) => { control.disabled = true; });
       status.textContent = fullScan ? 'Scanning every completed purchase locally...' : 'Checking for new purchases locally...';
       try {
-        const response = await chrome.runtime.sendMessage({ type: 'FANATICAL_IMPORT_PURCHASES', fullScan });
+        const response = await chrome.runtime.sendMessage({ type: 'FANATICAL_IMPORT_PURCHASES', fullScan,profileLabel:profileControls.querySelector('[data-profile-label]').value,confirmed:profileControls.querySelector('[data-profile-confirm]').checked,switchProfile:profileControls.querySelector('[data-profile-switch]').checked });
         status.textContent = response?.ok ? importerResult(response.summary, fullScan) : (response?.error ?? 'Import failed.');
       } catch {
         status.textContent = 'Import failed. Refresh this signed-in Fanatical Orders page and try again.';
@@ -621,7 +624,7 @@
     const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = state.showNewOnly;
     checkbox.addEventListener('change', () => {
       state.showNewOnly = checkbox.checked;
-      chrome.storage.local.set({ fanaticalShowNewItemsOnly: state.showNewOnly }).catch(() => {});
+      F.storageSet({ fanaticalShowNewItemsOnly: state.showNewOnly }).catch(() => {});
       applyNewOnlyFilter();
     });
     label.append(checkbox, ' Show new items only');

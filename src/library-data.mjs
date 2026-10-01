@@ -41,7 +41,8 @@ export function sanitizeImportResult(value) {
 }
 
 export function parseLibraryBackup(value) {
-  if (!value || value.schemaVersion !== 1 || !Array.isArray(value.items)) throw new Error('Expected a Fanatical Library version 1 backup with an items array.');
+  if (!value || ![1,2].includes(value.schemaVersion) || !Array.isArray(value.items)) throw new Error('Expected a supported Fanatical Library backup with an items array.');
+  if(value.schemaVersion===2&&(typeof value.profileLabel!=='string'||value.profileLabel.length>100||!Array.isArray(value.profileArchives)||value.profileArchives.length>100))throw new Error('Invalid account/profile backup.');
   if (value.items.some((item) => item?.source !== 'fanatical' || !safeId(item?.sourceItemId) || !safeText(item?.title))) {
     throw new Error('The backup contains an invalid Fanatical ownership record. Nothing was imported.');
   }
@@ -74,7 +75,7 @@ export function validateScanResult(value, { fullScan = false, knownOrderFingerpr
     pagesFetched: coverage.pagesFetched, expectedTotal: coverage.expectedTotal, paginationEvidence: coverage.paginationEvidence, retries: coverage.retries, concurrency: 3 } };
 }
 
-export function createLibraryBackup(items, summary, exportedAt = new Date().toISOString()) {
+export function createLibraryBackup(items, summary, exportedAt = new Date().toISOString(), profileLabel='', profileArchives=[]) {
   // Scan metadata is informational only: restore never trusts its skip history.
   const safeSummary = summary && ['full', 'quick'].includes(summary.scanMode) ? {
     importedAt: safeDate(summary.importedAt), scanMode: summary.scanMode,
@@ -82,9 +83,54 @@ export function createLibraryBackup(items, summary, exportedAt = new Date().toIS
     addedProducts: count(summary.addedProducts), ownedLeafProducts: count(summary.ownedLeafProducts),
     historyCoverage: safeText(summary.historyCoverage)
   } : null;
-  return { schemaVersion: 1, exportedAt: safeDate(exportedAt), summary: safeSummary, items: sanitizeImportResult({ items }).items };
+  const scoped={schemaVersion:2,items:sanitizeImportResult({items}).items,profileLabel,profileArchives};
+  parseLibraryBackup(scoped);
+  const safeArchives=backupRestoreState(scoped.items,scoped).fanaticalProfileArchives;
+  return { ...scoped, exportedAt: safeDate(exportedAt), summary: safeSummary, profileArchives:safeArchives };
 }
 
-export function backupRestoreState(items) {
-  return { fanaticalLibraryItems: items, fanaticalImportSummary: null, fanaticalScannedOrderFingerprints: [], fanaticalLastScanAttempt: null };
+export function backupRestoreState(items, backup={}) {
+  const profileArchives=(backup.schemaVersion===2?backup.profileArchives:[]).map(entry=>{
+    if(!entry||typeof entry.profileLabel!=='string'||!entry.profileLabel||entry.profileLabel.length>100)throw new Error('Invalid archived profile.');
+    return {profileLabel:entry.profileLabel,items:parseLibraryBackup({schemaVersion:1,items:entry.items}),archivedAt:safeDate(entry.archivedAt)};
+  });
+  return { fanaticalLibraryItems: items, fanaticalImportSummary: null, fanaticalScannedOrderFingerprints: [], fanaticalLastScanAttempt: null, fanaticalProfileLabel:backup.schemaVersion===2?backup.profileLabel:'', fanaticalProfileArchives:profileArchives };
+}
+
+export function createSyncStore(area){
+  let tail=Promise.resolve();const key='fanaticalSyncControl';
+  const defaults={fanaticalLibraryItems:[],fanaticalScannedOrderFingerprints:[],fanaticalProfileLabel:'',fanaticalProfileArchives:[]};
+  async function operate(operation,args){
+    if(operation==='begin'){
+      const [options,tabId]=args;const label=String(options.profileLabel??'').trim();
+      if(!options.confirmed||!label||label.length>100)throw new Error('Enter a profile label and confirm the signed-in Fanatical account.');
+      const state=await area.get(defaults);const changing=Boolean(state.fanaticalProfileLabel)&&state.fanaticalProfileLabel!==label;
+      if(changing&&(!options.fullScan||!options.switchProfile))throw new Error('Choose Full rescan and explicitly switch profiles.');
+      const forceFull=changing||!state.fanaticalProfileLabel;const token=globalThis.crypto.randomUUID();
+      await area.set({[key]:{token,tabId,label,changing,fullScan:options.fullScan||forceFull}});
+      return {token,forceFull,state:changing?{...defaults}:state};
+    }
+    if(operation==='commit'||operation==='failure'){
+      const [token,updates,tabId]=args;const control=(await area.get({[key]:null}))[key];
+      if(!control||control.token!==token||control.tabId!==tabId){if(operation==='failure')return false;throw new Error('Scan superseded by another scan, restore, or clear. Start a fresh scan.');}
+      if(operation==='failure'){await area.set({fanaticalLastScanAttempt:{status:'incomplete',scanMode:control.fullScan?'full':'quick',attemptedAt:new Date().toISOString()},[key]:null});return true;}
+      if(control.fullScan&&updates.fanaticalImportSummary?.scanMode!=='full')throw new Error('This profile requires a full scan.');
+      const state=await area.get(defaults);const archives=[...state.fanaticalProfileArchives];
+      if(control.changing){archives.push({profileLabel:state.fanaticalProfileLabel,items:state.fanaticalLibraryItems,archivedAt:new Date().toISOString()});if(archives.length>100)throw new Error('Too many archived profiles; export a backup first.');}
+      await area.set({...updates,fanaticalProfileLabel:control.label,fanaticalProfileArchives:archives,[key]:null});return true;
+    }
+    if(operation==='restore'){
+      const backup=args[0];const items=parseLibraryBackup(backup);await area.set({...backupRestoreState(items,backup),[key]:null});return true;
+    }
+    if(operation==='clear'){
+      await area.remove([...Object.keys(defaults),'fanaticalImportSummary','fanaticalLastScanAttempt',key]);return true;
+    }
+    if(operation==='patch'){
+      const updates=args[0];if(!updates||Object.keys(updates).some(name=>!['galacticLibraryExtensionId','fanaticalShowDiagnostics','fanaticalShowNewItemsOnly','fanaticalCatalogueFilters'].includes(name)))throw new Error('Unsupported settings patch.');
+      await area.set(updates);return true;
+    }
+    if(operation==='unlink'){await area.remove('galacticLibraryExtensionId');return true;}
+    throw new Error('Unsupported storage operation.');
+  }
+  return {execute(operation,args=[]){const captured=structuredClone(args);const task=tail.then(()=>operate(operation,captured));tail=task.catch(()=>{});return task;}};
 }

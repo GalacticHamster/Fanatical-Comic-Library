@@ -1,6 +1,7 @@
 /* Chrome MV3 entry point. The only main-world execution is the strict importer. */
-import { safeId, validateScanResult } from './library-data.mjs';
+import { safeId, validateScanResult, createSyncStore } from './library-data.mjs';
 
+const syncStore=createSyncStore(chrome.storage.local);
 const STORAGE_ITEMS = 'fanaticalLibraryItems';
 const STORAGE_SUMMARY = 'fanaticalImportSummary';
 const STORAGE_ORDER_FINGERPRINTS = 'fanaticalScannedOrderFingerprints';
@@ -278,6 +279,8 @@ async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerp
   });
   const items = new Map();
   for (const products of details) for (const product of products) items.set(product.sourceItemId, product);
+  let currentToken='';try{currentToken=String(JSON.parse(localStorage.getItem('bsauth')||'{}')?.token||'');}catch{}
+  if(currentToken!==token)throw new Error('The signed-in Fanatical session changed during this scan. Start a fresh scan.');
   // `token`, summaries, details, and raw leaves remain in this execution world.
   return {
     schemaVersion: 1,
@@ -296,9 +299,11 @@ async function activeFanaticalTab() {
   return tab;
 }
 
-async function importPurchases({ fullScan = false } = {}) {
-  const tab = await activeFanaticalTab();
-  const stored = await chrome.storage.local.get({ [STORAGE_ITEMS]: [], [STORAGE_ORDER_FINGERPRINTS]: [] });
+async function importPurchases({ fullScan = false, profileLabel='', confirmed=false, switchProfile=false, tab:requestedTab } = {}) {
+  const tab=requestedTab??await activeFanaticalTab();
+  const scan=await syncStore.execute('begin',[{fullScan,profileLabel,confirmed,switchProfile},tab.id]);
+  fullScan=fullScan||scan.forceFull;const stored=scan.state;
+  try {
   const knownOrderFingerprints = Array.isArray(stored[STORAGE_ORDER_FINGERPRINTS]) ? stored[STORAGE_ORDER_FINGERPRINTS] : [];
   const result = await chrome.scripting.executeScript({
     target: { tabId: tab.id }, world: 'MAIN', func: importFanaticalOrdersInPage,
@@ -322,13 +327,14 @@ async function importPurchases({ fullScan = false } = {}) {
     historyCoverage: `${projected.coverage.emptyAccount ? 'Valid empty order history.' : `Validated ${projected.coverage.listedOrders} listed orders across ${projected.coverage.pagesFetched} page(s) and ${projected.ordersScanned} requested completed-order details.`} ${projected.coverage.paginationEvidence === 'array-only' ? 'No pagination metadata: silent server truncation cannot be independently ruled out.' : projected.coverage.expectedTotal !== null ? 'All pages agree with the reported history total.' : 'Followed the next-page chain to its end; no independent history total was supplied.'}`,
     coverage: projected.coverage
   };
-  await chrome.storage.local.set({
+  await syncStore.execute('commit',[scan.token,{
     [STORAGE_ITEMS]: [...merged.values()].sort((a, b) => a.sourceItemId.localeCompare(b.sourceItemId)),
     [STORAGE_ORDER_FINGERPRINTS]: projected.orderFingerprints,
     [STORAGE_SUMMARY]: summary,
     fanaticalLastScanAttempt: { status: 'complete', scanMode: summary.scanMode, attemptedAt: importedAt }
-  });
+  },tab.id]);
   return summary;
+  }catch(error){error.scanToken=scan.token;error.scanTabId=tab.id;throw error;}
 }
 
 /* Public endpoint fetches also run as Fanatical-page requests. This avoids
@@ -363,11 +369,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }).catch(() => sendResponse({ ok: false, error: 'Open Galactic Library from its toolbar icon to review ownership and contents.' }));
     return true;
   }
+  if(message?.type==='FANATICAL_STORE'){
+    if(_sender?.id!==chrome.runtime.id||typeof _sender.url!=='string'||!(_sender.url.startsWith(chrome.runtime.getURL(''))||message.operation==='patch'&&_sender.url.startsWith('https://www.fanatical.com/'))||!['restore','clear','patch','unlink'].includes(message.operation)){sendResponse({ok:false,error:'Untrusted storage request.'});return false;}
+    syncStore.execute(message.operation,message.args).then(result=>sendResponse({ok:true,result}),error=>sendResponse({ok:false,error:error.message}));return true;
+  }
   if (message?.type === 'FANATICAL_IMPORT_PURCHASES') {
+    if(_sender?.id!==chrome.runtime.id||!/^https:\/\/www\.fanatical\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?orders\/?(?:[?#]|$)/iu.test(_sender?.url??'')||!_sender.tab?.id){sendResponse({ok:false,error:'Import from the signed-in Fanatical orders page.'});return false;}
     if (purchaseScan) { sendResponse({ ok: false, error: 'A Fanatical purchase scan is already running. Wait for it to finish.' }); return true; }
-    purchaseScan = importPurchases({ fullScan: message.fullScan === true }).then((summary) => sendResponse({ ok: true, summary })).catch(async (error) => {
+    purchaseScan = importPurchases({ fullScan: message.fullScan === true,profileLabel:message.profileLabel,confirmed:message.confirmed===true,switchProfile:message.switchProfile===true,tab:_sender.tab }).then((summary) => sendResponse({ ok: true, summary })).catch(async (error) => {
       // Persist only an explicit coverage failure flag, never page/transport errors.
-      try { await chrome.storage.local.set({ fanaticalLastScanAttempt: { status: 'incomplete', scanMode: message.fullScan === true ? 'full' : 'quick', attemptedAt: new Date().toISOString() } }); } catch { /* Keep the on-page warning even when storage is unavailable. */ }
+      try { if(error.scanToken)await syncStore.execute('failure',[error.scanToken,null,error.scanTabId]); } catch { /* Keep the on-page warning even when storage is unavailable. */ }
       sendResponse({ ok: false, error: `Scan incomplete; previous purchases and successful scan history were kept. ${String(error?.message ?? 'Please try again.').slice(0, 500)}` });
     }).finally(() => { purchaseScan = null; });
     return true;

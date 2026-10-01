@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { createHash, webcrypto } from 'node:crypto';
 import test from 'node:test';
-import { safeId, validateScanResult } from '../src/library-data.mjs';
+import { safeId, validateScanResult, createSyncStore } from '../src/library-data.mjs';
 
 const source = fs.readFileSync(new URL('../src/service-worker.js', import.meta.url), 'utf8').replace(/^import .*;\r?\n/mu, '');
 const orderId = 'order-123456';
@@ -12,11 +12,11 @@ const detail = { _id: orderId, status: 'COMPLETE', items: [{ _id: 'bundle-123456
 const summary = { _id: orderId, status: 'COMPLETE', items: [{ name: 'Bundle', bundles: [{ games: [{ name: 'New purchase' }] }] }] };
 const previous = { fanaticalLibraryItems: [{ source: 'fanatical', sourceItemId: 'product-654321', title: 'Previously imported', mediaType: 'game', bundle: { sourceItemId: 'bundle-654321', title: 'Previous bundle' } }], fanaticalImportSummary: { importedAt: 'previous', scanMode: 'full' }, fanaticalScannedOrderFingerprints: [] };
 
-function harness({ list = [summary], details = { [orderId]: detail }, headers = {}, status = 200, invalidJSON = false, known = [], scriptResult, respond, pageOverrides = {} } = {}) {
-  const stored = structuredClone({ ...previous, fanaticalScannedOrderFingerprints: known });
+function harness({ list = [summary], details = { [orderId]: detail }, headers = {}, status = 200, invalidJSON = false, known = [], scriptResult, respond, authRead=()=>'SECRET-TOKEN', pageOverrides = {} } = {}) {
+  const stored = structuredClone({ ...previous, fanaticalProfileLabel:'fixture',fanaticalProfileArchives:[],fanaticalScannedOrderFingerprints: known });
   const before = structuredClone(stored); const writes = []; const paths = []; const receipts = [];
   let listener; let active = 0; let maxActive = 0;
-  const page = { TextEncoder, crypto: webcrypto, URL, AbortController, setTimeout, clearTimeout, ...pageOverrides, localStorage: { getItem: () => JSON.stringify({ token: 'SECRET-TOKEN' }) }, fetch: async (url, options) => {
+  const page = { TextEncoder, crypto: webcrypto, URL, AbortController, setTimeout, clearTimeout, ...pageOverrides, localStorage: { getItem: () => JSON.stringify({ token:authRead() }) }, fetch: async (url, options) => {
     paths.push(url); active++; maxActive = Math.max(active, maxActive);
     let reply;
     try { reply = respond ? await respond(url, options) : { status, headers, data: url === '/api/user/orders' ? list : details[url.split('/').at(-1)] }; }
@@ -26,18 +26,18 @@ function harness({ list = [summary], details = { [orderId]: detail }, headers = 
       return reply.json ? reply.json(options) : structuredClone(reply.data);
     } };
   } };
-  const chrome = { runtime: { onMessage: { addListener(handler) { listener = handler; } } }, tabs: { query: async () => [{ id: 1, url: 'https://www.fanatical.com/en/orders' }] }, storage: { local: {
+  const chrome = { runtime: { id:'a'.repeat(32),getURL:()=>`chrome-extension://${'a'.repeat(32)}/`, onMessage: { addListener(handler) { listener = handler; } } }, tabs: { query: async () => [{ id: 1, url: 'https://www.fanatical.com/en/orders' }] }, storage: { local: {
     get: async (defaults) => ({ ...defaults, ...structuredClone(stored) }),
-    set: async (changes) => { writes.push(structuredClone(changes)); Object.assign(stored, structuredClone(changes)); }
+    set: async (changes) => { if(Object.keys(changes).some(key=>key!=='fanaticalSyncControl'))writes.push(structuredClone(changes)); Object.assign(stored, structuredClone(changes)); }
   } }, scripting: { executeScript: async ({ func, args }) => {
     if (scriptResult) return scriptResult();
     // Execute the serialized function in a separate page world, just like Chrome.
     const mainWorld = vm.runInNewContext(`(${func.toString()})`, page);
     const result = await mainWorld(...args); receipts.push(structuredClone(result)); return [{ result }];
   } } };
-  const worker = vm.runInNewContext(`${source}\n;({ importPurchases });`, { chrome, safeId, validateScanResult });
-  return { stored, before, writes, paths, receipts, get maxActive() { return maxActive; }, scan: (fullScan = true) => worker.importPurchases({ fullScan }),
-    send: (fullScan = true) => new Promise((resolve) => listener({ type: 'FANATICAL_IMPORT_PURCHASES', fullScan }, {}, resolve)) };
+  const worker = vm.runInNewContext(`${source}\n;({ importPurchases, syncStore });`, { chrome, safeId, validateScanResult, createSyncStore });
+  return { stored, before, writes, paths, receipts, get maxActive() { return maxActive; }, scan: (fullScan = true) => worker.importPurchases({ fullScan,profileLabel:'fixture',confirmed:true }),
+    send: (fullScan = true) => new Promise((resolve) => listener({ type: 'FANATICAL_IMPORT_PURCHASES', fullScan,profileLabel:'fixture',confirmed:true }, {id:chrome.runtime.id,url:'https://www.fanatical.com/en/orders',tab:{id:1}}, resolve)) };
 }
 
 test('HTTP-success malformed order lists never alter purchases, summary or fingerprints', async () => {
@@ -45,7 +45,7 @@ test('HTTP-success malformed order lists never alter purchases, summary or finge
     for (const full of [true, false]) {
       const run = harness({ list });
       await assert.rejects(run.scan(full), /unreadable|incomplete/);
-      assert.deepEqual(run.stored, run.before);
+      assert.deepEqual(Object.fromEntries(Object.entries(run.stored).filter(([key])=>key!=='fanaticalSyncControl')), run.before);
       assert.equal(run.writes.length, 0);
     }
   }
@@ -71,7 +71,7 @@ test('invalid JSON, partial HTTP success and unusable pagination indicators pres
   for (const config of [{ invalidJSON: true }, { status: 206 }, { headers: { link: '</api/user/orders?page=2>; rel="next"' } }, { headers: { link: '</api/user/orders?page=2>; rel="prev next"' } }, { headers: { 'x-total-count': '2' } }, { headers: { 'content-range': 'items 0-0/2' } }, { headers: { 'content-range': 'items 1-1/2' } }]) {
     const run = harness(config);
     await assert.rejects(run.scan(), /unreadable|incomplete/);
-    assert.deepEqual(run.stored, run.before);
+    assert.deepEqual(Object.fromEntries(Object.entries(run.stored).filter(([key])=>key!=='fanaticalSyncControl')), run.before);
     assert.equal(run.writes.length, 0);
   }
 });
@@ -106,7 +106,7 @@ test('a list missing known orders is not accepted as complete, even if it is an 
   for (const list of [[], [summary]]) {
     const run = harness({ list, known: [fingerprint('missing-123456')] });
     await assert.rejects(run.scan(), /omits previously scanned/);
-    assert.deepEqual(run.stored, run.before);
+    assert.deepEqual(Object.fromEntries(Object.entries(run.stored).filter(([key])=>key!=='fanaticalSyncControl')), run.before);
     assert.equal(run.writes.length, 0);
   }
 });
@@ -117,7 +117,7 @@ test('malformed/mismatched/non-complete details and unsupported leaf shapes cann
     for (const full of [true, false]) {
       const run = harness({ details: { [orderId]: broken } });
       await assert.rejects(run.scan(full), /unreadable|incomplete/);
-      assert.deepEqual(run.stored, run.before);
+      assert.deepEqual(Object.fromEntries(Object.entries(run.stored).filter(([key])=>key!=='fanaticalSyncControl')), run.before);
       assert.equal(run.writes.length, 0);
     }
   }
@@ -127,7 +127,7 @@ test('one unreadable detail aborts the entire multi-order rebuild and quick scan
   for (const full of [true, false]) {
     const run = harness({ list: [summary, { ...summary, _id: 'order-654321' }], details: { [orderId]: detail, 'order-654321': { error: 'SECRET' } } });
     await assert.rejects(run.scan(full));
-    assert.deepEqual(run.stored, run.before);
+    assert.deepEqual(Object.fromEntries(Object.entries(run.stored).filter(([key])=>key!=='fanaticalSyncControl')), run.before);
     assert.equal(run.writes.length, 0);
   }
 });
@@ -138,7 +138,7 @@ test('nonempty details must cover every product occurrence named in their order 
   for (const list of [[incompleteSummary], [duplicateSummary]]) {
     const run = harness({ list });
     await assert.rejects(run.scan(), /unreadable|incomplete/);
-    assert.deepEqual(run.stored, run.before);
+    assert.deepEqual(Object.fromEntries(Object.entries(run.stored).filter(([key])=>key!=='fanaticalSyncControl')), run.before);
     assert.equal(run.writes.length, 0);
   }
 });
@@ -162,7 +162,7 @@ test('worker refuses missing, partial or silently lossy MAIN-world results befor
   for (const result of bad) {
     const run = harness({ scriptResult: () => [{ result }] });
     await assert.rejects(run.scan(), /unreadable|incomplete/);
-    assert.deepEqual(run.stored, run.before);
+    assert.deepEqual(Object.fromEntries(Object.entries(run.stored).filter(([key])=>key!=='fanaticalSyncControl')), run.before);
     assert.equal(run.writes.length, 0);
   }
   const noResult = harness({ scriptResult: () => [] });
@@ -271,7 +271,7 @@ test('pagination loops, repeated orders, gaps, changing totals, missing next lin
       let index = 0;
       const run = harness({ respond: async () => ({ status: 200, ...pages[index++] }) });
       await assert.rejects(run.scan(full), /incomplete|unreadable/u);
-      assert.deepEqual(run.stored, run.before); assert.equal(run.writes.length, 0);
+      assert.deepEqual(Object.fromEntries(Object.entries(run.stored).filter(([key])=>key!=='fanaticalSyncControl')), run.before); assert.equal(run.writes.length, 0);
       assert.equal(run.paths.every((path) => new URL(path, 'https://www.fanatical.com').pathname === '/api/user/orders'), true);
     }
   }
@@ -290,7 +290,7 @@ test('the page safety limit rejects an endless unique next-page chain', async ()
     page++; return { status: 200, data: [{ ...summary, _id: `order-${String(page).padStart(6, '0')}` }], headers: { link: `<?page=${page + 1}>; rel="next"` } };
   } });
   await assert.rejects(run.scan(), /1,000-page safety limit/);
-  assert.equal(run.paths.length, 1000); assert.deepEqual(run.stored, run.before);
+  assert.equal(run.paths.length, 1000); assert.deepEqual(Object.fromEntries(Object.entries(run.stored).filter(([key])=>key!=='fanaticalSyncControl')), run.before);
 });
 
 test('transport errors and transient HTTP statuses retry GET with exponential backoff', async () => {
@@ -320,7 +320,7 @@ test('Retry-After seconds and HTTP dates are respected; long delays stop rather 
   const clock = retryClock();
   const run = harness({ ...clock, respond: async () => ({ status: 503, headers: { 'retry-after': '120' } }) });
   await assert.rejects(run.scan(), /try scanning again later/);
-  assert.equal(run.paths.length, 1); assert.equal(clock.waits.length, 0); assert.deepEqual(run.stored, run.before);
+  assert.equal(run.paths.length, 1); assert.equal(clock.waits.length, 0); assert.deepEqual(Object.fromEntries(Object.entries(run.stored).filter(([key])=>key!=='fanaticalSyncControl')), run.before);
 });
 
 test('timeouts cover response headers and body reads and exhaust a bounded retry budget', async () => {
@@ -330,7 +330,7 @@ test('timeouts cover response headers and body reads and exhaust a bounded retry
     const run = harness({ ...clock, respond: async (_path, options) => body ? { status: 200, json: hang } : hang(options) });
     await assert.rejects(run.scan(), /three attempts/);
     assert.equal(run.paths.length, 3); assert.equal(aborted, 3); assert.deepEqual(clock.waits, [500, 1000]);
-    assert.deepEqual(run.stored, run.before);
+    assert.deepEqual(Object.fromEntries(Object.entries(run.stored).filter(([key])=>key!=='fanaticalSyncControl')), run.before);
   }
 });
 
@@ -352,7 +352,7 @@ test('a failing detail stops the queue, aborts in-flight requests and preserves 
   } });
   await assert.rejects(run.scan());
   assert.equal(run.paths.length, 4); assert.equal(aborted, 2); assert.equal(run.maxActive, 3);
-  assert.deepEqual(run.stored, run.before); assert.equal(run.writes.length, 0);
+  assert.deepEqual(Object.fromEntries(Object.entries(run.stored).filter(([key])=>key!=='fanaticalSyncControl')), run.before); assert.equal(run.writes.length, 0);
 });
 
 test('runtime scan failures expose incomplete coverage without replacing purchases or successful summary', async () => {
@@ -418,4 +418,9 @@ test('a broken response-body transport is retried, unlike malformed JSON', async
   const result = await run.scan(); assert.equal(result.coverage.retries, 1); assert.deepEqual(clock.waits, [500]);
   const overflowing = harness({ ...retryClock(), respond: async () => ({ status: 503, headers: { 'retry-after': '9'.repeat(400) } }) });
   await assert.rejects(overflowing.scan(), /try scanning again later/); assert.equal(overflowing.paths.length, 1);
+});
+
+test('a session change during serialized scanning prevents ownership writes without exposing tokens',async()=>{
+  let reads=0;const run=harness({authRead:()=>++reads===1?'FIRST-SECRET':'SECOND-SECRET'});
+  await assert.rejects(run.scan(),/session changed/);assert.equal(run.writes.length,0);assert.deepEqual(run.stored.fanaticalLibraryItems,run.before.fanaticalLibraryItems);
 });
