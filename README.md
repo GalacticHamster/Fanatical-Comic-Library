@@ -123,6 +123,16 @@ evidence and open Galactic Library's options for ownership/contents review.
 Navigation uses the configured pairing and Chrome's extension settings route;
 an unsupported addon ID receives toolbar instructions.
 
+Bundle summaries also show distinct additional full issues/volumes, already
+covered units, and uncertain units across local and central collections.
+Overlapping offers count once. Standard tiers show cumulative unit counts;
+Pick & Mix separates the available pool from the current page selection and
+excludes sold-out or unavailable offers. Unknown scope and failed lookups do
+not add units to the additional-content total. Offers without enumerable
+contents are disclosed separately. These counts describe content not found
+in the checked libraries; they do not establish edition identity or a complete
+purchase history.
+
 ## Scan safety
 
 Scans validate the observed order-list array and the identity/status/structure

@@ -19,11 +19,15 @@ const editionProducts = [
   { _id: 'edition-ultimate-123456', name: 'Space Adventure Ultimate Edition', type: 'game', steam: { id: 42 }, componentsComplete: true, components: [{ _id: editionBase.sourceItemId, name: editionBase.title, type: 'game', steam: { id: 42 } }, editionBonus] }
 ];
 const editionBundle = { _id: 'edition-bundle-123456', name: 'Test editions', slug: 'test-editions', bundles: [{ price: { USD: 100 }, games: editionProducts }], products: editionProducts, tiers: [{ quantity: 2, price: { USD: 100 } }] };
+const contentsUnit = number => ({ series: 'Saga', run: '2020', language: 'en', unitType: 'issue', number: String(number), completeness: 'full' });
+const contentsProducts = [[1, 2, 3], [2, 3, 4], [6], [8]].map((numbers, index) => ({ _id: `contents-product-${index}`, name: numbers.length === 1 ? `Saga #${numbers[0]}` : `Saga Collection ${index + 1}`, type: 'book', run: '2020', language: 'en', contents: numbers.map(contentsUnit), contentsComplete: true }));
+const contentsBundle = { _id: 'contents-bundle-123456', name: 'Saga bundle', bundles: [{ price: { USD: 100 }, games: contentsProducts.slice(0, 1) }, { price: { USD: 1000 }, games: contentsProducts.slice(1) }], products: contentsProducts, tiers: [{ quantity: 2, price: { USD: 100 } }] };
 const mock = `
 globalThis.addEventListener('error', event => {fetch('/result?route='+encodeURIComponent(location.pathname),{method:'POST',body:JSON.stringify({ok:false,error:event.message})})});
 const listeners = [];
 globalThis.values = { fanaticalLibraryItems: [{source:'fanatical',sourceItemId:'product-123450',title:'Comic #10',mediaType:'book',bundle:{sourceItemId:'bundle-123456',title:'Test comics',slug:'test-comics'},purchaseDate:null}],galacticLibraryExtensionId:'b'.repeat(32),fanaticalScannedOrderFingerprints:['a'.repeat(64)] };
 if(location.pathname.includes('test-editions')) values.fanaticalLibraryItems=[${JSON.stringify(editionBase)}];
+if(location.pathname.includes('test-contents')) values.fanaticalLibraryItems=[{source:'fanatical',sourceItemId:'owned-issue-123456',title:'Saga #1',mediaType:'book',run:'2020',language:'en'}];
 if(location.pathname==='/options') values.fanaticalLastScanAttempt={status:'incomplete'};
 globalThis.scanFailure = false;
 globalThis.requests = [];
@@ -34,8 +38,13 @@ globalThis.chrome = {runtime:{id:'a'.repeat(32),sendMessage:async(first,second)=
     await new Promise(resolve=>setTimeout(resolve,100));
     return scanFailure?{ok:false,error:'Scan incomplete; previous purchases and successful scan history were kept.'}:{ok:true,summary:{ordersScanned:1,ordersSkipped:0,addedProducts:1,ownedLeafProducts:1,historyCoverage:'No pagination metadata: silent server truncation cannot be independently ruled out.'}};
   }
+  if(message.type==='MATCH_ITEMS'&&location.pathname.includes('test-contents'))return {ok:true,apiVersion:1,results:message.items.map(item=>{
+    const evidence={provider:'kindle',title:'Saga Complete Collection',ownership:'owned',relationship:'contains',itemRef:'opaque-saga',reason:'Reviewed full issues',confidence:1,evidence:{source:'Reviewed publisher contents',checkedAt:'2026-08-01'},verifiedAt:'2026-08-01'};
+    const entries=item.contents||[];const covered=entries.filter(entry=>['2','5'].includes(entry.number)).map(entry=>({...entry,evidence:[evidence]}));
+    return {requestId:item.requestId,matches:[],possibleMatches:[],partialMatches:covered.length?[evidence]:[],coverage:entries.length?{total:entries.length,owned:covered.length,complete:covered.length===entries.length,scopeUncertain:false,covered,possibleCovered:[],missing:entries.filter(entry=>!['2','5'].includes(entry.number))}:null};
+  })};
   if(message.type==='MATCH_ITEMS')return {ok:true,apiVersion:1,results:message.items.map(item=>({requestId:item.requestId,matches:item.title==='External comic'?[{provider:'humble',ownership:'owned'}]:[]}))};
-  if(message.type==='FANATICAL_GET_PUBLIC_BUNDLE')return {ok:true,bundle:message.path.includes('test-editions')?${JSON.stringify(editionBundle)}:message.path.includes('pick-and-mix')?${JSON.stringify({ ...bundle, products, tiers: [{ quantity: 2, price: { USD: 100 } }] })}:${JSON.stringify(bundle)}};
+  if(message.type==='FANATICAL_GET_PUBLIC_BUNDLE')return {ok:true,bundle:message.path.includes('test-contents')?(message.path.includes('pick-and-mix')?${JSON.stringify(contentsBundle)}:${JSON.stringify({ ...contentsBundle, products: undefined, tiers: undefined })}):message.path.includes('test-editions')?${JSON.stringify(editionBundle)}:message.path.includes('pick-and-mix')?${JSON.stringify({ ...bundle, products, tiers: [{ quantity: 2, price: { USD: 100 } }] })}:${JSON.stringify(bundle)}};
 }},storage:{local:{get:async defaults=>({...defaults,...values}),set:async changes=>{Object.assign(values,changes); const events={};for(const key in changes)events[key]={newValue:changes[key]};listeners.forEach(listener=>listener(events,'local'));},remove:async key=>{delete values[key];listeners.forEach(listener=>listener({[key]:{newValue:undefined}},'local'));}},onChanged:{addListener:listener=>listeners.push(listener)}},tabs:{create(){}}};
 globalThis.confirmAnswer = true;
 globalThis.confirm = () => confirmAnswer;
@@ -170,6 +179,26 @@ try {
   finish({ok:true,scenario:'Orders importer coverage, failed scan and control recovery'});
 }catch(error){finish({ok:false,error:error.message})}
 `;
+const contentsChecks = `${common}
+try {
+  await wait();
+  const content=()=>document.querySelector('.fanatical-library-contents');
+  assert(content()?.textContent.includes('4 additional · 2 covered · 0 uncertain'),'Distinct bundle unit counts are wrong');
+  assert(document.querySelectorAll('.fanatical-library-partial-badge').length===2,'Central and local union coverage did not resolve Partial');
+  const sent=requests.filter(message=>message.type==='MATCH_ITEMS').flatMap(message=>message.items);
+  assert(sent.some(item=>item.title==='Saga Collection 1'&&item.contents.length===3&&item.excludeProviders.includes('fanatical')),'Live parser did not send explicit contents');
+  if(location.pathname.includes('pick-and-mix')) {
+    assert(content().textContent.includes('Selected items: 0 distinct additional units'),'Pool counted as selection');
+    const card=[...document.querySelectorAll('article')].find(card=>card.textContent.includes('Saga Collection 1'));card.classList.add('selected');card.click();await wait();
+    assert(content().textContent.includes('Selected items: 1 distinct additional units'),'Selection did not update additional-unit counts');
+  } else assert(content().textContent.includes('$1.00 tier: 1 distinct additional units')&&content().textContent.includes('$10.00 tier: 4 distinct additional units'),'Cumulative tier unit counts are wrong');
+  document.querySelector('.fanatical-library-partial-badge').click();
+  const inspector=document.querySelector('#fanatical-library-evidence');
+  assert(inspector?.textContent.includes('Reviewed publisher contents')&&inspector.textContent.includes('2026-08-01'),'Central contents evidence/freshness missing from inspector');
+  inspector.querySelector('button').click();await wait();
+  finish({ok:true,scenario:'central contents union, distinct unit value, tier/selection counts',route:location.pathname});
+}catch(error){finish({ok:false,error:error.message})}
+`;
 const cards = (kind, items = products) => items.map(product => `<div class="three-column-row"><article class="${kind}"><div class="cover-container"><img alt="${product.name}"><h2 class="card-product-name">${product.name}</h2></div></article></div>`).join('');
 const catalogue = [2, 10, null].map((days, index) => `<li class="HitCardContainer"><article class="HitCard"><a href="https://www.fanatical.com/en/bundle/test-${index}"><img alt="Test ${index}"><h2>Test ${index}</h2></a>${days === null ? '' : `<div class="CountdownTimer__clock">${days} Days Left</div>`}</article></li>`).join('');
 const pendingResults = new Map();
@@ -187,6 +216,7 @@ const server = http.createServer((request, response) => {
   if (url === '/catalogue-check.js') return send('text/javascript', catalogueChecks);
   if (url === '/edition-check.js') return send('text/javascript', editionChecks);
   if (url === '/order-check.js') return send('text/javascript', orderChecks);
+  if (url === '/contents-check.js') return send('text/javascript', contentsChecks);
   if (url.startsWith('/src/') && /^\/src\/[a-z-]+\.(?:js|mjs|css)$/u.test(url)) {
     return send(url.endsWith('.css') ? 'text/css' : 'text/javascript', fs.readFileSync(path.join(root, url.slice(1)), 'utf8'));
   }
@@ -195,16 +225,20 @@ const server = http.createServer((request, response) => {
     return send('text/html', html);
   }
   if (url === '/en/orders') return send('text/html', '<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"></head><body><main>Mock orders</main><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/content.js"></script><script type="module" src="/order-check.js"></script></body></html>');
-  if (url === '/en/bundle/test-comics' || url === '/en/bundle/books' || url === '/en/pick-and-mix/test-mix' || url.endsWith('/test-editions')) {
+  if (url === '/en/bundle/test-comics' || url === '/en/bundle/books' || url === '/en/pick-and-mix/test-mix' || url.endsWith('/test-editions') || url.endsWith('/test-contents')) {
     const isCatalogue = url.endsWith('/books');
     const isEdition = url.endsWith('/test-editions');
-    return send('text/html', `<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"><style>.fan-grid-container{display:grid;grid-template-columns:repeat(3,240px);gap:20px}.fanatical-library-pick-mix-reflow{grid-column:1/-1}article{min-height:160px}.cover-container{min-height:120px}</style></head><body><main>${isCatalogue ? `<ul class="HitCardsRow row">${catalogue}</ul>` : `<section class="tier"><div class="fan-grid-container">${cards(url.includes('pick-and-mix') ? 'PickAndMixCard' : 'bundle-product-card', isEdition ? editionProducts : products)}</div></section>`}</main><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/content.js"></script><script type="module" src="/${isCatalogue ? 'catalogue' : isEdition ? 'edition' : 'bundle'}-check.js"></script></body></html>`);
+    const isContents = url.endsWith('/test-contents');
+    return send('text/html', `<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"><style>.fan-grid-container{display:grid;grid-template-columns:repeat(3,240px);gap:20px}.fanatical-library-pick-mix-reflow{grid-column:1/-1}article{min-height:160px}.cover-container{min-height:120px}</style></head><body><main>${isCatalogue ? `<ul class="HitCardsRow row">${catalogue}</ul>` : `<section class="tier"><div class="fan-grid-container">${cards(url.includes('pick-and-mix') ? 'PickAndMixCard' : 'bundle-product-card', isContents ? contentsProducts : isEdition ? editionProducts : products)}</div></section>`}</main><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/content.js"></script><script type="module" src="/${isCatalogue ? 'catalogue' : isContents ? 'contents' : isEdition ? 'edition' : 'bundle'}-check.js"></script></body></html>`);
   }
   response.writeHead(404).end();
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
-  for (const [index, route] of ['/options', '/en/bundle/test-comics', '/en/pick-and-mix/test-mix', '/en/bundle/books', '/en/bundle/test-editions', '/en/pick-and-mix/test-editions', '/en/orders'].entries()) {
+  const allRoutes = ['/options', '/en/bundle/test-comics', '/en/pick-and-mix/test-mix', '/en/bundle/books', '/en/bundle/test-editions', '/en/pick-and-mix/test-editions', '/en/orders', '/en/bundle/test-contents', '/en/pick-and-mix/test-contents'];
+  const routes = process.argv.length > 2 ? process.argv.slice(2) : allRoutes;
+  if (routes.some(route => !allRoutes.includes(route))) throw new Error('Unknown browser fixture route');
+  for (const [index, route] of routes.entries()) {
     const result = await new Promise((resolve, reject) => {
       const child = spawn(chromePath, ['--headless', '--disable-gpu', '--no-first-run', '--no-default-browser-check', `--user-data-dir=${path.join(profileRoot, String(index))}`, `http://127.0.0.1:${server.address().port}${route}`], { windowsHide: true });
       child.stdout.resume(); child.stderr.resume();

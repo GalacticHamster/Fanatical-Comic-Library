@@ -34,6 +34,9 @@
 .fanatical-library-evidence h2 { font:700 1.1rem/1.4 Arial,sans-serif; color:inherit; }
 .fanatical-library-evidence button { padding:.4rem .6rem; margin:.25rem; border:1px solid #aaa; border-radius:.25rem; background:#333; color:#fff; font:inherit; cursor:pointer; }
 .fanatical-library-evidence li { margin:.45rem 0; overflow-wrap:anywhere; }
+.fanatical-library-contents { margin:.6rem 0; font-size:.8rem; font-weight:400; }
+.fanatical-library-contents summary { font-weight:700; cursor:pointer; }
+.fanatical-library-contents ul { max-height:10rem; overflow:auto; padding-left:1.25rem; }
 .fanatical-library-card-edition-note { display:block; margin-top:.2rem; color:#f4cc73; font-weight:400; }
 .fanatical-library-diagnostics { margin-top:.6rem; font-size:.75rem; font-weight:400; }
 .fanatical-library-diagnostics summary { cursor:pointer; font-weight:700; }

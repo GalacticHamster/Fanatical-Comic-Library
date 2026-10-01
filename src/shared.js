@@ -526,6 +526,48 @@
     return /^[a-p]{32}$/u.test(String(id || '')) ? `chrome://extensions/?options=${id}` : null;
   }
 
+  function bundleContents(parsed, matches) {
+    const covered = new Map(); const uncertain = new Map(); const additional = new Map(); const perProduct = new Map();
+    let noContentsProducts = 0; let incompleteProducts = 0;
+    const rows = parsed.products.map((product, index) => ({ product, match: matches[index], target: offerContents(product) }));
+    for (const { product, match, target } of rows) {
+      for (const entry of match.coverage?.covered || []) covered.set(contentKey(entry), entry);
+      // Exact product ownership can verify explicit catalog contents. Title
+      // ranges alone cannot assert that a collection contains those units.
+      if (['owned', 'owned-elsewhere'].includes(match.state) && product.contents?.length && !target.uncertain) {
+        for (const entry of target.entries) if (entry.completeness === 'full' && entry.run && entry.language) covered.set(contentKey(entry), entry);
+      }
+      for (const entry of match.coverage?.possibleCovered || []) uncertain.set(contentKey(entry), entry);
+    }
+    for (const { product, match, target } of rows) {
+      const available = parsed.kind !== 'pick-mix' || product.availability?.regionAvailable !== false && product.availability?.soldOut !== true && product.availability?.storeVisible !== false;
+      if (!available) continue;
+      if (!target.entries.length) { noContentsProducts++; continue; }
+      if (match.lookupIncomplete || match.state === 'unchecked' || target.uncertain) incompleteProducts++;
+      const units = new Set();
+      for (const entry of target.entries) {
+        if (entry.completeness !== 'full' || covered.has(contentKey(entry))) continue;
+        const id = contentKey(entry);
+        if (match.lookupIncomplete || match.state === 'unchecked' || target.uncertain || !entry.run || !entry.language || uncertain.has(id)) uncertain.set(id, entry);
+        else if (!['owned', 'owned-elsewhere'].includes(match.state)) { additional.set(id, entry); units.add(id); }
+        else uncertain.set(id, entry);
+      }
+      const existing = perProduct.get(product.sourceItemId) || new Set();
+      for (const id of units) existing.add(id); perProduct.set(product.sourceItemId, existing);
+    }
+    for (const id of covered.keys()) { uncertain.delete(id); additional.delete(id); }
+    for (const id of uncertain.keys()) additional.delete(id);
+    const totals = new Set();
+    const tiers = parsed.kind === 'standard' ? parsed.groups.map(group => {
+      const raw = group.price?.USD; const price = (typeof raw === 'number' || typeof raw === 'string' && raw.trim()) && Number.isFinite(Number(raw)) && Number(raw) >= 0 ? Number(raw) : null;
+      return { group, price };
+    }).sort((left, right) => (left.price ?? Infinity) - (right.price ?? Infinity)).map(({ group, price }) => {
+      for (const product of group.products) for (const id of perProduct.get(product.sourceItemId) || []) if (additional.has(id)) totals.add(id);
+      return { price, additional: totals.size };
+    }) : [];
+    return { additional: [...additional.values()], covered: [...covered.values()], uncertain: [...uncertain.values()], noContentsProducts, incompleteProducts, tiers };
+  }
+
   function isExtensionId(value) {
     const id = String(value ?? '').trim();
     return /^[a-p]{32}$/u.test(id) || /^[a-z0-9](?:[a-z0-9._+-]*[a-z0-9])?@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/iu.test(id);
@@ -595,5 +637,5 @@
     return hours ? Number(hours[1]) / 24 : null;
   }
 
-  global.FanaticalLibrary = { normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
+  global.FanaticalLibrary = { normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
 }(globalThis));

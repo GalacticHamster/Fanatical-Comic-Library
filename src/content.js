@@ -441,10 +441,13 @@
   }
 
   function selectedCount(products) {
+    return selectedProducts(products).length;
+  }
+  function selectedProducts(products) {
     return products.filter((product) => {
       const card = cardFor(product); const classes = String(card?.className ?? '');
       return /\b(?:selected|chosen|active)\b/iu.test(classes) || Boolean(card?.querySelector('input:checked, [aria-pressed="true"], [aria-selected="true"]'));
-    }).length;
+    });
   }
 
   function restorePickMixReflow() {
@@ -678,6 +681,7 @@
     const heading = document.createElement('strong'); heading.textContent = `Your Fanatical items: ${counts.owned} owned${counts.elsewhere ? ` · ${counts.elsewhere} elsewhere` : ''} · ${counts.new} new${counts.possible ? ` · ${counts.possible} possible` : ''}`; element.append(heading);
     heading.textContent = `Your Fanatical items: ${counts.owned} owned${counts.elsewhere ? ` \u00b7 ${counts.elsewhere} elsewhere` : ''} \u00b7 ${counts.new} new${counts.partial ? ` \u00b7 ${counts.partial} partial` : ''}${counts.possible ? ` \u00b7 ${counts.possible} possible` : ''}`;
     if (counts.unchecked) heading.textContent += ` · ${counts.unchecked} not checked`;
+    appendContentsSummary(element, parsed, matches);
     const purchase = (Array.isArray(localItems) ? localItems : []).find((item) => item?.bundle?.sourceItemId === parsed.sourceItemId);
     if (purchase?.purchaseDate) {
       const notice = document.createElement('p'); notice.className = 'fanatical-library-purchased';
@@ -749,6 +753,36 @@
     appendSummaryControls(element);
   }
 
+  function appendContentsSummary(summary, parsed, matches) {
+    const content = F.bundleContents(parsed, matches);
+    if (!content.additional.length && !content.covered.length && !content.uncertain.length) return;
+    const details = document.createElement('details'); details.className = 'fanatical-library-contents';
+    const heading = document.createElement('summary');
+    heading.textContent = `${parsed.kind === 'pick-mix' ? 'Available pool' : 'Bundle'} contents: ${content.additional.length} additional · ${content.covered.length} covered · ${content.uncertain.length} uncertain`;
+    details.append(heading);
+    const note = document.createElement('p'); note.textContent = 'Distinct full issues/volumes across checked libraries; overlapping offers count once. Additional means not found, within known run/language scope.'; details.append(note);
+    if (content.noContentsProducts) { const row = document.createElement('p'); row.textContent = `${content.noContentsProducts} offers have no enumerable contents; they are outside these unit counts.`; details.append(row); }
+    if (content.incompleteProducts) { const row = document.createElement('p'); row.textContent = `${content.incompleteProducts} offers need a complete lookup or readable contents before their added units can be assessed.`; details.append(row); }
+    if (parsed.kind === 'pick-mix') {
+      const selected = new Set(selectedProducts(parsed.products).map(product => product.sourceItemId));
+      const indices = parsed.products.map((product, index) => selected.has(product.sourceItemId) ? index : -1).filter(index => index >= 0);
+      const value = F.bundleContents({ ...parsed, products: indices.map(index => parsed.products[index]) }, indices.map(index => matches[index]));
+      const availableNew = new Set(content.additional.map(F.contentKey));
+      value.additional = value.additional.filter(entry => availableNew.has(F.contentKey(entry)));
+      const row = document.createElement('p'); row.className = 'fanatical-library-selected-contents'; row.textContent = `Selected items: ${value.additional.length} distinct additional units (${value.uncertain.length} uncertain). The pool total does not describe your selection.`; details.append(row);
+    } else {
+      for (const tier of content.tiers) { const row = document.createElement('p'); row.textContent = `${tier.price === null ? 'Unpriced tier' : `$${(tier.price / 100).toFixed(2)} tier`}: ${tier.additional} distinct additional units (cumulative).`; details.append(row); }
+    }
+    for (const [label, entries] of [['Additional', content.additional], ['Already covered', content.covered], ['Uncertain', content.uncertain]]) {
+      if (!entries.length) continue;
+      const list = document.createElement('ul');
+      for (const entry of entries.slice(0, 100)) { const row = document.createElement('li'); row.textContent = `${label}: ${F.unitLabel(entry)}`; list.append(row); }
+      if (entries.length > 100) { const row = document.createElement('li'); row.textContent = `${entries.length - 100} more ${label.toLowerCase()} units`; list.append(row); }
+      details.append(list);
+    }
+    summary.append(details);
+  }
+
   async function render() {
     if (state.rendering) return; const current = route(); if (!current) return;
     const hasStableSummary = !state.summaryDirty && state.url === location.href && Boolean(document.querySelector('[data-fanatical-library-summary]'));
@@ -768,7 +802,8 @@
       const allProducts = F.flattenProducts(parsed.products);
       await queryGalactic(allProducts.filter(product => F.classify(product, stored.fanaticalLibraryItems).state !== 'owned'), stored.galacticLibraryExtensionId);
       if (revision !== state.revision || pageUrl !== location.href) return;
-      const localUnits = F.localContents(stored.fanaticalLibraryItems);
+      const ownedOffers = parsed.products.filter(product => F.classify(product, stored.fanaticalLibraryItems).state === 'owned');
+      const localUnits = F.localContents([...stored.fanaticalLibraryItems, ...ownedOffers]);
       const matches = parsed.products.map((product) => status(product, stored.fanaticalLibraryItems, localUnits));
       parsed.products.forEach((product, index) => {
         const card = cardFor(product); if (!card) return;
@@ -844,6 +879,10 @@
     if (changes.fanaticalLibraryItems || changes.fanaticalShowDiagnostics) catalogueState.items = null;
     if (changes.fanaticalCatalogueFilters) catalogueState.filters = catalogueFilters(changes.fanaticalCatalogueFilters.newValue);
     schedule(true);
+  });
+  for (const event of ['click', 'change']) document.addEventListener(event, signal => {
+    if (state.parsed?.kind !== 'pick-mix' || signal.target.closest('[data-fanatical-library-summary], #fanatical-library-evidence, [data-fanatical-library-for]')) return;
+    if (signal.target.closest('article.PickAndMixCard')) { state.summaryDirty = true; schedule(true); }
   });
   schedule();
 }());
