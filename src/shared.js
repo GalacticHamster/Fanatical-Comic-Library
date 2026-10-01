@@ -106,6 +106,10 @@
     return (Array.isArray(result?.matches) ? result.matches : []).find((match) => match?.ownership === 'owned' || match?.ownership === 'claimed');
   }
 
+  function galacticOwnershipReview(result) {
+    return (Array.isArray(result?.matches) ? result.matches : []).find((match) => match?.ownership && match.ownership !== 'owned' && match.ownership !== 'claimed');
+  }
+
   function galacticPossible(result) {
     return (Array.isArray(result?.possibleMatches) ? result.possibleMatches : []).find((match) => match?.ownership === 'owned' || match?.ownership === 'claimed');
   }
@@ -117,6 +121,8 @@
     const exact = galacticOwned(result);
     if (exact) return { state: 'owned-elsewhere', provenance: exact.provider, reason: 'exact Galactic Library match' };
     if (local?.state === 'possible') return local;
+    const review = galacticOwnershipReview(result);
+    if (review) return { state: 'possible', provenance: review.provider, ownershipReview: true, reason: `exact Galactic Library match with ${review.ownership} ownership status` };
     const possible = galacticPossible(result);
     return possible ? { state: 'possible', provenance: possible.provider, reason: 'possible Galactic Library relationship' } : (local ?? { state: 'new', provenance: null });
   }
@@ -133,7 +139,7 @@
       return `Owned elsewhere — ${provider === 'gog' ? 'GOG' : provider.replace(/^./u, (letter) => letter.toUpperCase())}`;
     }
     if (match?.state === 'partial') return `Partial (${match.owned}/${match.total})`;
-    return match?.state === 'possible' ? 'Possible' : 'New';
+    return match?.state === 'possible' ? (match.ownershipReview ? 'Check ownership' : 'Possible') : 'New';
   }
 
   function upsertBadge(card, productId, match, badgeHost = card) {
