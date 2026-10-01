@@ -3,9 +3,48 @@
   const F = globalThis.FanaticalLibrary;
   if (!F) return;
   const titleCollator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
-  const state = { url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false, showNewOnlyLoaded: false, pickMixReflow: [] };
+  const state = { url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false, showNewOnlyLoaded: false, pickMixReflow: [], summaryDirty: false };
   const catalogueState = { items: null, filters: null, rendering: false };
   let observer = null;
+  let diagnosticsEnabled = false;
+
+  function updateDiagnostics(parent, lines, entries = []) {
+    let details = parent.querySelector('[data-fanatical-library-diagnostics]');
+    if (!diagnosticsEnabled) { details?.remove(); return; }
+    const signature = JSON.stringify([lines, entries]);
+    if (details?.dataset.diagnosticsContent === signature) return;
+    if (!details) {
+      details = document.createElement('details'); details.dataset.fanaticalLibraryDiagnostics = 'true'; details.className = 'fanatical-library-diagnostics';
+      const heading = document.createElement('summary'); heading.textContent = 'Diagnostics'; details.append(heading); parent.append(details);
+    }
+    details.dataset.diagnosticsContent = signature;
+    details.querySelectorAll('ul, ol').forEach((list) => list.remove());
+    for (const [tag, rows] of [['ul', lines], ['ol', entries]]) {
+      if (!rows.length) continue;
+      const list = document.createElement(tag);
+      for (const text of rows) { const row = document.createElement('li'); row.textContent = text; list.append(row); }
+      details.append(list);
+    }
+  }
+
+  function catalogueDiagnostics(cards) {
+    let host = document.querySelector('#fanatical-library-catalogue-diagnostics');
+    if (!diagnosticsEnabled) {
+      host?.remove(); document.querySelector('#fanatical-library-catalogue-controls [data-fanatical-library-diagnostics]')?.remove(); return;
+    }
+    const controls = document.querySelector('#fanatical-library-catalogue-controls');
+    if (controls) { host?.remove(); host = controls; }
+    else if (!host) {
+      host = document.createElement('aside'); host.id = 'fanatical-library-catalogue-diagnostics'; host.className = 'fanatical-library-catalogue-controls'; document.body.append(host);
+    }
+    const entries = [...cards].map(([card, offer]) => ({ title: catalogueTitle(card, offer), days: catalogueExpiry(card), slot: catalogueSlot(card) }));
+    updateDiagnostics(host, [
+      `Catalogue: ${F.cataloguePageKind(location.pathname)}; ${entries.length} offer cards detected.`,
+      `Cards with a readable expiry: ${entries.filter((entry) => entry.days !== null).length}; unknown expiry: ${entries.filter((entry) => entry.days === null).length}.`,
+      `Filtered cards: ${entries.filter((entry) => entry.slot.classList.contains('fanatical-library-catalogue-filtered')).length}.`,
+      `Sorting: ${controls ? 'time left, then natural alphabetical title' : 'native featured sections (not reordered)'}.`
+    ], entries.map((entry) => `${entry.title}: ${entry.days === null ? 'expiry unavailable' : `${Number(entry.days.toFixed(2))} days left`}`));
+  }
 
   function isCataloguePage() {
     return F.cataloguePageKind(location.pathname) !== null;
@@ -166,9 +205,10 @@
       }
       document.querySelector('[data-fanatical-library-summary]')?.remove();
       if (!catalogueState.items || !catalogueState.filters) {
-        const stored = await chrome.storage.local.get({ fanaticalLibraryItems: [], fanaticalCatalogueFilters: {} });
+        const stored = await chrome.storage.local.get({ fanaticalLibraryItems: [], fanaticalCatalogueFilters: {}, fanaticalShowDiagnostics: false });
         catalogueState.items = stored.fanaticalLibraryItems;
         catalogueState.filters = catalogueFilters(stored.fanaticalCatalogueFilters);
+        diagnosticsEnabled = Boolean(stored.fanaticalShowDiagnostics);
       }
       if (!isCataloguePage()) return;
       const purchased = F.purchasedBundleSlugs(catalogueState.items);
@@ -203,6 +243,7 @@
         card.append(badge);
       }
       applyCatalogueCategory(cards, purchased);
+      catalogueDiagnostics(cards);
     } finally {
       catalogueState.rendering = false;
       observer?.observe(document.documentElement, { childList: true, subtree: true });
@@ -340,6 +381,7 @@
   }
 
   async function queryGalactic(products, extensionId) {
+    state.galactic.clear();
     state.galacticEnabled = F.isExtensionId(extensionId);
     if (!state.galacticEnabled) { state.galacticStatus = 'Not configured.'; return; }
     const requests = F.galacticRequestItems(products);
@@ -353,7 +395,7 @@
       }
       const exact = [...state.galactic.values()].filter((result) => (Array.isArray(result?.matches) ? result.matches : []).some((match) => match?.ownership === 'owned' || match?.ownership === 'claimed')).length;
       state.galacticStatus = `Available. ${exact} exact external match${exact === 1 ? '' : 'es'}.`;
-    } catch { state.galacticStatus = 'Unavailable; showing local Fanatical results only.'; } finally { clearTimeout(timeout); }
+    } catch { state.galactic.clear(); state.galacticStatus = 'Unavailable; showing local Fanatical results only.'; } finally { clearTimeout(timeout); }
   }
 
   function status(product, localItems) {
@@ -652,12 +694,14 @@
 
   async function render() {
     if (state.rendering) return; const current = route(); if (!current) return;
-    const hasStableSummary = state.url === location.href && Boolean(document.querySelector('[data-fanatical-library-summary]'));
+    const hasStableSummary = !state.summaryDirty && state.url === location.href && Boolean(document.querySelector('[data-fanatical-library-summary]'));
     state.rendering = true;
+    const startedAt = performance.now();
     observer?.disconnect();
     if (!hasStableSummary) showPanel('Fanatical Library: loading ownership status…');
     try {
-      const [parsed, stored] = await Promise.all([loadPublicBundle(current), chrome.storage.local.get({ fanaticalLibraryItems: [], galacticLibraryExtensionId: '', fanaticalShowNewItemsOnly: false })]);
+      const [parsed, stored] = await Promise.all([loadPublicBundle(current), chrome.storage.local.get({ fanaticalLibraryItems: [], galacticLibraryExtensionId: '', fanaticalShowNewItemsOnly: false, fanaticalShowDiagnostics: false })]);
+      diagnosticsEnabled = Boolean(stored.fanaticalShowDiagnostics);
       if (!state.showNewOnlyLoaded) {
         state.showNewOnly = Boolean(stored.fanaticalShowNewItemsOnly);
         state.showNewOnlyLoaded = true;
@@ -677,7 +721,26 @@
         if (!state.showNewOnly) sortPickMixCards();
       } else sortStandardBundleCards();
       if (!hasStableSummary) renderSummary(parsed, matches, stored.fanaticalLibraryItems);
+      state.summaryDirty = false;
       applyNewOnlyFilter();
+      const summary = document.querySelector('[data-fanatical-library-summary]');
+      if (summary && !diagnosticsEnabled) summary.querySelector('[data-fanatical-library-diagnostics]')?.remove();
+      if (summary && diagnosticsEnabled) {
+        const detected = new Set(parsed.products.map((product) => cardFor(product)).filter(Boolean));
+        const counts = new Map();
+        for (const match of matches) counts.set(match.state, (counts.get(match.state) || 0) + 1);
+        updateDiagnostics(summary, [
+          `Bundle: ${parsed.kind}; ${parsed.products.length} products parsed; ${detected.size} distinct cards found.`,
+          `Local library records compared: ${stored.fanaticalLibraryItems.length}.`,
+          `Matches: ${[...counts].map(([kind, total]) => `${kind} ${total}`).join('; ')}.`,
+          `Galactic Library: ${state.galacticStatus}`,
+          'Sorting: natural alphabetical title across the displayed cards.',
+          `Last comparison: ${Math.round(performance.now() - startedAt)} ms.`
+        ], [...parsed.products].sort((a, b) => titleCollator.compare(a.title, b.title)).map((product) => {
+          const match = matches[parsed.products.indexOf(product)];
+          return `${product.title}: ${F.overlayLabel(match)} — ${match.reason || 'no local or returned Galactic ownership match'}${match.provenance ? ` (${match.provenance})` : ''}`;
+        }));
+      }
     } catch (error) {
       showPanel(`Fanatical Library could not load this bundle: ${String(error?.message ?? 'unknown error')}`, true);
     } finally {
@@ -703,14 +766,17 @@
     document.querySelectorAll('.fanatical-library-catalogue-card').forEach((card) => card.classList.remove('fanatical-library-catalogue-card'));
     document.querySelectorAll('.fanatical-library-catalogue-filtered').forEach((slot) => slot.classList.remove('fanatical-library-catalogue-filtered'));
     document.querySelector('#fanatical-library-catalogue-controls')?.remove();
-    if (!force && state.parsed && !cardsNeedAnnotation()) return;
+    document.querySelector('#fanatical-library-catalogue-diagnostics')?.remove();
+    if (!force && state.parsed && state.url === location.href && !cardsNeedAnnotation()) return;
     clearTimeout(state.timer); state.timer = setTimeout(render, 120);
   };
-  observer = new MutationObserver(schedule);
+  observer = new MutationObserver(() => schedule());
   observer.observe(document.documentElement, { childList: true, subtree: true });
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && changes.fanaticalLibraryItems) catalogueState.items = null;
-    if (area === 'local' && changes.fanaticalCatalogueFilters) catalogueState.filters = catalogueFilters(changes.fanaticalCatalogueFilters.newValue);
+    if (area !== 'local') return;
+    if (changes.fanaticalLibraryItems || changes.galacticLibraryExtensionId) state.summaryDirty = true;
+    if (changes.fanaticalLibraryItems || changes.fanaticalShowDiagnostics) catalogueState.items = null;
+    if (changes.fanaticalCatalogueFilters) catalogueState.filters = catalogueFilters(changes.fanaticalCatalogueFilters.newValue);
     schedule(true);
   });
   schedule();

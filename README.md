@@ -16,8 +16,17 @@ title-only matches for games, books/comics, and audiobooks.
    purchases** to deliberately rebuild the local library from every completed
    order.
 
-No browser test has yet been performed against a live page. See the manual
-checklist below before treating the extension as release-ready.
+Options now include confirmed JSON backup restore, a naturally ordered
+50-item library preview, Galactic Library Save/Test/Remove controls, and an
+opt-in bundle/catalogue diagnostics switch. The options page also shows this
+extension's ID for Galactic Library's companion allowlist.
+
+Restoring a version 1 Fanatical backup replaces the local library after
+confirmation, keeping product IDs, matching IDs and purchase provenance.
+It clears the last scan summary and order fingerprints so the next quick
+scan checks every completed order. Pairing and display settings are kept.
+Invalid backups are rejected without changing storage; unknown fields are
+never stored. Export your current library before replacing it.
 
 ## Privacy boundary
 
@@ -55,10 +64,22 @@ fanaticalImportSummary: {
 fanaticalScannedOrderFingerprints: string[] // SHA-256 fingerprints only
 
 galacticLibraryExtensionId: string
+fanaticalShowDiagnostics: boolean // off by default
+fanaticalShowNewItemsOnly: boolean
+fanaticalCatalogueFilters: { hidePurchased, endingSoon }
 ```
 
 The export uses the same allowlisted ownership data; scan fingerprints are
 local importer state and are not exported.
+
+## Automated checks
+
+Run `npm test` for parser, matching, privacy, backup validation and options
+behavior tests. Run `npm run browser-check` for real-DOM checks in isolated
+headless Chrome profiles, using mock data on localhost (no signed-in session).
+Set `CHROME_PATH` if Chrome is not installed at its usual Windows path.
+Public catalogue markup has also been checked using captured live pages;
+signed-in flows still need the manual checks below.
 
 ## Manual browser checklist
 
@@ -75,8 +96,15 @@ local importer state and are not exported.
 - Pair Galactic Library; verify an exact external match reads **Owned
   elsewhere — Provider**, never **Owned**.
 - Verify that disabling/removing the paired ID leaves local matching functional.
-- Use Reset and Export; confirm reset removes only this extension's local data
-  and export contains only the schema above.
+- Export a backup, then restore it; confirm the confirmation dialog, preview,
+  purchase badges and matching survive. Cancel a restore and try an invalid
+  file; both should leave your library untouched.
+- Test the Galactic link, then remove it while a bundle is open; external
+  badges should return to local matching without a page reload.
+- Turn diagnostics on and off while a bundle or category catalogue is open;
+  verify counts/match reasons/expiry readings appear only when enabled.
+- Clear the library; confirm it removes titles and scan history but keeps
+  pairing and display settings.
 
 ## Known limitations
 

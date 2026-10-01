@@ -1,49 +1,9 @@
 /* Chrome MV3 entry point. The only main-world execution is the strict importer. */
+import { safeId, sanitizeImportResult } from './library-data.mjs';
 
 const STORAGE_ITEMS = 'fanaticalLibraryItems';
 const STORAGE_SUMMARY = 'fanaticalImportSummary';
 const STORAGE_ORDER_FINGERPRINTS = 'fanaticalScannedOrderFingerprints';
-
-const safeText = (value, max = 500) => typeof value === 'string' ? value.trim().slice(0, max) : '';
-const safeId = (value) => /^[a-zA-Z0-9_-]{6,128}$/u.test(String(value ?? '')) ? String(value) : '';
-const safeDate = (value) => typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? value : null;
-const safeList = (value, max = 30) => [...new Set((Array.isArray(value) ? value : []).map((entry) => safeText(entry, 40)).filter(Boolean))].sort().slice(0, max);
-
-/** Defense in depth: treat the main-world result as untrusted and re-allowlist it. */
-function sanitizeImportResult(value) {
-  const input = value && typeof value === 'object' ? value : {};
-  const deduplicated = new Map();
-  for (const candidate of Array.isArray(input.items) ? input.items : []) {
-    const sourceItemId = safeId(candidate?.sourceItemId);
-    const title = safeText(candidate?.title);
-    const bundleId = safeId(candidate?.bundle?.sourceItemId);
-    if (!sourceItemId || !title) continue;
-    const externalIds = {};
-    if (/^\d{1,16}$/u.test(String(candidate?.externalIds?.steamAppId ?? ''))) externalIds.steamAppId = String(candidate.externalIds.steamAppId);
-    if (/^[0-9X]{10,17}$/iu.test(String(candidate?.externalIds?.isbn ?? ''))) externalIds.isbn = String(candidate.externalIds.isbn).toUpperCase();
-    const item = {
-      source: 'fanatical', sourceItemId, title,
-      ...(safeText(candidate?.slug, 300) ? { slug: safeText(candidate.slug, 300) } : {}),
-      mediaType: ['game', 'book', 'audiobook', 'software', 'audio', 'elearning', 'other'].includes(candidate?.mediaType) ? candidate.mediaType : 'other',
-      ...(Object.keys(externalIds).length ? { externalIds } : {}),
-      ...(safeList(candidate?.drm).length ? { drm: safeList(candidate.drm) } : {}),
-      ...(safeList(candidate?.platforms).length ? { platforms: safeList(candidate.platforms) } : {}),
-      ...(safeList(candidate?.formats).length ? { formats: safeList(candidate.formats) } : {}),
-      bundle: { sourceItemId: bundleId, title: safeText(candidate?.bundle?.title), ...(safeText(candidate?.bundle?.slug, 300) ? { slug: safeText(candidate.bundle.slug, 300) } : {}) },
-      purchaseDate: safeDate(candidate?.purchaseDate)
-    };
-    deduplicated.set(sourceItemId, item);
-  }
-  const orderFingerprints = [...new Set((Array.isArray(input.orderFingerprints) ? input.orderFingerprints : [])
-    .filter((fingerprint) => /^[a-f0-9]{64}$/iu.test(String(fingerprint))).map((fingerprint) => String(fingerprint).toLowerCase()))].sort();
-  return {
-    schemaVersion: 1,
-    ordersScanned: Math.max(0, Math.floor(Number(input.ordersScanned) || 0)),
-    ordersAvailable: Math.max(0, Math.floor(Number(input.ordersAvailable) || 0)),
-    orderFingerprints,
-    items: [...deduplicated.values()].sort((a, b) => a.sourceItemId.localeCompare(b.sourceItemId))
-  };
-}
 
 /* This function is serialized by chrome.scripting and runs only in Fanatical's
  * MAIN world. Its return value is an explicit ownership DTO, never raw JSON. */

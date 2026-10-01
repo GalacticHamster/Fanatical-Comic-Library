@@ -4,7 +4,7 @@
   <body>
     <main class="settings">
       <h1>Fanatical Library</h1>
-      <p>Your library stays in this browser. Import directly from your signed-in Fanatical order history.</p>
+      <p>Your library stays in this browser. Import directly from your signed-in Fanatical order history or restore a JSON backup.</p>
       <section>
         <h2>Import from Fanatical</h2>
         <p>Open your Orders page and select <em>Quick scan for new purchases</em>. It checks the order list and retrieves details only for orders not already scanned locally. Use <em>Full scan all purchases</em> only when you need to rebuild the Fanatical library.</p>
@@ -12,12 +12,24 @@
         <p id="last-import" role="status"></p>
       </section>
       <section>
+        <h2>Import backup</h2>
+        <p>Choose a Fanatical Library JSON backup exported below. Restoring replaces your local library after confirmation and resets scan history. Your Galactic link and settings are kept. The next quick scan rechecks all completed orders.</p>
+        <input id="import-file" type="file" accept="application/json,.json" aria-label="Import Fanatical Library backup">
+        <p id="import-status" role="status"></p>
+      </section>
+      <section>
         <h2>Galactic Library link</h2>
         <p>Optionally check a current Fanatical bundle against exact game, book/comic, and audiobook titles owned through your other connected libraries. This sends only the bundle titles being checked to your locally installed Galactic Library extension; it never transfers either full library.</p>
+        <p>Fanatical Library extension ID: <code id="fanatical-extension-id">Loading...</code></p>
         <label for="galactic-id">Galactic Library extension ID</label>
         <input id="galactic-id" autocomplete="off" spellcheck="false">
-        <div class="actions"><button id="save-galactic" type="button">Save link</button></div>
+        <div class="actions"><button id="save-galactic" type="button">Save link</button><button id="test-galactic" type="button">Test link</button><button id="remove-galactic" type="button">Remove link</button></div>
         <p id="galactic-status" role="status"></p>
+      </section>
+      <section>
+        <h2>Diagnostics</h2>
+        <label><input id="show-diagnostics" type="checkbox"> Show bundle and catalogue diagnostics</label>
+        <p>Leave this off for a clean bundle summary. Turn it on when troubleshooting loading, matching, or sorting. Diagnostics stay on the page and include only counts, current bundle titles, and match reasons.</p>
       </section>
       <section>
         <h2>Library</h2>
@@ -25,12 +37,14 @@
         <p id="history-note">Order-history pagination has not yet been validated on a larger account.</p>
         <div class="actions"><button id="export" type="button">Export backup</button><button id="reset" class="danger" type="button">Clear library</button></div>
         <p id="local-status" role="status"></p>
+        <p id="preview-note"></p>
+        <ol id="library-preview"></ol>
       </section>
       <section>
         <h2>Privacy</h2>
         <p>Purchase metadata is stored only in this browser. The importer reads Fanatical's session token only in the Fanatical page context; neither tokens nor raw order responses are stored, exported, or sent to another extension. Quick scans retain only SHA-256 fingerprints of completed-order IDs, never the IDs themselves.</p>
       </section>
     </main>
-    <script src="shared.js"></script><script src="options.js"></script>
+    <script src="shared.js"></script><script type="module" src="options.js"></script>
   </body>
 </html>
