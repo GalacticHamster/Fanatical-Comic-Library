@@ -3,7 +3,7 @@
   const F = globalThis.FanaticalLibrary;
   if (!F) return;
   const titleCollator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
-  const state = { url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false, showNewOnlyLoaded: false, pickMixReflow: [], summaryDirty: false };
+  const state = { url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false, showNewOnlyLoaded: false, pickMixReflow: [], summaryDirty: false, summaryMinimized: false };
   const catalogueState = { items: null, filters: null, rendering: false };
   let observer = null;
   let diagnosticsEnabled = false;
@@ -568,6 +568,41 @@
     panel(failed).textContent = message;
   }
 
+  function appendSummaryControls(summary) {
+    const controls = document.createElement('div');
+    controls.className = 'fanatical-library-summary-controls';
+    const minimize = document.createElement('button');
+    minimize.type = 'button';
+    minimize.className = 'fanatical-library-summary-minimize';
+    minimize.textContent = 'Minimize';
+    minimize.setAttribute('aria-label', 'Minimize Fanatical Library bundle summary');
+    const expand = document.createElement('button');
+    expand.type = 'button';
+    expand.className = 'fanatical-library-summary-expand';
+    expand.textContent = 'Fanatical Library — Expand';
+    expand.setAttribute('aria-label', 'Expand Fanatical Library bundle summary');
+    const update = () => {
+      summary.classList.toggle('fanatical-library-summary-minimized', state.summaryMinimized);
+      minimize.hidden = state.summaryMinimized;
+      expand.hidden = !state.summaryMinimized;
+      minimize.setAttribute('aria-expanded', String(!state.summaryMinimized));
+      expand.setAttribute('aria-expanded', String(!state.summaryMinimized));
+    };
+    minimize.addEventListener('click', () => {
+      state.summaryMinimized = true;
+      update();
+      expand.focus();
+    });
+    expand.addEventListener('click', () => {
+      state.summaryMinimized = false;
+      update();
+      minimize.focus();
+    });
+    controls.append(minimize, expand);
+    summary.prepend(controls);
+    update();
+  }
+
   function appendNewOnlyFilter(summary) {
     const label = document.createElement('label'); label.className = 'fanatical-library-bundle-filter';
     const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = state.showNewOnly;
@@ -690,6 +725,7 @@
       const detailList = document.createElement('details'); detailList.className = 'fanatical-library-title-list'; const title = document.createElement('summary'); title.textContent = `${label} (${entries.length})`; detailList.append(title); const list = document.createElement('ol'); alphabetize(entries).forEach((product) => { const row = document.createElement('li'); row.textContent = product.title; list.append(row); }); detailList.append(list); element.append(detailList);
     }
     if (tierDownload) element.append(tierDownload);
+    appendSummaryControls(element);
   }
 
   async function render() {
