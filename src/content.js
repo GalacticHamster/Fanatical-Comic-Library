@@ -4,7 +4,210 @@
   if (!F) return;
   const titleCollator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
   const state = { url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false, showNewOnlyLoaded: false, pickMixReflow: [] };
+  const catalogueState = { items: null, filters: null, rendering: false };
   let observer = null;
+
+  function isCataloguePage() {
+    return F.cataloguePageKind(location.pathname) !== null;
+  }
+
+  function isCatalogueCategory() {
+    return ['all', 'games', 'books', 'other', 'mystery'].includes(F.cataloguePageKind(location.pathname));
+  }
+
+  function catalogueCard(link) {
+    // HitCard titles may exist only while hovered. The stable card contains
+    // both the cover and the countdown; a hover overlay contains neither
+    // the full card contents nor a dependable expiry.
+    if (link.closest('.HitCardPopup')) return null;
+    const hitCard = link.closest('.HitCard');
+    if (hitCard) return hitCard;
+    for (let node = link; node && node !== document.body; node = node.parentElement) {
+      if (!node.querySelector('img') || node.querySelectorAll('h2, h3, h4').length !== 1) continue;
+      const offers = new Set([...node.querySelectorAll('a[href]')].map((anchor) => F.catalogueOffer(anchor.href)?.slug).filter(Boolean));
+      if (offers.size === 1) return node;
+    }
+    return null;
+  }
+
+  function catalogueOfferCount(node) {
+    return new Set([...node.querySelectorAll('a[href]')].map((link) => {
+      const offer = F.catalogueOffer(link.href);
+      return offer ? `${offer.kind}/${offer.slug}` : null;
+    }).filter(Boolean)).size;
+  }
+
+  function catalogueSlot(card) {
+    const hitCardSlot = card.closest('.HitCardContainer');
+    if (hitCardSlot) return hitCardSlot;
+    let child = card;
+    for (let parent = child.parentElement; parent && parent !== document.body; child = parent, parent = parent.parentElement) {
+      const slots = [...parent.children].filter((node) => catalogueOfferCount(node) === 1);
+      if (slots.length >= 2 && slots.includes(child)) return child;
+    }
+    return card;
+  }
+
+  function catalogueTitle(card, offer) {
+    const heading = card.querySelector('.hit-card-game-name, h2, h3, h4')?.textContent?.trim();
+    if (heading) return heading;
+    const coverTitle = card.querySelector('.HitCard__main img[alt], img[alt]')?.getAttribute('alt')?.trim();
+    return coverTitle?.replace(/^product cover for\s+/iu, '') || offer.slug;
+  }
+
+  function catalogueExpiry(card) {
+    const clock = card.querySelector('.CountdownTimer__clock');
+    if (clock) return F.catalogueDaysLeft(clock.textContent);
+    const timer = card.querySelector('.CountdownTimer, [class*="countdown" i]');
+    return timer ? F.catalogueDaysLeft(timer.textContent) : null;
+  }
+
+  function catalogueFilters(value) {
+    return { hidePurchased: Boolean(value?.hidePurchased), endingSoon: Boolean(value?.endingSoon) };
+  }
+
+  function renderCatalogueControls() {
+    if (!isCatalogueCategory()) { document.querySelector('#fanatical-library-catalogue-controls')?.remove(); return; }
+    let panel = document.querySelector('#fanatical-library-catalogue-controls');
+    if (!panel) {
+      panel = document.createElement('aside'); panel.id = 'fanatical-library-catalogue-controls'; panel.className = 'fanatical-library-catalogue-controls';
+      const heading = document.createElement('strong'); heading.textContent = 'Catalogue filters'; panel.append(heading);
+      for (const [key, label] of [['hidePurchased', 'Hide purchased'], ['endingSoon', 'Ending within 7 days']]) {
+        const field = document.createElement('label'); const input = document.createElement('input'); input.type = 'checkbox'; input.dataset.catalogueFilter = key;
+        field.title = key === 'hidePurchased' ? 'Hides offers previously bought from, including Pick & Mix offers that may still contain new items.' : 'Hides offers with more than 7 days left or no visible expiry.';
+        field.append(input, ` ${label}`); panel.append(field);
+      }
+      const note = document.createElement('small'); note.textContent = 'Sorted by time left, then title.'; panel.append(note);
+      panel.addEventListener('change', () => {
+        const next = {};
+        for (const input of panel.querySelectorAll('input[data-catalogue-filter]')) next[input.dataset.catalogueFilter] = input.checked;
+        catalogueState.filters = catalogueFilters(next);
+        chrome.storage.local.set({ fanaticalCatalogueFilters: catalogueState.filters }).catch(() => {});
+        schedule(true);
+      });
+      document.body.append(panel);
+    }
+    for (const input of panel.querySelectorAll('input[data-catalogue-filter]')) input.checked = catalogueState.filters[input.dataset.catalogueFilter];
+  }
+
+  function compareCatalogueEntries(left, right) {
+    if (left.daysLeft !== null && right.daysLeft !== null && left.daysLeft !== right.daysLeft) return left.daysLeft - right.daysLeft;
+    if (left.daysLeft !== null && right.daysLeft === null) return -1;
+    if (left.daysLeft === null && right.daysLeft !== null) return 1;
+    return titleCollator.compare(left.title, right.title) || left.offer.slug.localeCompare(right.offer.slug);
+  }
+
+  function sortCatalogueRows(groups) {
+    const sections = new Map();
+    for (const [parent, entries] of groups) {
+      const section = parent.parentElement;
+      if (!section) continue;
+      const rows = sections.get(section) ?? [];
+      rows.push({ parent, entries });
+      sections.set(section, rows);
+    }
+    for (const rows of sections.values()) {
+      if (rows.length < 2) continue;
+      const current = rows.flatMap((row) => row.entries);
+      const ordered = [...current].sort(compareCatalogueEntries);
+      if (ordered.every((entry, index) => entry === current[index])) continue;
+      const slots = rows.map((row) => row.entries.map((entry) => {
+        const marker = document.createComment('fanatical-library-catalogue-slot');
+        row.parent.replaceChild(marker, entry.slot);
+        return marker;
+      }));
+      let index = 0;
+      for (const row of slots) for (const marker of row) marker.parentElement.replaceChild(ordered[index++].slot, marker);
+    }
+  }
+
+  function applyCatalogueCategory(cards, purchased) {
+    document.querySelectorAll('.fanatical-library-catalogue-filtered').forEach((slot) => slot.classList.remove('fanatical-library-catalogue-filtered'));
+    if (!isCatalogueCategory()) { renderCatalogueControls(); return; }
+    const entries = [...cards].map(([card, offer]) => {
+      const slot = catalogueSlot(card);
+      return { card, slot, offer, title: catalogueTitle(card, offer), daysLeft: catalogueExpiry(card), purchased: purchased.has(offer.slug) };
+    });
+    const groups = new Map();
+    for (const entry of entries) {
+      const parent = entry.slot.parentElement;
+      if (!parent || parent === document.body) continue;
+      const group = groups.get(parent) ?? [];
+      if (!group.some((item) => item.slot === entry.slot)) group.push(entry);
+      groups.set(parent, group);
+    }
+    for (const [parent, group] of groups) {
+      if (group.length < 2) continue;
+      const ordered = [...group].sort(compareCatalogueEntries);
+      if (ordered.every((entry, index) => entry === group[index])) continue;
+      const marker = document.createComment('fanatical-library-catalogue-sort-anchor');
+      parent.insertBefore(marker, group[0].slot);
+      for (const entry of ordered) parent.insertBefore(entry.slot, marker);
+      marker.remove();
+      groups.set(parent, ordered);
+    }
+    sortCatalogueRows(groups);
+    for (const entry of entries) {
+      const filtered = (catalogueState.filters.hidePurchased && entry.purchased) || (catalogueState.filters.endingSoon && (entry.daysLeft === null || entry.daysLeft > 7));
+      entry.slot.classList.toggle('fanatical-library-catalogue-filtered', filtered);
+    }
+    renderCatalogueControls();
+  }
+
+  async function renderCatalogue() {
+    if (catalogueState.rendering || !isCataloguePage()) return;
+    catalogueState.rendering = true;
+    try {
+      if (state.parsed) {
+        restorePickMixReflow();
+        state.parsed = null;
+        state.url = '';
+        document.body.classList.remove('fanatical-library-show-new-only');
+      }
+      document.querySelector('[data-fanatical-library-summary]')?.remove();
+      if (!catalogueState.items || !catalogueState.filters) {
+        const stored = await chrome.storage.local.get({ fanaticalLibraryItems: [], fanaticalCatalogueFilters: {} });
+        catalogueState.items = stored.fanaticalLibraryItems;
+        catalogueState.filters = catalogueFilters(stored.fanaticalCatalogueFilters);
+      }
+      if (!isCataloguePage()) return;
+      const purchased = F.purchasedBundleSlugs(catalogueState.items);
+      const wanted = new Map();
+      const cards = new Map();
+      for (const link of document.querySelectorAll('a[href]')) {
+        const offer = F.catalogueOffer(link.href);
+        if (!offer) continue;
+        const card = catalogueCard(link);
+        if (!card) continue;
+        cards.set(card, offer);
+        if (purchased.has(offer.slug)) wanted.set(card, { ...offer, purchase: purchased.get(offer.slug) });
+      }
+      observer?.disconnect();
+      for (const card of document.querySelectorAll('.fanatical-library-catalogue-card')) {
+        if (!wanted.has(card)) card.classList.remove('fanatical-library-catalogue-card');
+      }
+      for (const badge of document.querySelectorAll('[data-fanatical-library-catalogue-for]')) {
+        const card = badge.parentElement;
+        if (!wanted.has(card) || badge.dataset.fanaticalLibraryCatalogueFor !== wanted.get(card).slug) badge.remove();
+      }
+      for (const [card, offer] of wanted) {
+        card.classList.add('fanatical-library-catalogue-card');
+        if (card.querySelector(`[data-fanatical-library-catalogue-for="${offer.slug}"]`)) continue;
+        const badge = document.createElement('span');
+        badge.className = 'fanatical-library-catalogue-badge';
+        badge.dataset.fanaticalLibraryCatalogueFor = offer.slug;
+        badge.textContent = offer.kind === 'pick-mix' ? 'Previously purchased' : 'Purchased';
+        const date = offer.purchase.purchaseDate && !Number.isNaN(Date.parse(offer.purchase.purchaseDate)) ? ` on ${new Date(offer.purchase.purchaseDate).toLocaleDateString()}` : '';
+        badge.title = offer.kind === 'pick-mix' ? `Purchased items from this Pick & Mix offer${date}; other items may still be new.` : `Purchased this bundle${date}. Check its tiers for any items you do not own.`;
+        badge.setAttribute('aria-label', `Fanatical Library: ${badge.textContent}`);
+        card.append(badge);
+      }
+      applyCatalogueCategory(cards, purchased);
+    } finally {
+      catalogueState.rendering = false;
+      observer?.observe(document.documentElement, { childList: true, subtree: true });
+    }
+  }
 
   function alphabetize(products) {
     return [...products].sort((left, right) => titleCollator.compare(left.title, right.title) || String(left.sourceItemId).localeCompare(String(right.sourceItemId)));
@@ -64,6 +267,7 @@
   }
 
   function route() {
+    if (isCataloguePage()) return null;
     const path = location.pathname.replace(/\/+$/u, ''); const slug = path.split('/').pop();
     if (!slug || !/^[a-z0-9-]+$/iu.test(slug)) return null;
     if (path.includes('/pick-and-mix/')) return { kind: 'pick-mix', slug, endpoint: `/api/pick-and-mix/${encodeURIComponent(slug)}/en` };
@@ -494,11 +698,20 @@
   }
 
   const schedule = (force = false) => {
+    if (isCataloguePage()) { clearTimeout(state.timer); state.timer = setTimeout(renderCatalogue, 120); return; }
+    document.querySelectorAll('[data-fanatical-library-catalogue-for]').forEach((badge) => badge.remove());
+    document.querySelectorAll('.fanatical-library-catalogue-card').forEach((card) => card.classList.remove('fanatical-library-catalogue-card'));
+    document.querySelectorAll('.fanatical-library-catalogue-filtered').forEach((slot) => slot.classList.remove('fanatical-library-catalogue-filtered'));
+    document.querySelector('#fanatical-library-catalogue-controls')?.remove();
     if (!force && state.parsed && !cardsNeedAnnotation()) return;
     clearTimeout(state.timer); state.timer = setTimeout(render, 120);
   };
   observer = new MutationObserver(schedule);
   observer.observe(document.documentElement, { childList: true, subtree: true });
-  chrome.storage.onChanged.addListener(() => schedule(true));
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.fanaticalLibraryItems) catalogueState.items = null;
+    if (area === 'local' && changes.fanaticalCatalogueFilters) catalogueState.filters = catalogueFilters(changes.fanaticalCatalogueFilters.newValue);
+    schedule(true);
+  });
   schedule();
 }());

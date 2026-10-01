@@ -167,5 +167,43 @@
     return /^[a-p]{32}$/u.test(id) || /^[a-z0-9](?:[a-z0-9._+-]*[a-z0-9])?@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/iu.test(id);
   }
 
-  global.FanaticalLibrary = { normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, classify, mergeGalactic, galacticRequestItems, overlayLabel, upsertBadge, isExtensionId };
+  function catalogueOffer(href, origin = 'https://www.fanatical.com') {
+    let url;
+    try { url = new URL(href, origin); } catch { return null; }
+    if (url.origin !== origin) return null;
+    const match = /^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(bundle|pick-and-mix)\/([a-z0-9-]+)\/?$/iu.exec(url.pathname);
+    if (!match || (match[1] === 'bundle' && ['all', 'games', 'books', 'other', 'mystery'].includes(match[2].toLowerCase()))) return null;
+    return { kind: match[1] === 'pick-and-mix' ? 'pick-mix' : 'standard', slug: match[2].toLowerCase() };
+  }
+
+  function cataloguePageKind(pathname) {
+    const match = /^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?bundle(?:\/(all|games|books|other|mystery))?\/?$/iu.exec(String(pathname ?? ''));
+    return match ? (match[1]?.toLowerCase() ?? 'main') : null;
+  }
+
+  function purchasedBundleSlugs(items) {
+    const bundles = new Map();
+    for (const item of Array.isArray(items) ? items : []) {
+      const bundle = item?.bundle;
+      const slug = String(bundle?.slug ?? '').trim().toLowerCase();
+      if (!/^[a-z0-9-]+$/u.test(slug) || !bundle?.sourceItemId || item?.source !== 'fanatical') continue;
+      if (!bundles.has(slug)) bundles.set(slug, { sourceItemId: String(bundle.sourceItemId), title: String(bundle.title ?? ''), purchaseDate: item.purchaseDate ?? null });
+    }
+    return bundles;
+  }
+
+  function catalogueDaysLeft(value) {
+    const text = String(value ?? '').replace(/\s+/gu, ' ').trim().toLowerCase();
+    const days = /\b(\d+)\s*days?\s*left\b/u.exec(text);
+    if (days) return Number(days[1]);
+    const clock = /\b(?:(\d+)\s*d\s*:\s*)?(\d{1,2})\s*h\s*:\s*(\d{2})\s*m(?:\s*:\s*(\d{2})\s*s)?\b/u.exec(text);
+    if (clock) {
+      const [, dayPart, hourPart, minutePart, secondPart] = clock;
+      return Number(dayPart ?? 0) + Number(hourPart) / 24 + Number(minutePart) / 1440 + Number(secondPart ?? 0) / 86400;
+    }
+    const hours = /\b(\d+)\s*hours?\s*left\b/u.exec(text);
+    return hours ? Number(hours[1]) / 24 : null;
+  }
+
+  global.FanaticalLibrary = { normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, classify, mergeGalactic, galacticRequestItems, overlayLabel, upsertBadge, isExtensionId, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
 }(globalThis));

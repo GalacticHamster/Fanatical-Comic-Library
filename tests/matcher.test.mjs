@@ -3,13 +3,54 @@ import fs from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 
-const context = { globalThis: null };
+const context = { globalThis: null, URL };
 context.globalThis = context;
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(new URL('../src/shared.js', import.meta.url), 'utf8'), context);
 const { FanaticalLibrary: F } = context;
 
 const owned = (overrides = {}) => ({ source: 'fanatical', sourceItemId: 'product-123456', title: 'Example Game', mediaType: 'game', ...overrides });
+
+test('catalogue offer identity accepts only Fanatical bundle links', () => {
+  assert.deepEqual({ ...F.catalogueOffer('/en/bundle/valiant-comics?ref=featured') }, { kind: 'standard', slug: 'valiant-comics' });
+  assert.deepEqual({ ...F.catalogueOffer('https://www.fanatical.com/en/pick-and-mix/build-your-own-games') }, { kind: 'pick-mix', slug: 'build-your-own-games' });
+  for (const href of ['/en/bundle', '/en/bundle/all', '/en/bundle/books', '/en/bundle/mystery', '/en/game/valiant-comics', 'https://example.com/en/bundle/valiant-comics']) {
+    assert.equal(F.catalogueOffer(href), null);
+  }
+});
+
+test('catalogue routes include bundle/all but exclude individual offers and homepage', () => {
+  assert.equal(F.cataloguePageKind('/en/bundle'), 'main');
+  assert.equal(F.cataloguePageKind('/en/bundle/all'), 'all');
+  assert.equal(F.cataloguePageKind('/en/bundle/books'), 'books');
+  assert.equal(F.cataloguePageKind('/en/bundle/games'), 'games');
+  assert.equal(F.cataloguePageKind('/en/bundle/other'), 'other');
+  assert.equal(F.cataloguePageKind('/en/bundle/mystery'), 'mystery');
+  assert.equal(F.cataloguePageKind('/en/bundle/valiant-comics'), null);
+  assert.equal(F.cataloguePageKind('/en/'), null);
+});
+
+test('catalogue purchases require an imported parent bundle slug, not leaf ownership', () => {
+  const indexed = F.purchasedBundleSlugs([
+    owned({ bundle: { sourceItemId: 'bundle-123456', title: 'Valiant Comics', slug: 'valiant-comics' }, purchaseDate: '2026-09-25T02:36:22Z' }),
+    owned({ sourceItemId: 'another-leaf', bundle: { sourceItemId: 'bundle-123456', title: 'Valiant Comics', slug: 'valiant-comics' } }),
+    owned({ sourceItemId: 'orphan-leaf' }),
+    { source: 'humble', sourceItemId: 'external-leaf', bundle: { sourceItemId: 'bundle-654321', slug: 'other-bundle' } }
+  ]);
+  assert.deepEqual([...indexed.keys()], ['valiant-comics']);
+  assert.equal(indexed.get('valiant-comics').sourceItemId, 'bundle-123456');
+  assert.equal(indexed.get('valiant-comics').purchaseDate, '2026-09-25T02:36:22Z');
+});
+
+test('catalogue expiry recognizes days and countdowns without guessing from prices', () => {
+  assert.equal(F.catalogueDaysLeft('7 Days Left'), 7);
+  assert.equal(F.catalogueDaysLeft('1 Day Left'), 1);
+  assert.equal(F.catalogueDaysLeft('7Days Left'), 7);
+  assert.ok(Math.abs(F.catalogueDaysLeft('09H:36M:22S') - (0.4 + 22 / 86400)) < 1e-10);
+  assert.ok(Math.abs(F.catalogueDaysLeft('02D:03H:04M:05S') - (2 + 3 / 24 + 4 / 1440 + 5 / 86400)) < 1e-10);
+  assert.equal(F.catalogueDaysLeft('00H:00M:00S'), 0);
+  assert.equal(F.catalogueDaysLeft('Up to -98% From $1.35'), null);
+});
 
 test('exact Fanatical ID wins over all weaker signals', () => {
   const result = F.classify({ sourceItemId: 'product-123456', title: 'Unrelated', mediaType: 'game' }, [owned()]);
