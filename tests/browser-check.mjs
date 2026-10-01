@@ -12,16 +12,24 @@ const chromePath = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Ap
 const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'Fanatical-ui-check-'));
 const products = ['Comic #10', 'Comic #2', 'External comic', 'New comic'].map((name, index) => ({ _id: `product-12345${index}`, name, slug: `comic-${index}`, type: 'book', regionAvailable: true }));
 const bundle = { _id: 'bundle-123456', name: 'Test comics', slug: 'test-comics', bundles: [{ price: { USD: 100 }, games: [products[1], products[3]] }, { price: { USD: 1000 }, games: [products[0], products[2]] }] };
+const editionBase = { source: 'fanatical', sourceItemId: 'edition-base-123456', title: 'Space Adventure', mediaType: 'game', externalIds: { steamAppId: '42' }, bundle: { sourceItemId: 'purchased-123456', title: 'Purchased games' } };
+const editionBonus = { _id: 'edition-bonus-123456', name: 'Space Adventure Bonus Content', type: 'game', steam: { id: 42 } };
+const editionProducts = [
+  { _id: 'edition-deluxe-123456', name: 'Space Adventure Deluxe Edition', type: 'game', steam: { id: 42 } },
+  { _id: 'edition-ultimate-123456', name: 'Space Adventure Ultimate Edition', type: 'game', steam: { id: 42 }, components: [{ _id: editionBase.sourceItemId, name: editionBase.title, type: 'game', steam: { id: 42 } }, editionBonus] }
+];
+const editionBundle = { _id: 'edition-bundle-123456', name: 'Test editions', slug: 'test-editions', bundles: [{ price: { USD: 100 }, games: editionProducts }], products: editionProducts, tiers: [{ quantity: 2, price: { USD: 100 } }] };
 const mock = `
 globalThis.addEventListener('error', event => {fetch('/result?route='+encodeURIComponent(location.pathname),{method:'POST',body:JSON.stringify({ok:false,error:event.message})})});
 const listeners = [];
 globalThis.values = { fanaticalLibraryItems: [{source:'fanatical',sourceItemId:'product-123450',title:'Comic #10',mediaType:'book',bundle:{sourceItemId:'bundle-123456',title:'Test comics',slug:'test-comics'},purchaseDate:null}],galacticLibraryExtensionId:'b'.repeat(32),fanaticalScannedOrderFingerprints:['a'.repeat(64)] };
+if(location.pathname.includes('test-editions')) values.fanaticalLibraryItems=[${JSON.stringify(editionBase)}];
 globalThis.requests = [];
 globalThis.chrome = {runtime:{id:'a'.repeat(32),sendMessage:async(first,second)=>{
   const message=second||first; requests.push(message);
   if(message.type==='PING')return {ok:true,apiVersion:1,appVersion:'0.1.0'};
   if(message.type==='MATCH_ITEMS')return {ok:true,apiVersion:1,results:message.items.map(item=>({requestId:item.requestId,matches:item.title==='External comic'?[{provider:'humble',ownership:'owned'}]:[]}))};
-  if(message.type==='FANATICAL_GET_PUBLIC_BUNDLE')return {ok:true,bundle:message.path.includes('pick-and-mix')?${JSON.stringify({ ...bundle, products, tiers: [{ quantity: 2, price: { USD: 100 } }] })}:${JSON.stringify(bundle)}};
+  if(message.type==='FANATICAL_GET_PUBLIC_BUNDLE')return {ok:true,bundle:message.path.includes('test-editions')?${JSON.stringify(editionBundle)}:message.path.includes('pick-and-mix')?${JSON.stringify({ ...bundle, products, tiers: [{ quantity: 2, price: { USD: 100 } }] })}:${JSON.stringify(bundle)}};
 }},storage:{local:{get:async defaults=>({...defaults,...values}),set:async changes=>{Object.assign(values,changes); const events={};for(const key in changes)events[key]={newValue:changes[key]};listeners.forEach(listener=>listener(events,'local'));},remove:async key=>{delete values[key];listeners.forEach(listener=>listener({[key]:{newValue:undefined}},'local'));}},onChanged:{addListener:listener=>listeners.push(listener)}},tabs:{create(){}}};
 globalThis.confirmAnswer = true;
 globalThis.confirm = () => confirmAnswer;
@@ -104,7 +112,27 @@ try {
   finish({ok:true,scenario:'catalogue diagnostics, expiry readings, filter restore'});
 }catch(error){finish({ok:false,error:error.message})}
 `;
-const cards = (kind) => products.map(product => `<div class="three-column-row"><article class="${kind}"><div class="cover-container"><img alt="${product.name}"><h2 class="card-product-name">${product.name}</h2></div></article></div>`).join('');
+const editionChecks = `${common}
+try {
+  await wait();
+  assert(document.querySelectorAll('.fanatical-library-possible-badge').length===1,'Deluxe package was not Possible');
+  assert(document.querySelector('.fanatical-library-partial-badge')?.textContent==='Partial (1/2)','Ultimate package was not verified Partial');
+  const notes=[...document.querySelectorAll('.fanatical-library-card-edition-note')];
+  assert(notes.length===2&&notes.every(note=>note.textContent.includes('owned: Space Adventure')),'Owned title missing from card captions');
+  assert(notes.some(note=>note.textContent.includes('Different edition/package'))&&notes.some(note=>note.textContent.includes('Partial package (1/2 components)')),'Package differences missing from captions');
+  const rows=[...document.querySelectorAll('.fanatical-library-title-list li')];
+  assert(rows.length===2&&rows.every(row=>row.textContent.includes('owned "Space Adventure"')),'Review summary did not show owned title');
+  assert(!document.querySelector('.fanatical-library-buy-recommendation'),'Review-only items counted as confirmed-new');
+  const filter=document.querySelector('.fanatical-library-bundle-filter input');filter.click();await wait();
+  assert([...document.querySelectorAll('article')].every(card=>card.getBoundingClientRect().height>0),'Possible/Partial packages were hidden');
+  filter.click();await wait();
+  await chrome.storage.local.set({fanaticalLibraryItems:[${JSON.stringify(editionBase)}, {source:'fanatical',sourceItemId:'edition-bonus-123456',title:'Space Adventure Bonus Content',mediaType:'game'}, {source:'fanatical',sourceItemId:'edition-deluxe-123456',title:'Space Adventure Deluxe Edition',mediaType:'game'}]});await wait();
+  assert(document.querySelectorAll('.fanatical-library-owned-badge').length===2,'Verified complete ownership did not replace review badges');
+  assert(document.querySelectorAll('.fanatical-library-card-edition-note').length===0,'Stale edition warnings remained after ownership changed');
+  finish({ok:true,scenario:'edition/package identity, component coverage and visible review details',route:location.pathname});
+}catch(error){finish({ok:false,error:error.message})}
+`;
+const cards = (kind, items = products) => items.map(product => `<div class="three-column-row"><article class="${kind}"><div class="cover-container"><img alt="${product.name}"><h2 class="card-product-name">${product.name}</h2></div></article></div>`).join('');
 const catalogue = [2, 10, null].map((days, index) => `<li class="HitCardContainer"><article class="HitCard"><a href="https://www.fanatical.com/en/bundle/test-${index}"><img alt="Test ${index}"><h2>Test ${index}</h2></a>${days === null ? '' : `<div class="CountdownTimer__clock">${days} Days Left</div>`}</article></li>`).join('');
 const pendingResults = new Map();
 const server = http.createServer((request, response) => {
@@ -119,6 +147,7 @@ const server = http.createServer((request, response) => {
   if (url === '/options-check.js') return send('text/javascript', optionsChecks);
   if (url === '/bundle-check.js') return send('text/javascript', bundleChecks);
   if (url === '/catalogue-check.js') return send('text/javascript', catalogueChecks);
+  if (url === '/edition-check.js') return send('text/javascript', editionChecks);
   if (url.startsWith('/src/') && /^\/src\/[a-z-]+\.(?:js|mjs|css)$/u.test(url)) {
     return send(url.endsWith('.css') ? 'text/css' : 'text/javascript', fs.readFileSync(path.join(root, url.slice(1)), 'utf8'));
   }
@@ -126,15 +155,16 @@ const server = http.createServer((request, response) => {
     const html = fs.readFileSync(path.join(root, 'src/options.html'), 'utf8').replace('<head>', '<head><base href="/src/">').replace('<script src="shared.js">', '<script src="/mock.js"></script><script src="shared.js">').replace('</body>', '<script type="module" src="/options-check.js"></script></body>');
     return send('text/html', html);
   }
-  if (url === '/en/bundle/test-comics' || url === '/en/bundle/books' || url === '/en/pick-and-mix/test-mix') {
+  if (url === '/en/bundle/test-comics' || url === '/en/bundle/books' || url === '/en/pick-and-mix/test-mix' || url.endsWith('/test-editions')) {
     const isCatalogue = url.endsWith('/books');
-    return send('text/html', `<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"><style>.fan-grid-container{display:grid;grid-template-columns:repeat(3,240px);gap:20px}.fanatical-library-pick-mix-reflow{grid-column:1/-1}article{min-height:160px}.cover-container{min-height:120px}</style></head><body><main>${isCatalogue ? `<ul class="HitCardsRow row">${catalogue}</ul>` : `<section class="tier"><div class="fan-grid-container">${cards(url.includes('pick-and-mix') ? 'PickAndMixCard' : 'bundle-product-card')}</div></section>`}</main><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/content.js"></script><script type="module" src="/${isCatalogue ? 'catalogue' : 'bundle'}-check.js"></script></body></html>`);
+    const isEdition = url.endsWith('/test-editions');
+    return send('text/html', `<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"><style>.fan-grid-container{display:grid;grid-template-columns:repeat(3,240px);gap:20px}.fanatical-library-pick-mix-reflow{grid-column:1/-1}article{min-height:160px}.cover-container{min-height:120px}</style></head><body><main>${isCatalogue ? `<ul class="HitCardsRow row">${catalogue}</ul>` : `<section class="tier"><div class="fan-grid-container">${cards(url.includes('pick-and-mix') ? 'PickAndMixCard' : 'bundle-product-card', isEdition ? editionProducts : products)}</div></section>`}</main><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/content.js"></script><script type="module" src="/${isCatalogue ? 'catalogue' : isEdition ? 'edition' : 'bundle'}-check.js"></script></body></html>`);
   }
   response.writeHead(404).end();
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
-  for (const [index, route] of ['/options', '/en/bundle/test-comics', '/en/pick-and-mix/test-mix', '/en/bundle/books'].entries()) {
+  for (const [index, route] of ['/options', '/en/bundle/test-comics', '/en/pick-and-mix/test-mix', '/en/bundle/books', '/en/bundle/test-editions', '/en/pick-and-mix/test-editions'].entries()) {
     const result = await new Promise((resolve, reject) => {
       const child = spawn(chromePath, ['--headless', '--disable-gpu', '--no-first-run', '--no-default-browser-check', `--user-data-dir=${path.join(profileRoot, String(index))}`, `http://127.0.0.1:${server.address().port}${route}`], { windowsHide: true });
       child.stdout.resume(); child.stderr.resume();

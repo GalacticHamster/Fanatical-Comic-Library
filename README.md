@@ -72,6 +72,20 @@ fanaticalCatalogueFilters: { hidePurchased, endingSoon }
 The export uses the same allowlisted ownership data; scan fingerprints are
 local importer state and are not exported.
 
+## Edition and package matching
+
+An exact purchased Fanatical product ID remains authoritative. A shared Steam
+App ID identifies a base game; it does not by itself prove ownership of a
+different deluxe edition, soundtrack, DLC or package. Known differences remain
+**Possible**, with the owned title and package warning shown in card captions
+and the summary's review list, without enabling diagnostics.
+
+When the public product data explicitly lists components, each component is
+checked separately. Only verified component ownership counts toward **Partial**;
+all listed components must be verified to claim the full package. Components
+are not guessed from marketing text. Possible/Partial packages stay visible
+under "Show new items only" and are excluded from confirmed-new tier coverage.
+
 ## Scan safety
 
 Scans validate the observed order-list array and the identity/status/structure
@@ -112,6 +126,10 @@ signed-in flows still need the manual checks below.
 - Pair Galactic Library; verify an exact external match reads **Owned
   elsewhere — Provider**, never **Owned**.
 - Verify that disabling/removing the paired ID leaves local matching functional.
+- Compare a deluxe edition with an owned base game sharing its Steam App ID;
+  confirm **Possible** and the owned-title/package explanation. If explicit
+  components are supplied, verify **Partial** rather than full ownership until
+  every component is independently owned.
 - Export a backup, then restore it; confirm the confirmation dialog, preview,
   purchase badges and matching survive. Cancel a restore and try an invalid
   file; both should leave your library untouched.

@@ -1,3 +1,5 @@
+import './shared.js';
+
 const text = (value) => typeof value === 'string' ? value.trim() : '';
 const type = (value) => {
   const raw = text(value).toLowerCase();
@@ -14,6 +16,7 @@ function product(raw) {
     ...(raw?.steam?.id !== undefined ? { externalIds: { steamAppId: String(raw.steam.id) } } : {}),
     ...(text(raw.isbn) ? { externalIds: { ...(raw?.steam?.id !== undefined ? { steamAppId: String(raw.steam.id) } : {}), isbn: text(raw.isbn).replace(/[^0-9X]/giu, '') } } : {}),
     drm, platforms,
+    ...globalThis.FanaticalLibrary.componentMetadata(raw.components, raw.display_type ?? raw.type),
     availability: { soldOut: raw.soldOut === true, lowStock: raw.low_stock === true, regionAvailable: raw.regionAvailable !== false, storeVisible: raw.storeVisible !== false }
   };
 }

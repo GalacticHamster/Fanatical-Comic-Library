@@ -258,7 +258,7 @@
     return card.querySelector('.card-product-name')?.textContent?.trim() || card.querySelector('img[alt]')?.alt?.trim() || '';
   }
 
-  function upsertCardTitle(card, product) {
+  function upsertCardTitle(card, product, match) {
     const host = card.querySelector('.cover-container') ?? card;
     // A SPA card node can be repurposed for another product, just as with
     // ownership badges. Its old title label must not survive that reuse.
@@ -270,6 +270,13 @@
     host.append(label);
     label.textContent = product.title;
     label.title = product.title;
+    if (match?.editionDifference && match.item?.title) {
+      label.setAttribute('aria-hidden', 'false');
+      label.classList.add('fanatical-library-card-title-with-match');
+      const note = document.createElement('span'); note.className = 'fanatical-library-card-edition-note';
+      note.textContent = `${match.state === 'partial' ? `Partial package (${match.owned}/${match.total} components)` : 'Different edition/package; extras not verified'} — owned: ${match.item.title}`;
+      note.title = match.reason; label.append(note);
+    }
   }
 
   function sortPickMixCards() {
@@ -361,7 +368,8 @@
     const externalIds = {};
     if (raw?.steam?.id !== undefined && raw.steam.id !== null) externalIds.steamAppId = String(raw.steam.id);
     if (raw?.isbn) externalIds.isbn = String(raw.isbn).replace(/[^0-9X]/giu, '');
-    return { sourceItemId: String(raw._id), title: raw.name.trim(), slug: String(raw.slug ?? ''), mediaType: F.mediaType(raw.display_type ?? raw.type), externalIds, availability: { soldOut: raw.soldOut === true, regionAvailable: raw.regionAvailable !== false } };
+    return { sourceItemId: String(raw._id), title: raw.name.trim(), slug: String(raw.slug ?? ''), mediaType: F.mediaType(raw.display_type ?? raw.type), externalIds,
+      ...F.componentMetadata(raw.components, raw.display_type ?? raw.type), availability: { soldOut: raw.soldOut === true, regionAvailable: raw.regionAvailable !== false } };
   }
 
   function parse(raw, kind) {
@@ -400,7 +408,7 @@
 
   function status(product, localItems) {
     const local = F.classify(product, localItems);
-    return F.mergeGalactic(local, state.galactic.get(product.sourceItemId));
+    return F.mergeGalactic(local, state.galactic.get(product.sourceItemId), product);
   }
 
   function cardContainer(anchor) {
@@ -707,7 +715,12 @@
     for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partially owned'], ['possible', 'Possible matches']]) {
       const entries = parsed.products.filter((_product, index) => (state === 'owned-elsewhere' ? matches[index].state === 'owned-elsewhere' : matches[index].state === state));
       if (!entries.length) continue;
-      const detailList = document.createElement('details'); detailList.className = 'fanatical-library-title-list'; const title = document.createElement('summary'); title.textContent = `${label} (${entries.length})`; detailList.append(title); const list = document.createElement('ol'); alphabetize(entries).forEach((product) => { const row = document.createElement('li'); row.textContent = product.title; list.append(row); }); detailList.append(list); element.append(detailList);
+      const detailList = document.createElement('details'); detailList.className = 'fanatical-library-title-list'; const title = document.createElement('summary'); title.textContent = `${label} (${entries.length})`; detailList.append(title); const list = document.createElement('ol'); alphabetize(entries).forEach((product) => {
+        const match = matches[parsed.products.findIndex((candidate) => candidate.sourceItemId === product.sourceItemId)];
+        const row = document.createElement('li'); row.textContent = product.title;
+        if (match?.editionDifference && match.item?.title) row.textContent += ` — ${match.reason}`;
+        list.append(row);
+      }); detailList.append(list); element.append(detailList);
     }
     if (tierDownload) element.append(tierDownload);
     appendSummaryControls(element);
@@ -732,7 +745,7 @@
       parsed.products.forEach((product, index) => {
         const card = cardFor(product); if (!card) return;
         F.upsertBadge(card, product.sourceItemId, matches[index], card.querySelector('.cover-container') ?? card);
-        upsertCardTitle(card, product);
+        upsertCardTitle(card, product, matches[index]);
       });
       // While New-only is active, the visible Pick & Mix rows live in our
       // temporary reflow grid. Sorting that transient grid would also pull
