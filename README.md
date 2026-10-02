@@ -210,6 +210,10 @@ Run `npm run package` to create a deterministic runtime-only ZIP and SHA-256
 report; `npm run check:package` validates dependencies without writing.
 `npm run browser-check:release` executes the actual packaged runtime in Chrome
 DOM fixtures. See [release and pairing](docs/release-and-pairing.md).
+`npm run runtime-check` installs the validated ZIP and tests real Chrome
+content/worker/MAIN imports against locally intercepted synthetic paginated orders.
+`npm run runtime-check:central` additionally tests real pairing with the adjacent
+GalacticLibrary repository, including software and entitlement-reminder DTOs.
 Public catalogue markup has also been checked using captured live pages;
 signed-in flows still need the manual checks below.
 

@@ -7,6 +7,8 @@
     "browser-check": "node tests/browser-check.mjs",
     "package": "node scripts/package-release.mjs",
     "check:package": "node scripts/package-release.mjs --check",
-    "browser-check:release": "node tests/browser-check.mjs --release"
+    "browser-check:release": "node tests/browser-check.mjs --release",
+    "runtime-check": "node tests/runtime-check.mjs",
+    "runtime-check:central": "node tests/runtime-check.mjs --central"
   }
 }
