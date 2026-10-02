@@ -81,6 +81,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'FANATICAL_OPEN_GALACTIC_REVIEW') {
     if (!chrome.runtime.id || _sender?.id !== chrome.runtime.id) { sendResponse({ ok: false, error: 'Untrusted review request.' }); return false; }
     chrome.storage.local.get({ galacticLibraryExtensionId: '' }).then(async stored => {
+      const F=globalThis.FanaticalLibrary,id=stored.galacticLibraryExtensionId;
+      if(F.isExtensionId(id)&&!/^[a-p]{32}$/u.test(id)){
+        try{await F.companionCall(message=>chrome.runtime.sendMessage(id,message),{type:'OPEN_REVIEW',apiVersion:1});sendResponse({ok:true});return;}catch{sendResponse({ok:false,error:'In Firefox, open Galactic Library from its toolbar icon. Check the pairing and update Galactic Library to enable central review.'});return;}
+      }
       const url = globalThis.FanaticalLibrary.centralReviewUrl(stored.galacticLibraryExtensionId);
       if (!url) { sendResponse({ ok: false, error: 'Open Galactic Library from its toolbar icon and choose Manage library to review ownership and contents.' }); return; }
       await chrome.tabs.create({ url }); sendResponse({ ok: true });
