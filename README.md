@@ -73,7 +73,8 @@ fanaticalImportSummary: {
 
 fanaticalWishlistItems: Array<{title, mediaType, weight: 1..100, identity fields?}>
 fanaticalProfileLabel: string
-fanaticalProfileArchives: Array<{profileLabel, items}> // backup only
+fanaticalProfileArchives: Array<{profileLabel, items, historicalItems}> // backup only
+fanaticalHistoricalItems: Array<{profileLabel, item, missingSince}> // review only
 fanaticalSyncControl: {revision, lease} // queued worker coordination
 
 fanaticalScannedOrderFingerprints: string[] // SHA-256 fingerprints only

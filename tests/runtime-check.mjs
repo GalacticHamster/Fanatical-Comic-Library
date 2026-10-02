@@ -31,7 +31,7 @@ try{
   const checks=await evaluate(`(async()=>{
     const send=(operation,...args)=>chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation,args});
     let response=await send('wishlist','add',[{title:'Native wish',mediaType:'book',weight:7,token:'SYNTHETIC-SECRET'}]);if(!response.ok)throw Error(response.error);
-    response=await send('backup');if(!response.ok||response.result.schemaVersion!==3||response.result.wishlistItems[0].weight!==7||JSON.stringify(response).includes('SYNTHETIC-SECRET'))throw Error('Native queued wishlist/backup failed');
+    response=await send('backup');if(!response.ok||response.result.schemaVersion!==4||response.result.wishlistItems[0].weight!==7||JSON.stringify(response).includes('SYNTHETIC-SECRET'))throw Error('Native queued wishlist/backup failed');
     const backup=response.result;await send('wishlist','replace',[]);response=await send('restore',backup);if(!response.ok||(await chrome.storage.local.get('fanaticalWishlistItems')).fanaticalWishlistItems.length!==1)throw Error('Native backup restore failed');
     const before=JSON.stringify(await chrome.storage.local.get(null));response=await send('restore',{...backup,items:[{title:'Invalid',source:'fanatical'}]});if(response.ok||JSON.stringify(await chrome.storage.local.get(null))!==before)throw Error('Invalid native restore changed state');
     response=await chrome.runtime.sendMessage({type:'FANATICAL_IMPORT_PURCHASES',profileLabel:'synthetic',confirmed:true});if(response.ok)throw Error('Options bypassed Orders sender guard');

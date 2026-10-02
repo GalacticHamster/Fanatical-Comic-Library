@@ -92,7 +92,7 @@ test('a genuine empty array is a validated empty account, not a failed read', as
 test('quick scan of a valid empty account preserves existing records rather than replacing them', async () => {
   const run = harness({ list: [] });
   await run.scan(false);
-  assert.deepEqual(run.stored.fanaticalLibraryItems, run.before.fanaticalLibraryItems);
+  assert.deepEqual(run.stored.fanaticalLibraryItems, run.before.fanaticalLibraryItems.map(item=>({...item,purchaseDate:item.purchaseDate??null})));
 });
 
 test('a refunded known order remains listed coverage, but is not imported as owned', async () => {
@@ -155,7 +155,7 @@ test('full scan validates every completed order; quick scan validates only unsee
   assert.equal(quickResult.ordersScanned, 0);
   assert.equal(quickResult.ordersSkipped, 1);
   assert.equal(quick.paths.length, 1);
-  assert.deepEqual(quick.stored.fanaticalLibraryItems, quick.before.fanaticalLibraryItems);
+  assert.deepEqual(quick.stored.fanaticalLibraryItems, quick.before.fanaticalLibraryItems.map(item=>({...item,purchaseDate:item.purchaseDate??null})));
 });
 
 test('worker refuses missing, partial or silently lossy MAIN-world results before storage writes', async () => {

@@ -518,8 +518,23 @@
     for (const item of products) visit(item, 0);
     return rows;
   }
-  function resolveProduct(product, library, localUnits, lookup, depth = 0) {
+  function classifyWithHistory(product, library, historicalItems) {
     const local = classify(product, library);
+    if (local.state === 'owned' || !historicalItems?.length) return local;
+    const previous = classify(product, historicalItems);
+    if (previous.state === 'new') return local;
+    // Components must warn individually: an aggregate history-only assertion
+    // never proves this product or its contents.
+    const records = [previous.item, ...(previous.candidates ?? [])].filter(Boolean);
+    if (!records.length) return local;
+    const candidates = [...new Set(records)].map(record => ({ ...record, historical: true, ownership: 'unknown' }));
+    if (local.state === 'partial') return { ...local, historicalItems: candidates };
+    return { ...local, state: 'possible', provenance: 'fanatical', ownershipReview: true,
+      item: local.item ?? candidates[0], candidates: [...(local.candidates ?? []), ...candidates], historicalItems: candidates,
+      reason: [local.reason, 'Previously recorded in this Fanatical profile, but not observed in the current snapshot. Current ownership needs review.'].filter(Boolean).join(' ') };
+  }
+  function resolveProduct(product, library, localUnits, lookup, depth = 0, historicalItems = []) {
+    const local = classifyWithHistory(product, library, historicalItems);
     const queried = lookup(product);
     const result = local.state === 'owned' && queried?.lookupIncomplete ? null : queried;
     const target = offerContents(product);
@@ -530,7 +545,7 @@
     if (resolved.lookupIncomplete && resolved.state === 'new') resolved.state = 'unchecked';
     if (depth > 4 || ['owned', 'owned-elsewhere'].includes(resolved.state) || !product.components?.length) return resolved;
     const components = [...new Map(product.components.map(item => [item.sourceItemId || `${item.mediaType}:${normalizeTitle(item.title)}`, item])).values()];
-    const matches = components.map(item => resolveProduct(item, library, localUnits, lookup, depth + 1));
+    const matches = components.map(item => resolveProduct(item, library, localUnits, lookup, depth + 1, historicalItems));
     const owned = matches.filter(match => ['owned', 'owned-elsewhere'].includes(match.state)).length;
     resolved.componentMatches = matches;
     resolved.lookupIncomplete ||= matches.some(match => match.lookupIncomplete);
@@ -542,6 +557,7 @@
       if (product.componentCoverageUnknown) resolved.reason += ' Some component metadata is unreadable.';
     } else if (matches.some(match => match.state === 'possible') && ['new', 'unchecked'].includes(resolved.state)) {
       resolved.state = 'possible'; resolved.reason = 'Related library items for listed components need review.';
+      resolved.ownershipReview = matches.some(match => match.ownershipReview);
     }
     if (resolved.lookupIncomplete && resolved.state === 'new') resolved.state = 'unchecked';
     return resolved;
@@ -628,13 +644,14 @@
     if (match.contentsLookupIncomplete) lines.push('Central contents coverage was not supplied; unit absence cannot be established from this lookup.');
     lines.push(`Fanatical last successful import: ${lastImport || 'unknown'}. Synced libraries may not cover the entire purchase history.`);
     if (match.localMatch?.reason && match.localMatch.reason !== match.reason) lines.push(`Local comparison: ${match.localMatch.reason}`);
-    const records = [match.item, match.localMatch?.item, ...(match.candidates || []), ...(match.localMatch?.candidates || []), ...(match.externalResult?.matches || []), ...(match.externalResult?.possibleMatches || []), ...(match.externalResult?.partialMatches || []),
+    const records = [match.item, match.localMatch?.item, ...(match.historicalItems || []), ...(match.localMatch?.historicalItems || []), ...(match.candidates || []), ...(match.localMatch?.candidates || []), ...(match.externalResult?.matches || []), ...(match.externalResult?.possibleMatches || []), ...(match.externalResult?.partialMatches || []),
       ...(match.coverage?.covered || []).flatMap(entry => entry.evidence || []), ...(match.coverage?.possibleCovered || []).flatMap(entry => entry.evidence || [])].filter(Boolean);
     const seen = new Set();
     for (const record of records) {
       const item = record.item || record; const provider = record.provider || 'fanatical';
       const key = `${provider}:${record.itemRef || item.sourceItemId || item.title}`;
       if (seen.has(key)) continue; seen.add(key);
+      if (item.historical) lines.push("Historical purchase: previously recorded in this profile; not observed in the current snapshot. Current access needs review.");
       lines.push(`Library item: ${item.title || 'Unnamed record'} · ${provider} · ${record.ownership || 'purchased locally'}`);
       describe('Library evidence', record.evidence ? record.evidence : item);
       const conflicts = identityConflicts(offered, record.evidence ? { ...record.evidence, title: item.title } : item, true);

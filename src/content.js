@@ -413,7 +413,7 @@
   }
   function status(product, localItems, localUnits) {
     const result = externalResult(product);
-    const match = F.resolveProduct(product, localItems, localUnits, externalResult);
+    const match = F.resolveProduct(product, localItems, localUnits, externalResult, 0, state.history);
     if (state.galacticEnabled && (!result || result.lookupIncomplete) && match.state !== 'owned' && (['game', 'book', 'audiobook'].includes(product.mediaType)||product.mediaType==='software'&&(state.softwareSupported||state.capabilityFailed))) {
       match.lookupIncomplete = true;
       if (match.state === 'new') { match.state = 'unchecked'; match.reason = 'Central lookup incomplete; no absence claim is available.'; }
@@ -853,8 +853,10 @@
     observer?.disconnect();
     if (!hasStableSummary) showPanel('Fanatical Library: loading ownership status…');
     try {
-      const [parsed, stored] = await Promise.all([loadPublicBundle(current), chrome.storage.local.get({ fanaticalLibraryItems: [], fanaticalImportSummary: null, galacticLibraryExtensionId: '', fanaticalShowNewItemsOnly: false, fanaticalShowDiagnostics: false })]);
+      const [parsed, stored] = await Promise.all([loadPublicBundle(current), chrome.storage.local.get({ fanaticalLibraryItems: [], fanaticalHistoricalItems: [], fanaticalProfileLabel: '', fanaticalImportSummary: null, galacticLibraryExtensionId: '', fanaticalShowNewItemsOnly: false, fanaticalShowDiagnostics: false })]);
       if (revision !== state.revision || pageUrl !== location.href) return;
+      state.history = stored.fanaticalProfileLabel ? stored.fanaticalHistoricalItems
+        .filter(entry => entry.profileLabel === stored.fanaticalProfileLabel).map(entry => entry.item) : [];
       state.wishlist=F.normalizeWishlist(stored.fanaticalWishlistItems);
       state.lastImport = stored.fanaticalImportSummary?.importedAt || null;
       diagnosticsEnabled = Boolean(stored.fanaticalShowDiagnostics);
@@ -940,7 +942,7 @@
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     if(changes.fanaticalWishlistItems)state.summaryDirty=true;
-    if (changes.fanaticalLibraryItems || changes.galacticLibraryExtensionId) {
+    if (changes.fanaticalLibraryItems || changes.fanaticalHistoricalItems || changes.fanaticalProfileLabel || changes.galacticLibraryExtensionId) {
       state.summaryDirty = true; state.revision++; state.galactic.clear(); state.failed.clear();
     }
     if (changes.fanaticalLibraryItems || changes.fanaticalShowDiagnostics) catalogueState.items = null;

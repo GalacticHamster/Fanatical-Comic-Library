@@ -48,8 +48,10 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     $('#last-import').textContent = summary
       ? `Last ${summary.scanMode === 'full' ? 'full' : 'quick'} scan: ${summary.addedProducts} item${summary.addedProducts === 1 ? '' : 's'} added; ${summary.ordersScanned} order${summary.ordersScanned === 1 ? '' : 's'} scanned${summary.ordersSkipped ? ` and ${summary.ordersSkipped} already-scanned order${summary.ordersSkipped === 1 ? '' : 's'} skipped` : ''} on ${new Date(summary.importedAt).toLocaleString()}.`
       : 'No Fanatical import has run yet.';
-    const scope=await chrome.storage.local.get({fanaticalProfileLabel:'',fanaticalProfileArchives:[]});
+    const scope=await chrome.storage.local.get({fanaticalProfileLabel:'',fanaticalProfileArchives:[],fanaticalHistoricalItems:[]});
     $('#library-count').textContent = `Active profile: ${scope.fanaticalProfileLabel||'unassigned'}. ${scope.fanaticalProfileArchives.length} other profile archives (backup only). ${items.length} unique item${items.length === 1 ? '' : 's'} stored locally.`;
+    const missing=scope.fanaticalHistoricalItems.filter(entry=>entry.profileLabel===scope.fanaticalProfileLabel).length;
+    if(missing) $('#library-count').textContent += ' '+missing+' previously recorded products are missing from the current snapshot; these warn as Check ownership and do not prove ownership.';
     $('#history-note').textContent = `${attempt?.status === 'incomplete' ? 'Last scan incomplete: complete order-history coverage could not be confirmed. Previous purchases and the last successful scan were kept. ' : ''}${summary?.historyCoverage ?? 'No order-history coverage has been checked yet.'}`;
     if (diagnostics && summary?.coverage) $('#history-note').textContent += ` ${summary.coverage.retries} retries; at most ${summary.coverage.concurrency} concurrent detail requests.`;
     $('#galactic-id').value = extensionId;

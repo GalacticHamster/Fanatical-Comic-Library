@@ -115,6 +115,14 @@ try {
   if(!location.pathname.includes('pick-and-mix')) assert(document.querySelector('.fanatical-library-buy-recommendation')?.textContent.endsWith('$10.00'),'Recommendation did not increase when the higher tier gained a confirmed-new item');
   await chrome.storage.local.set({fanaticalShowDiagnostics:false});await wait();
   assert(!diagnostics(),'Diagnostics did not turn off');
+  await chrome.storage.local.set({fanaticalProfileLabel:'personal',fanaticalHistoricalItems:[{profileLabel:'personal',missingSince:'2026-10-02T12:00:00Z',item:{source:'fanatical',sourceItemId:'history-123456',title:'External comic',mediaType:'book',bundle:{title:'Earlier Fanatical bundle'}}}]});await wait();
+  const historicalBadge=()=>[...document.querySelectorAll('[data-fanatical-library-for]')].find(button=>button.textContent==='Check ownership');
+  assert(historicalBadge(),'Missing history did not render Check ownership');
+  assert(document.querySelectorAll('.fanatical-library-new-badge').length===2,'History inflated confirmed-new totals');
+  historicalBadge().click();const historyDialog=document.querySelector('#fanatical-library-evidence');assert(historyDialog.textContent.includes('External comic')&&historyDialog.textContent.includes('Earlier Fanatical bundle')&&historyDialog.textContent.includes('not observed'),'Historical inspector omitted title, provenance or uncertainty');historyDialog.querySelector('button').click();
+  await chrome.storage.local.set({fanaticalProfileLabel:'different'});await wait();assert(!historicalBadge(),'Foreign-profile history supplied a candidate');
+  await chrome.storage.local.set({fanaticalProfileLabel:'personal'});await wait();assert(historicalBadge(),'Same-profile history did not return');
+  await chrome.storage.local.set({fanaticalHistoricalItems:[]});await wait();assert(!historicalBadge()&&document.querySelectorAll('.fanatical-library-new-badge').length===3,'Cleared history retained a stale candidate');
   finish({ok:true,scenario:'bundle diagnostics, filtering, Galactic removal'});
 }catch(error){finish({ok:false,error:error.message})}
 `;
@@ -131,7 +139,7 @@ try {
   $('#show-diagnostics').click();await wait();assert(values.fanaticalShowDiagnostics===true,'Diagnostics setting not saved');
   $('#wishlist-title').value='Manual wish';$('#wishlist-media').value='book';$('#wishlist-weight').value='7';$('#add-wish').click();await wait();assert(values.fanaticalWishlistItems?.[0].weight===7,'Manual wish was not saved');
   $('#export').click();await wait();
-  const backup=JSON.parse(await exportedBlob.text());assert(backup.items.length===1&&!backup.orderFingerprints&&backup.schemaVersion===3&&backup.wishlistItems[0].weight===7,'Backup omitted wishlist or leaked scan authority');
+  const backup=JSON.parse(await exportedBlob.text());assert(backup.items.length===1&&!backup.orderFingerprints&&backup.schemaVersion===4&&backup.wishlistItems[0].weight===7,'Backup omitted wishlist or leaked scan authority');
   const upload=async text=>{const transfer=new DataTransfer();transfer.items.add(new File([text],'backup.json',{type:'application/json'}));$('#import-file').files=transfer.files;$('#import-file').dispatchEvent(new Event('change'));for(let attempt=0;attempt<8;attempt++){await wait();if(!$('#import-file').disabled)return;}throw new Error('File import did not finish')};
   $('#export-catalog').click();await wait();const catalog=JSON.parse(await exportedBlob.text());assert(catalog.format==='fanatical-title-catalog'&&!catalog.items[0].bundle&&!catalog.items[0].purchaseDate,'Catalog retained purchase evidence');await upload(JSON.stringify(catalog));assert(values.fanaticalLibraryItems.length===1&&$('#import-status').textContent.includes('failed'),'Catalog was accepted as ownership backup');
   await upload('invalid JSON');assert(values.fanaticalLibraryItems.length===1,'Invalid JSON changed library');
