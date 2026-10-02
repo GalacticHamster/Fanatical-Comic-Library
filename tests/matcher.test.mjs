@@ -72,7 +72,7 @@ test('ISBN identifies compatible books', () => {
 
 test('normalization removes punctuation and normalizes Roman numerals', () => {
   assert.equal(F.titleKey("The Hero's Journey, Vol. II"), 'heros journey vol 2');
-  assert.equal(F.classify({ title: "Hello, World!: A Programmer's Guide", mediaType: 'book' }, [owned({ title: 'Hello World A Programmers Guide', mediaType: 'book' })]).state, 'possible');
+  assert.equal(F.classify({ title: "Hello, World!: A Programmer's Guide", mediaType: 'book' }, [owned({ title: 'Hello World A Programmers Guide', mediaType: 'book' })]).state, 'owned');
 });
 
 test('game edition relationships are possible rather than owned', () => {

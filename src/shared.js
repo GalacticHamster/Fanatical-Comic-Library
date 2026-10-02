@@ -16,6 +16,107 @@
     return result.replace(/\s+/gu, ' ');
   }
 
+
+  // Presentation equality is deliberately narrower than the discovery key:
+  // keep articles, Roman numerals, preview labels and meaningful +/# symbols.
+  function presentationTitle(value, kind = 'book') {
+    let title = String(value ?? '').normalize('NFKC').toLowerCase().trim();
+    if (kind === 'book') {
+      const format = /\s+(?:[\[(]\s*)?(?:pdf|cbz|cbr|epub|mobi|kindle|tp|tpb|hc|hardcover|paperback|trade paperback|digital edition)(?:\s*[\])])?\s*$/iu;
+      while (format.test(title)) title = title.replace(format, '').trim();
+    }
+    return title.replace(/&/gu, ' and ').replace(/\bvolume\b|\bvol\.?\b/giu, ' vol ')
+      .replace(/['\u2018\u2019\u0060]/gu, '').replace(/[^\p{L}\p{N}\p{M}+#/]+/gu, ' ').replace(/\s+/gu, ' ').trim();
+  }
+
+  function relationTitleParts(value, kind) {
+    let title = String(value ?? '').normalize('NFKC').replace(/\s+/gu, ' ').trim();
+    const edition = /\s*(?:[,;:\-\u2013\u2014]\s*)?((?:\d+(?:st|nd|rd|th)?|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|revised|updated|expanded|annotated|new|deluxe)(?:\s+(?:revised|updated))?\s+(?:edition|ed\.?))\s*$/iu;
+    let hasEdition = false;
+    if (kind === 'software') {
+      const version = /^(.*?)\s*(?:[,;:\-\u2013\u2014]\s*)?(?:v(?:ersion)?\.?\s*\d+(?:\.\d+){0,3}|(?:19|20)\d{2})\s*$/iu.exec(title);
+      return { primary: normalizeTitle(version?.[1]?.trim() || title), hasVersion: Boolean(version?.[1]?.trim()), subtitle: false, qualifier: false, hasEdition: false };
+    }
+    const stripEdition = () => {
+      const found = edition.exec(title);
+      if (found && found.index > 0) { title = title.slice(0, found.index).trim(); hasEdition = true; }
+    };
+    stripEdition();
+    const qualifier = /^(.*?)\s*\(([^()]*)\)\s*$/u.exec(title);
+    if (qualifier?.[1]?.trim()) {
+      hasEdition ||= edition.test(' ' + qualifier[2]);
+      title = qualifier[1].trim(); stripEdition();
+    }
+    const subtitle = /^(.*?)\s*:\s+(.+)$/u.exec(title);
+    return { primary: normalizeTitle(subtitle?.[1]?.trim() || title), subtitle: Boolean(subtitle),
+      qualifier: Boolean(qualifier), hasEdition, hasVersion: false };
+  }
+
+  const CANDIDATE_STOP_WORDS = new Set(['the', 'a', 'an', 'and', 'of', 'to', 'in', 'for', 'with', 'by', 'vol', 'volume', 'edition', 'book', 'game', 'software']);
+  function candidateTitleKeys(title, kind) {
+    const words = normalizeTitle(title).split(' ').filter(word => word.length > 1 && !CANDIDATE_STOP_WORDS.has(word));
+    const keys = words.map(word => 'word:' + word);
+    for (const word of words) if (word.length >= 7 && !/\p{N}/u.test(word)) {
+      keys.push('start:' + word.slice(0, 3), 'end:' + word.slice(-3));
+    }
+    keys.push('primary:' + relationTitleParts(title, kind).primary);
+    return [...new Set(keys)];
+  }
+
+  function closeTitleSpelling(left, right) {
+    const a = Array.from(left); const b = Array.from(right);
+    const limit = Math.min(a.length, b.length) >= 16 ? 2 : 1;
+    if (Math.min(a.length, b.length) < 8 || Math.abs(a.length - b.length) > limit) return false;
+    let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+    for (let i = 1; i <= a.length; i++) {
+      const row = [i];
+      for (let j = 1; j <= b.length; j++) row[j] = Math.min(row[j - 1] + 1, previous[j] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (Math.min(...row) > limit) return false;
+      previous = row;
+    }
+    return previous[b.length] <= limit;
+  }
+
+  // Candidate rules never prove ownership. Callers must still check media,
+  // known authors, runs and numbered units before presenting these warnings.
+  function possibleTitleRelation(left, right, kind = 'book') {
+    const a = normalizeTitle(left); const b = normalizeTitle(right);
+    if (!a || !b) return '';
+    if (a === b) return 'Related title presentation; identity needs review.';
+    const access = value => value.replace(/\s+(?:preview|sample|excerpt|read now|demo|trial)$/iu, '').trim();
+    if (access(a) === access(b)) return 'Related title, but preview/sample access does not establish the full product.';
+    const numbers = value => (value.match(/\d+(?:\.\d+|\/\d+)?/gu) ?? []).join('|');
+    const l = relationTitleParts(left, kind); const r = relationTitleParts(right, kind);
+    if (l.primary && l.primary === r.primary) {
+      if (kind === 'software' && (l.hasVersion || r.hasVersion) && l.primary.replace(/\s/gu, '').length >= 8) return 'Related software title with different version labels.';
+      if (kind === 'book' || kind === 'audiobook') {
+        if (l.hasEdition || r.hasEdition) return 'Related main title with different edition or subtitle wording.';
+        // A bare title may have a longer store presentation, even if short.
+        // Independently subtitled works are not inferred from a shared prefix.
+        if (!(l.subtitle && r.subtitle) && (l.subtitle || r.subtitle || l.qualifier || r.qualifier)
+          && l.primary.replace(/\s/gu, '').length >= 4) return 'One title is a shortened or qualified presentation of the other.';
+        if (l.subtitle && r.subtitle) return '';
+      }
+    }
+    if (kind === 'game') {
+      const collection = value => {
+        if (!/\b(?:collection|trilogy|complete pack|ultimate collection)\b/iu.test(value)) return '';
+        return normalizeTitle(value).replace(/\b(?:the|complete|ultimate|collection|trilogy|pack)\b/gu, ' ').replace(/\s+/gu, ' ').trim();
+      };
+      for (const [base, other] of [[collection(left), b], [collection(right), a]]) {
+        if (base.length >= 4 && (other === base || other.startsWith(base + ' '))) return 'This game may be included in the named library collection; contents need review.';
+      }
+    }
+    // Do not turn different numbered releases/units into typo warnings.
+    if (numbers(a) !== numbers(b)) return '';
+    if (closeTitleSpelling(a, b)) return 'The titles have a small spelling difference; review the library item.';
+    const words = value => new Set(value.split(' ').filter(word => !CANDIDATE_STOP_WORDS.has(word)));
+    const aw = words(a); const bw = words(b);
+    const overlap = [...aw].filter(word => bw.has(word)).length;
+    if (Math.min(aw.size, bw.size) >= 3 && overlap / new Set([...aw, ...bw]).size >= 0.8) return 'The titles have a close word match; identity needs review.';
+    return '';
+  }
+
   function titleKey(value) {
     return normalizeTitle(value).replace(/\b(?:the|a|an)\b/gu, ' ').replace(/\s+/gu, ' ').trim();
   }
@@ -174,6 +275,7 @@
   function makeIndexes(items) {
     if (indexCache.has(items)) return indexCache.get(items);
     const byId = new Map(); const bySteam = new Map(); const byIsbn = new Map(); const byTitle = new Map(); const byBase = new Map();
+    const byPresentation = new Map(); const byPossibleTitle = new Map();
     for (const item of items ?? []) {
       if (!item) continue;
       if (item.sourceItemId) byId.set(String(item.sourceItemId), item);
@@ -182,10 +284,16 @@
       if (ids.isbn) byIsbn.set(ids.isbn, [...(byIsbn.get(ids.isbn) ?? []), item]);
       const key = `${mediaType(item.mediaType ?? item.type)}:${titleKey(item.title)}`;
       if (item.title) byTitle.set(key, [...(byTitle.get(key) ?? []), item]);
+      const presentation = mediaType(item.mediaType ?? item.type) + ':' + presentationTitle(item.title, mediaType(item.mediaType ?? item.type));
+      if (item.title) byPresentation.set(presentation, [...(byPresentation.get(presentation) ?? []), item]);
+      for (const token of candidateTitleKeys(item.title, mediaType(item.mediaType ?? item.type))) {
+        const possible = mediaType(item.mediaType ?? item.type) + ':' + token;
+        byPossibleTitle.set(possible, [...(byPossibleTitle.get(possible) ?? []), item]);
+      }
       const base = `${mediaType(item.mediaType ?? item.type)}:${editionBase(item.title)}`;
       if (item.title) byBase.set(base, [...(byBase.get(base) ?? []), item]);
     }
-    const index = { byId, bySteam, byIsbn, byTitle, byBase };
+    const index = { byId, bySteam, byIsbn, byTitle, byBase, byPresentation, byPossibleTitle };
     indexCache.set(items, index);
     return index;
   }
@@ -204,6 +312,8 @@
       if (numberKey(offeredUnits[0].number) !== numberKey(ownedUnits[0].number)) reasons.push('Different issue/volume');
     }
     if (edition) {
+      const limited = title => /\b(?:preview|sample|excerpt|read\s+now|demo|trial)\b/iu.test(title);
+      if (limited(candidate.title) !== limited(owned.title)) reasons.push('Preview/sample and full-product access differ');
       const l = externalIds(candidate).isbn; const r = externalIds(owned).isbn || validIsbn(owned.evidence?.isbn?.[0]);
       if (l && r && l !== r) reasons.push('Different validated ISBNs');
       if (editionBase(candidate.title) === editionBase(owned.title) && normalizeTitle(candidate.title) !== normalizeTitle(owned.title)
@@ -251,13 +361,13 @@
       }
     }
     const hasComponents = uniqueComponents.length > 0 || item?.componentCoverageUnknown === true;
-    const titleMatches = indexes.byTitle.get(`${media}:${titleKey(item?.title)}`) ?? [];
+    const titleMatches = [...new Set([...(indexes.byTitle.get(`${media}:${titleKey(item?.title)}`) ?? []),
+      ...(indexes.byPresentation.get(media + ':' + presentationTitle(item?.title, media)) ?? [])])];
     const compatibleTitles = titleMatches.filter(owned => !identityConflicts(item, owned).length);
-    const literal = value => String(value ?? '').normalize('NFKC').trim().toLowerCase();
+    const presentation = value => presentationTitle(value, media);
     const exact = compatibleTitles.find((owned) => !differentGamePackage(item, owned) && !identityConflicts(item, owned, true).length
-      && (media === 'game' && normalizeTitle(item.title) === normalizeTitle(owned.title)
-        || compatibleTitles.length === 1 && literal(item.title) === literal(owned.title)
-        || normalizeTitle(item.title) === normalizeTitle(owned.title) && bibliographicFields(item).authors?.some(author => bibliographicFields(owned).authors?.map(scopeKey).includes(scopeKey(author)))));
+      && presentation(item.title) && presentation(item.title) === presentation(owned.title)
+      && (titleMatches.length === 1 || bibliographicFields(item).authors?.some(author => bibliographicFields(owned).authors?.map(scopeKey).includes(scopeKey(author)))));
     if (exact && !hasComponents) return { state: 'owned', provenance: 'fanatical', item: exact, reason: 'exact normalized title' };
     const steam = steamMatches.find((owned) => !differentGamePackage(item, owned));
     const steamProvesProduct = steam && !hasComponents && !componentProof && !identityConflicts(item, steam, true).length && (media !== 'game' || !gamePackageIdentity(item?.title));
@@ -271,7 +381,18 @@
     if (titleDifference) return packageRelationship(item, titleDifference, 'Normalized title hides a package difference');
     if (hasComponents && (steam || exact)) return packageRelationship(item, steam || exact, 'Package component coverage is unknown');
     if (steam) return packageRelationship(item, steam, 'Shared Steam App ID does not verify this product/component');
-    if (compatibleTitles.length) return { state: 'possible', provenance: 'fanatical', item: compatibleTitles[0], reason: `Owned "${compatibleTitles[0].title}"; offered "${item.title}". ${identityConflicts(item, compatibleTitles[0], true).join('; ') || 'Normalized title needs edition/author evidence'}.` };
+    const pool = new Set(compatibleTitles);
+    for (const owned of indexes.byBase.get(media + ':' + editionBase(item.title)) ?? []) pool.add(owned);
+    for (const key of candidateTitleKeys(item.title, media)) for (const owned of indexes.byPossibleTitle.get(media + ':' + key) ?? []) pool.add(owned);
+    const candidates = [...pool].filter(owned => !identityConflicts(item, owned).length).map(owned => {
+      const relatedEdition = editionBase(item.title) === editionBase(owned.title) && titleKey(item.title) !== titleKey(owned.title);
+      const reason = compatibleTitles.includes(owned) ? identityConflicts(item, owned, true).join('; ') || 'Title identity needs review'
+        : relatedEdition ? 'Related edition/package; identity needs review' : possibleTitleRelation(item.title, owned.title, media);
+      return { item: owned, reason };
+    }).filter(candidate => candidate.reason).sort((a, b) => a.item.title.localeCompare(b.item.title, undefined, { numeric: true }));
+    if (candidates.length) return { state: 'possible', provenance: 'fanatical', item: candidates[0].item,
+      candidates: candidates.map(candidate => candidate.item), editionDifference: media === 'game',
+      reason: candidates.map(candidate => `Owned "${candidate.item.title}"; offered "${item.title}". ${candidate.reason}.`).join('\n') };
     const relation = relationshipMatch(item ?? {}, library);
     if (relation) return media === 'game' ? packageRelationship(item, relation.item, relation.reason) : { state: 'possible', provenance: 'fanatical', item: relation.item, reason: relation.reason };
     return { state: 'new', provenance: null };
@@ -503,7 +624,7 @@
     if (match.contentsLookupIncomplete) lines.push('Central contents coverage was not supplied; unit absence cannot be established from this lookup.');
     lines.push(`Fanatical last successful import: ${lastImport || 'unknown'}. Synced libraries may not cover the entire purchase history.`);
     if (match.localMatch?.reason && match.localMatch.reason !== match.reason) lines.push(`Local comparison: ${match.localMatch.reason}`);
-    const records = [match.item, match.localMatch?.item, ...(match.externalResult?.matches || []), ...(match.externalResult?.possibleMatches || []), ...(match.externalResult?.partialMatches || []),
+    const records = [match.item, match.localMatch?.item, ...(match.candidates || []), ...(match.localMatch?.candidates || []), ...(match.externalResult?.matches || []), ...(match.externalResult?.possibleMatches || []), ...(match.externalResult?.partialMatches || []),
       ...(match.coverage?.covered || []).flatMap(entry => entry.evidence || []), ...(match.coverage?.possibleCovered || []).flatMap(entry => entry.evidence || [])].filter(Boolean);
     const seen = new Set();
     for (const record of records) {

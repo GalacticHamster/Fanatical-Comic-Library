@@ -28,6 +28,12 @@ scan checks every completed order. Pairing and display settings are kept.
 Invalid backups are rejected without changing storage; unknown fields are
 never stored. Export your current library before replacing it.
 
+## Matching policy
+
+Owned accepts an unambiguous local purchase despite punctuation, spacing, volume-abbreviation or trailing book-format differences. Articles, Roman numerals, preview labels and meaningful symbols are retained for that comparison; conflicting identifiers/authors, numbered units and edition wording still prevent a weak title from proving ownership. Product IDs and compatible validated identifiers remain stronger evidence.
+
+Possible is deliberately broader: related editions, shortened/subtitled titles, parenthetical qualifiers, software versions, named game collections and small spelling differences can warn about another library item. Multiple local candidates remain available in the evidence inspector with their actual titles. These warnings never establish complete edition, DLC or collection ownership. Very short generic prefixes and independent subtitle-bearing works are not inferred solely from a shared main title.
+
 ## Privacy boundary
 
 The importer uses `chrome.scripting.executeScript` in Fanatical's main world.
