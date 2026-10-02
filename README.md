@@ -3,7 +3,7 @@
 A standalone, browser-local Chrome MV3 extension that annotates Fanatical
 standard/tiered bundles and Pick & Mix offers using locally imported Fanatical
 purchase metadata. It optionally asks a paired Galactic Library extension for
-identity and reviewed contents evidence for games, books/comics, and audiobooks.
+identity and reviewed contents evidence for games, books/comics, audiobooks and advertised software support.
 
 ## Load in Chrome
 
@@ -64,6 +64,11 @@ fanaticalImportSummary: {
   coverage: { complete, listedOrders, validatedOrders, emptyAccount,
     pagesFetched, expectedTotal, paginationEvidence, retries, concurrency }
 }
+
+fanaticalWishlistItems: Array<{title, mediaType, weight: 1..100, identity fields?}>
+fanaticalProfileLabel: string
+fanaticalProfileArchives: Array<{profileLabel, items}> // backup only
+fanaticalSyncControl: {revision, lease} // queued worker coordination
 
 fanaticalScannedOrderFingerprints: string[] // SHA-256 fingerprints only
 fanaticalLastScanAttempt: { status: 'complete' | 'incomplete', scanMode, attemptedAt } | null
@@ -150,11 +155,15 @@ Central evidence reminders flag unknown/temporary ownership, missing observation
 dates, observations older than 30 days, older contents reviews, uncertain scope,
 and unavailable coverage. They do not revoke recorded permanent ownership.
 Use the item inspectors to open central review or refresh the comparison after
-sync/review. The current Galactic Library API exposes matching/contents evidence
-and dates; it has no expiry-reminder feed. Rental/key expiry dates, notification
-schedules, reading progress and complete series enumeration remain unavailable
-through this interface. No additional enrichment engine or reminder storage is
-created in Fanatical.
+sync/review. Settings also consumes Galactic Library's advertised entitlement-reminder
+feed with safe paged DTOs, reported deadlines, unknown dates and activation distinctions.
+See [central reminders](docs/central-reminders.md). No separate enrichment engine or
+reminder database is created in Fanatical.
+
+Bundle summaries include [wishlist and purchase planning](docs/purchase-planning.md):
+weighted wishes, cheapest qualifying cumulative tiers, scoped additional-unit costs
+and availability/uncertainty-aware Pick & Mix suggestions. Version 3 backups save
+wishes along with ownership and provenance using an atomic queued snapshot.
 
 ## Scan safety
 
@@ -187,8 +196,8 @@ evidence came from ranges, totals, a next-page chain, or just a bare array.
 A valid empty array is distinguished from an unreadable response. If the list
 omits previously scanned orders (including an unexpectedly empty list), the
 scan refuses to declare complete coverage. This conservative guard also means
-switching Fanatical accounts requires exporting and clearing the previous
-account's local library first. No raw order IDs or response bodies leave the
+switching Fanatical accounts requires a confirmed profile label and a deliberate
+full-rescan switch. Previous profiles are archived and never contribute active ownership. No raw order IDs or response bodies leave the
 page context.
 
 ## Automated checks
@@ -197,6 +206,10 @@ Run `npm test` for parser, matching, privacy, scan safety, backup validation and
 behavior tests. Run `npm run browser-check` for real-DOM checks in isolated
 headless Chrome profiles, using mock data on localhost (no signed-in session).
 Set `CHROME_PATH` if Chrome is not installed at its usual Windows path.
+Run `npm run package` to create a deterministic runtime-only ZIP and SHA-256
+report; `npm run check:package` validates dependencies without writing.
+`npm run browser-check:release` executes the actual packaged runtime in Chrome
+DOM fixtures. See [release and pairing](docs/release-and-pairing.md).
 Public catalogue markup has also been checked using captured live pages;
 signed-in flows still need the manual checks below.
 
@@ -236,7 +249,7 @@ signed-in flows still need the manual checks below.
 ## Known limitations
 
 - A real large `/api/user/orders` history has not been captured. Synthetic
-  tests cover 1,000 orders across 25 pages, full/quick scans, bounded concurrency,
+  tests cover 5,000 orders across 100 pages, full/quick scans, bounded concurrency,
   retries/timeouts, unsafe links and broken pagination. Array responses with
   explicit next-page links are supported, but an undocumented pagination
   envelope is rejected. Silent server-side truncation without metadata or

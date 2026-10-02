@@ -10,6 +10,28 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     $("#wishlist-list").replaceChildren(...filtered.slice(wishlistPage*50,wishlistPage*50+50).map(item=>{const row=document.createElement("li"),remove=document.createElement("button");row.textContent=`${item.title} (${item.mediaType}); weight ${item.weight} `;remove.type="button";remove.textContent="Remove wish";remove.addEventListener("click",async()=>{try{wishlist=await mutate("wishlist","remove",FanaticalLibrary.wishlistKey(item));renderWishlist();}catch(error){$("#wishlist-status").textContent=error.message;}});row.append(remove);return row;}));
   }
 
+  let reminderGeneration=0,reminderNext=null,reminderHistory=[];
+  function resetReminders(){reminderGeneration++;reminderNext=null;reminderHistory=[];$('#reminder-list').replaceChildren();$('#reminder-status').textContent='Reminders have not been checked.';$('#reminder-previous').disabled=$('#reminder-next').disabled=true;$('#load-reminders').disabled=false;}
+  async function loadReminders(offset=0,history=[]){
+    const generation=++reminderGeneration,provider=$('#reminder-provider').value;$('#load-reminders').disabled=$('#reminder-previous').disabled=$('#reminder-next').disabled=true;$('#reminder-status').textContent='Loading central reminders...';$('#reminder-list').replaceChildren();
+    try{
+      const {galacticLibraryExtensionId:id=''}=await chrome.storage.local.get({galacticLibraryExtensionId:''});if(!FanaticalLibrary.isExtensionId(id))throw Error('Save a Galactic Library link first.');
+      const page=await FanaticalLibrary.loadCentralReminders(message=>chrome.runtime.sendMessage(id,message),{provider,offset,limit:50});
+      const current=await chrome.storage.local.get({galacticLibraryExtensionId:''});if(generation!==reminderGeneration||current.galacticLibraryExtensionId!==id)return;
+      reminderNext=page.nextOffset;reminderHistory=history;$('#reminder-status').textContent=page.total&&page.reminders.length?`${page.total} reported reminders; showing ${offset+1}-${offset+page.reminders.length}.`:'No current reminders reported by Galactic Library. This is not proof of activation or permanent ownership.';
+      const labels={activation:'Activation needs confirmation','key-expiry':'Key expiry','key-unavailable':'Key unavailable','access-expiry':'Access expiry','temporary-access':'Temporary access; expiry unknown'};
+      $('#reminder-list').replaceChildren(...page.reminders.map(row=>{const li=document.createElement('li');li.textContent=`${row.title} (${row.provider}): ${labels[row.kind]}; ${row.dueAt||'deadline not reported'}; ${row.severity}.`;if(row.source==='humble-companion')li.textContent+=' Humble companion report; review in Humble or Galactic Library.';return li;}));
+      $('#reminder-previous').disabled=!history.length;$('#reminder-next').disabled=reminderNext===null;
+    }catch(error){if(generation!==reminderGeneration)return;reminderNext=null;reminderHistory=[];$('#reminder-status').textContent='Reminders not checked: '+error.message;}
+    finally{if(generation===reminderGeneration)$('#load-reminders').disabled=false;}
+  }
+  $('#load-reminders').addEventListener('click',()=>loadReminders());
+  $('#reminder-provider').addEventListener('change',resetReminders);
+  $('#reminder-next').addEventListener('click',()=>loadReminders(reminderNext,[...reminderHistory,reminderNext-50]));
+  $('#reminder-previous').addEventListener('click',()=>loadReminders(reminderHistory.at(-1),reminderHistory.slice(0,-1)));
+  $('#review-reminders').addEventListener('click',async()=>{try{const response=await chrome.runtime.sendMessage({type:'FANATICAL_OPEN_GALACTIC_REVIEW'});if(!response?.ok)throw Error('Save and check your Galactic Library link first.');}catch{$('#reminder-status').textContent='Could not open Galactic Library. Save and check the link first.';}});
+  chrome.storage.onChanged?.addListener((changes,area)=>{if(area==='local'&&changes.galacticLibraryExtensionId)resetReminders();});
+
   function setLibraryBusy(busy) {
     libraryBusy = busy;
     for (const selector of ['#import-file', '#export', '#export-catalog', '#reset']) $(selector).disabled = busy;
@@ -68,7 +90,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     if (!FanaticalLibrary.isExtensionId(id)) { status.textContent = 'Enter a valid Chrome or Firefox extension ID.'; return; }
     try {
       await mutate('patch',{galacticLibraryExtensionId:id});
-      status.textContent = linkSaved;
+      status.textContent = linkSaved;resetReminders();
     } catch { status.textContent = 'Could not save the Galactic Library link.'; }
   });
 
@@ -86,7 +108,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
   $('#remove-galactic').addEventListener('click', async () => {
     try {
       await mutate('unlink');
-      $('#galactic-id').value = ''; $('#galactic-status').textContent = 'Galactic Library link removed.';
+      $('#galactic-id').value = ''; $('#galactic-status').textContent = 'Galactic Library link removed.';resetReminders();
     } catch { $('#galactic-status').textContent = 'Could not remove the Galactic Library link.'; }
   });
 

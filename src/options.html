@@ -19,12 +19,19 @@
       </section>
       <section>
         <h2>Galactic Library link</h2>
-        <p>Optionally check a current Fanatical bundle against exact game, book/comic, and audiobook titles owned through your other connected libraries. This sends only the bundle titles being checked to your locally installed Galactic Library extension; it never transfers either full library.</p>
+        <p>Optionally check a current Fanatical bundle against game, book/comic, audiobook and supported software candidates in your other connected libraries. This sends only the bundle identity and contents evidence being checked to your locally installed Galactic Library extension; it never transfers either full library.</p>
         <p>Fanatical Library extension ID: <code id="fanatical-extension-id">Loading...</code></p>
         <label for="galactic-id">Galactic Library extension ID</label>
         <input id="galactic-id" autocomplete="off" spellcheck="false">
         <div class="actions"><button id="save-galactic" type="button">Save link</button><button id="test-galactic" type="button">Test link</button><button id="remove-galactic" type="button">Remove link</button></div>
         <p id="galactic-status" role="status"></p>
+      </section>
+      <section>
+        <h2>Central entitlement reminders</h2>
+        <p>Load reminders reported by Galactic Library. Purchase or key revelation does not prove destination-platform activation. Missing deadlines remain unknown; reminder details and dismissal are managed centrally.</p>
+        <label>Source <select id="reminder-provider"><option value="fanatical">Fanatical</option><option value="">All providers</option></select></label>
+        <button id="load-reminders" type="button">Load reminders</button><button id="review-reminders" type="button">Review in Galactic Library</button>
+        <p id="reminder-status" role="status">Reminders have not been checked.</p><button id="reminder-previous" type="button" disabled>Previous reminders</button><button id="reminder-next" type="button" disabled>Next reminders</button><ol id="reminder-list"></ol>
       </section>
       <section>
         <h2>Wishlist</h2>
@@ -47,7 +54,7 @@
         <p id="library-count">Loading...</p>
         <p id="history-note">No order-history coverage has been checked yet.</p>
         <div class="actions"><button id="export" type="button">Export backup</button><button id="export-catalog" type="button">Export title catalog</button><button id="reset" class="danger" type="button">Clear library</button></div>
-        <p>Backup restores ownership, purchase origins and profile archives. Title catalog exports only titles and catalog identity; it cannot restore purchase evidence. Pairing, display settings, session tokens and scan fingerprints are excluded from backups. Restores reset scan authority for a safe recheck.</p><p id="local-status" role="status"></p>
+        <p>Backup restores ownership, purchase origins, profile archives and wishlist. Title catalog exports only titles and catalog identity; it cannot restore purchase evidence. Pairing, display settings, session tokens and scan fingerprints are excluded from backups. Restores reset scan authority for a safe recheck.</p><p id="local-status" role="status"></p>
         <p id="preview-note"></p>
         <ol id="library-preview"></ol>
       </section>

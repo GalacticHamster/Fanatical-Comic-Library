@@ -668,6 +668,22 @@
   }
   async function testGalacticLink(send){const ping=await companionCall(send,{type:'PING'}),capabilities=await galacticCapabilities(send);return {appVersion:typeof ping.appVersion==='string'?ping.appVersion.slice(0,40):'',...capabilities};}
 
+  async function loadCentralReminders(send,{provider='fanatical',offset=0,limit=50}={}){
+    const providers=['steam','gog','epic','amazon-games','audible','kindle','amazon-video','fandango-at-home','kobo','fanatical','humble'];
+    if(provider!==undefined&&provider!==''&&!providers.includes(provider)||!Number.isSafeInteger(offset)||offset<0||offset>1000000||!Number.isSafeInteger(limit)||limit<1||limit>200)throw Error('Invalid reminder page or provider.');
+    const caps=await galacticCapabilities(send);if(!caps.entitlementReminders)throw Error('This Galactic Library version does not advertise entitlement reminders.');
+    const response=await companionCall(send,{type:'GET_REMINDERS',apiVersion:1,offset,limit,...(provider?{provider}:{})});
+    const invalid=()=>{throw Error('Galactic Library returned an invalid reminder page.');};
+    if(!Number.isSafeInteger(response.total)||response.total<0||response.total>10000000||!Array.isArray(response.reminders)||response.reminders.length!==Math.max(0,Math.min(limit,response.total-offset))||response.nextOffset!==(offset+limit<response.total?offset+limit:null)||response.nextOffset!==null&&response.nextOffset>1000000)invalid();
+    const seen=new Set(),safeText=(value,max)=>typeof value==='string'&&value.trim()&&value.length<=max;
+    const reminders=response.reminders.map(row=>{
+      if(!row||!safeText(row.reminderRef,256)||!safeText(row.itemRef,256)||!safeText(row.title,500)||seen.has(row.reminderRef)||!providers.includes(row.provider)||provider&&row.provider!==provider||!['game','game-addon','software','audiobook','book','movie','tv','unknown'].includes(row.mediaType)||!['activation','key-expiry','key-unavailable','access-expiry','temporary-access'].includes(row.kind)||!['information','due-soon','attention'].includes(row.severity))invalid();
+      if(row.dueAt!==null&&(typeof row.dueAt!=='string'||!/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z)?$/.test(row.dueAt)||!Number.isFinite(Date.parse(row.dueAt))||new Date(row.dueAt).toISOString().slice(0,10)!==row.dueAt.slice(0,10)))invalid();
+      if(['key-expiry','access-expiry'].includes(row.kind)&&row.dueAt===null)invalid();
+      seen.add(row.reminderRef);return {reminderRef:row.reminderRef,itemRef:row.itemRef,title:row.title,provider:row.provider,mediaType:row.mediaType,kind:row.kind,dueAt:row.dueAt,severity:row.severity,...(row.source==='humble-companion'?{source:'humble-companion',reviewAvailable:false}:{})};
+    });return {total:response.total,nextOffset:response.nextOffset,reminders};
+  }
+
   function isExtensionId(value) {
     const id = String(value ?? '').trim();
     return /^[a-p]{32}$/u.test(id) || /^[a-z0-9](?:[a-z0-9._+-]*[a-z0-9])?@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/iu.test(id);
@@ -739,5 +755,5 @@
   }
 
   async function storageSet(updates){const response=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'patch',args:[updates]});if(!response?.ok)throw new Error(response?.error??'Settings storage is unavailable.');}
-  global.FanaticalLibrary = { storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
+  global.FanaticalLibrary = { storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
 }(globalThis));

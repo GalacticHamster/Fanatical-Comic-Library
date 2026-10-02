@@ -44,6 +44,7 @@ globalThis.chrome = {runtime:{id:'a'.repeat(32),sendMessage:async(first,second)=
     try{return {ok:true,result:await fixtureStore.execute(message.operation,message.args)};}catch(error){return {ok:false,error:error.message};}
   }
   if(message.type==='GET_STATUS')return {ok:true,apiVersion:1,ready:true,capabilities:{mediaTypes:['game','book','audiobook','software'],reviewedContents:true,entitlementReminders:true}};
+  if(message.type==='GET_REMINDERS')return {ok:true,apiVersion:1,total:51,nextOffset:message.offset===0?50:null,reminders:Array.from({length:51},(_,n)=>({reminderRef:'opaque-reminder-'+n,itemRef:'opaque-item-'+n,title:'Reminder '+n,provider:'fanatical',mediaType:'game',kind:n===50?'key-expiry':'activation',dueAt:n===50?'2026-10-10T12:00:00Z':null,severity:n===50?'due-soon':'information'})).slice(message.offset,message.offset+message.limit)};
   if(message.type==='PING')return {ok:true,apiVersion:1,appVersion:'0.1.0'};
   if(message.type==='FANATICAL_IMPORT_PURCHASES'){
     await new Promise(resolve=>setTimeout(resolve,100));
@@ -124,6 +125,7 @@ try {
   assert($('#fanatical-extension-id').textContent==='a'.repeat(32),'Own extension ID missing');
   $('#test-galactic').click();await wait();
   assert($('#galactic-status').textContent.includes('Connected')&&$('#galactic-status').textContent.includes('reviewed contents supported')&&$('#galactic-status').textContent.includes('software'),'Galactic capability test failed');
+  $('#load-reminders').click();await wait();assert($('#reminder-list').children.length===50&&$('#reminder-list').textContent.includes('deadline not reported'),'First reminder page or unknown deadline missing');$('#reminder-next').click();await wait();assert($('#reminder-list').children.length===1&&$('#reminder-list').textContent.includes('2026-10-10'),'Reported expiry or second page missing');$('#reminder-previous').click();await wait();assert($('#reminder-list').children.length===50,'Previous reminder page missing');
   $('#show-diagnostics').click();await wait();assert(values.fanaticalShowDiagnostics===true,'Diagnostics setting not saved');
   $('#wishlist-title').value='Manual wish';$('#wishlist-media').value='book';$('#wishlist-weight').value='7';$('#add-wish').click();await wait();assert(values.fanaticalWishlistItems?.[0].weight===7,'Manual wish was not saved');
   $('#export').click();await wait();
@@ -138,7 +140,7 @@ try {
   assert(values.fanaticalLastScanAttempt===null&&!$('#history-note').textContent.includes('incomplete'),'Restore retained stale failed-scan warning');
   assert($('#library-preview li').textContent.includes('Restored comic'),'Preview did not refresh');
   assert(values.fanaticalShowDiagnostics&&values.galacticLibraryExtensionId,'Restore removed settings');
-  $('#remove-galactic').click();await wait();assert(!values.galacticLibraryExtensionId&&!$('#galactic-id').value,'Galactic removal failed');
+  $('#remove-galactic').click();await wait();assert(!values.galacticLibraryExtensionId&&!$('#galactic-id').value,'Galactic removal failed');assert(!$('#reminder-list').children.length,'Unlink retained central reminders');
   finish({ok:true,scenario:'options preview, export/restore, Galactic controls, diagnostics setting'});
 }catch(error){finish({ok:false,error:error.message})}
 `;

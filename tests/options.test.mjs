@@ -15,7 +15,7 @@ async function optionsHarness(initial = {}) {
   const config = { confirm: true, response: { ok: true, apiVersion: 1, appVersion: '0.1.0' }, failure: false };
   const context = vm.createContext({
     document: { querySelector: get, createElement: element },
-    chrome: { runtime: { id: 'a'.repeat(32), async sendMessage(id, message) { messages.push({ id, message }); if (config.failure) throw new Error('PRIVATE transport failure'); return config.response; } }, storage: { local: {
+    chrome: { runtime: { id: 'a'.repeat(32), async sendMessage(id, message) { messages.push({ id, message }); if (config.failure) throw new Error('PRIVATE transport failure'); return config.respond ? config.respond(message) : config.response; } }, storage: { local: {
       async get(defaults) { return { ...defaults, ...stored }; },
       async set(value) { writes.push(structuredClone(value)); Object.assign(stored, structuredClone(value)); },
       async remove(keys) { for (const key of Array.isArray(keys) ? keys : [keys]) delete stored[key]; }
@@ -111,4 +111,14 @@ test('save/remove Galactic link and diagnostics switch persist only their intend
 
 test('wishlist controls preserve ownership, enforce weights and make every page/search result reachable',async()=>{
   const ui=await optionsHarness({fanaticalLibraryItems:[item('Owned')],fanaticalWishlistItems:Array.from({length:61},(_,n)=>({title:'Wish '+n,mediaType:'book',weight:1}))});assert.equal(ui.get('#wishlist-list').children.length,50);await ui.click('#wishlist-next');assert.equal(ui.get('#wishlist-list').children.length,11);ui.get('#wishlist-search').value='Wish 60';ui.get('#wishlist-search').listeners.input();assert.equal(ui.get('#wishlist-list').children.length,1);assert(ui.get('#wishlist-list').children[0].textContent.includes('Wish 60'));ui.get('#wishlist-title').value='Preferred';ui.get('#wishlist-media').value='game';ui.get('#wishlist-weight').value='5';await ui.click('#add-wish');assert.equal(ui.stored.fanaticalWishlistItems.length,62);assert.equal(ui.stored.fanaticalLibraryItems[0].title,'Owned');ui.get('#wishlist-weight').value='0';ui.get('#wishlist-title').value='Invalid';await ui.click('#add-wish');assert.equal(ui.stored.fanaticalWishlistItems.length,62);assert.match(ui.get('#wishlist-status').textContent,/weight/);
+});
+
+test('reminder view supports pages, filters, unavailable capability and pairing resets without writing ownership',async()=>{
+  const ui=await optionsHarness({fanaticalLibraryItems:[item('Keep')],galacticLibraryExtensionId:'b'.repeat(32)});const reminders=Array.from({length:51},(_,n)=>({reminderRef:'opaque-'+n,itemRef:'item-'+n,title:'Reminder '+n,provider:'fanatical',mediaType:'game',kind:'activation',dueAt:null,severity:'information'}));ui.config.respond=message=>message.type==='GET_STATUS'?{ok:true,apiVersion:1,capabilities:{entitlementReminders:true}}:{ok:true,apiVersion:1,total:51,nextOffset:message.offset===0?50:null,reminders:reminders.slice(message.offset,message.offset+50)};
+  ui.get('#reminder-provider').value='fanatical';await ui.click('#load-reminders');assert.equal(ui.get('#reminder-list').children.length,50);assert.match(ui.get('#reminder-list').children[0].textContent,/deadline not reported/);await ui.click('#reminder-next');assert.equal(ui.get('#reminder-list').children.length,1);assert.match(ui.get('#reminder-status').textContent,/51-51/);await ui.click('#reminder-previous');assert.equal(ui.get('#reminder-list').children.length,50);assert.equal(ui.writes.length,0);assert.equal(ui.stored.fanaticalLibraryItems[0].title,'Keep');ui.get('#reminder-provider').listeners.change();assert.equal(ui.get('#reminder-list').children.length,0);
+  ui.config.respond=()=>({ok:true,apiVersion:1});await ui.click('#load-reminders');assert.match(ui.get('#reminder-status').textContent,/not checked.*does not advertise/);assert.equal(ui.get('#reminder-next').disabled,true);
+});
+test('late reminder responses cannot repopulate a removed Galactic link',async()=>{
+  const ui=await optionsHarness({galacticLibraryExtensionId:'b'.repeat(32)});let release;const pending=new Promise(resolve=>release=resolve);ui.config.respond=message=>message.type==='GET_STATUS'?{ok:true,apiVersion:1,capabilities:{entitlementReminders:true}}:pending;
+  const load=ui.click('#load-reminders');await new Promise(resolve=>setTimeout(resolve,5));await ui.click('#remove-galactic');release({ok:true,apiVersion:1,total:0,nextOffset:null,reminders:[]});await load;assert.equal(ui.get('#reminder-list').children.length,0);assert.match(ui.get('#reminder-status').textContent,/have not been checked/);assert.equal(ui.get('#load-reminders').disabled,false);
 });
