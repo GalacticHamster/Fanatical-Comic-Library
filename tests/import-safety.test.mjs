@@ -424,3 +424,11 @@ test('a session change during serialized scanning prevents ownership writes with
   let reads=0;const run=harness({authRead:()=>++reads===1?'FIRST-SECRET':'SECOND-SECRET'});
   await assert.rejects(run.scan(),/session changed/);assert.equal(run.writes.length,0);assert.deepEqual(run.stored.fanaticalLibraryItems,run.before.fanaticalLibraryItems);
 });
+
+
+test('5,000 purchases across 100 pages retain every product and finish at bounded concurrency', async()=>{
+  const run=harness(longHistory(5000,50)),result=await run.scan();assert.equal(result.ordersScanned,5000);assert.equal(result.ownedLeafProducts,5000);assert.equal(result.coverage.pagesFetched,100);assert.equal(result.coverage.expectedTotal,5000);assert.equal(run.maxActive,3);assert.equal(run.stored.fanaticalScannedOrderFingerprints.length,5000);
+});
+test('an advertised last page remains mandatory when later headers omit it, and cannot change mid-scan',async()=>{
+  for(const changed of [false,true]){let page=0;const run=harness({respond:async()=>{page++;return {status:200,data:[{...summary,_id:'order-'+String(page).padStart(6,'0')}],headers:page===1?{link:'<?page=2>; rel="next", <?page=3>; rel="last"'}:changed?{link:'<?page=2>; rel="last"'}:{}};}});await assert.rejects(run.scan(),/incomplete/);assert.equal(run.writes.length,0);assert.deepEqual(run.stored.fanaticalLibraryItems,run.before.fanaticalLibraryItems);}
+});

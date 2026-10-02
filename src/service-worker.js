@@ -161,7 +161,7 @@ async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerp
     return links;
   };
   const summaries = []; const visitedPages = new Set(); const pageOrderIds = new Set();
-  let path = '/api/user/orders'; let expectedTotal = null; let ranged = false; let linked = false;
+  let path = '/api/user/orders'; let expectedTotal = null; let ranged = false; let linked = false; let declaredLast = null;
   const acceptTotal = (value) => {
     if (!Number.isSafeInteger(value) || value < 0 || value > maxOrders || (expectedTotal !== null && value !== expectedTotal)) throw incomplete('Pagination totals changed or were unreadable.');
     expectedTotal = value;
@@ -197,10 +197,14 @@ async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerp
     }
     if (summaries.length > maxOrders || (expectedTotal !== null && summaries.length > expectedTotal)) throw incomplete('Pagination exceeded its total or the 100,000-order safety limit.');
     const links = paginationLinks(headers?.get('link'), path);
+    if (links.last) {
+      if (declaredLast && declaredLast !== links.last) throw incomplete('Pagination changed its advertised last page.');
+      declaredLast = links.last;
+    }
     if (links.next) {
       if (!data.length || (expectedTotal !== null && summaries.length >= expectedTotal)) throw incomplete('Pagination supplied a next page after an empty or final page.');
       linked = true;
-    } else if ((expectedTotal !== null && summaries.length !== expectedTotal) || (links.last && links.last !== path)) {
+    } else if ((expectedTotal !== null && summaries.length !== expectedTotal) || (declaredLast && declaredLast !== path)) {
       throw incomplete('Fanatical returned only part of the history without a usable next-page link.');
     }
     path = links.next || null;
