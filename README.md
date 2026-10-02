@@ -263,5 +263,13 @@ signed-in flows still need the manual checks below.
   allowlist and adversarial tests deliberately exclude those fields.
 - Product-card DOM selectors are heuristic and need validation across all
   Fanatical layouts.
-- Firefox packaging and Galactic external-message pairing remain follow-up
-  work. Application logic is not intentionally duplicated for that work.
+- Firefox 140+ packages and actual Galactic pairing are tested; signed-in
+  provider smoke checks and AMO signing remain separate release steps.
+
+## Firefox desktop
+
+Run `npm run package:firefox`, extract `dist/FanaticalLibrary-0.1.0-firefox.zip`, then select its manifest through `about:debugging#/runtime/this-firefox`. This is a temporary development install; permanent distribution requires signing. Firefox 140+ is supported with a module event page and the same runtime assets as Chrome.
+
+Allow `fanatical-library@galactichamster.com` in Galactic Library and save `galactic-library@galactichamster.com` in Fanatical settings. Use **Test link**. Firefox central review asks the allowed GL extension to open its own options; it needs no native helper or private URL. Older GL versions show toolbar instructions.
+
+`npm run browser-check:firefox` checks all nine packaged DOM fixtures. From the adjacent GalacticLibrary repo, `node tests/firefox.mjs --companions` verifies actual installed pairing and GL/FAN MAIN injection against 200 synthetic purchases over ten pages, a quick scan over eleven pages fetching only one new detail, and rejection of broken pagination. These test isolated profiles and synthetic accounts.
