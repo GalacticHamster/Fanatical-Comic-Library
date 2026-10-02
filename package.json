@@ -9,6 +9,8 @@
     "check:package": "node scripts/package-release.mjs --check",
     "browser-check:release": "node tests/browser-check.mjs --release",
     "runtime-check": "node tests/runtime-check.mjs",
-    "runtime-check:central": "node tests/runtime-check.mjs --central"
+    "runtime-check:central": "node tests/runtime-check.mjs --central",
+    "package:firefox": "node scripts/package-release.mjs --firefox",
+    "check:package:firefox": "node scripts/package-release.mjs --firefox --check"
   }
 }

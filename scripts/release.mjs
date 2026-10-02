@@ -19,7 +19,7 @@ export function validateRuntime(files){
   for(const required of ['manifest.json','src/options.html','src/popup.html'])if(!files.has(required))throw new Error(`Missing required runtime file: ${required}`);
   const manifest=JSON.parse(files.get('manifest.json'));
   if(manifest.manifest_version!==3||!/^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){0,3}$/u.test(manifest.version)||manifest.version.split('.').some(part=>Number(part)>65535))throw new Error('Invalid extension manifest/version.');
-  for(const path of [manifest.background?.service_worker,manifest.options_page,manifest.action?.default_popup,...Object.values(manifest.icons??{}),...Object.values(manifest.action?.default_icon??{})])if(path)dependency(files,'manifest.json',path,true);
+  for(const path of [manifest.background?.service_worker,...(manifest.background?.scripts??[]),manifest.background?.page,manifest.options_page,manifest.action?.default_popup,...Object.values(manifest.icons??{}),...Object.values(manifest.action?.default_icon??{})])if(path)dependency(files,'manifest.json',path,true);
   for(const entry of manifest.content_scripts??[])for(const path of [...(entry.js??[]),...(entry.css??[])])dependency(files,'manifest.json',path,true);
   for(const entry of manifest.web_accessible_resources??[])for(const path of entry.resources??[])dependency(files,'manifest.json',path,true);
   for(const [path,bytes]of files){
@@ -67,7 +67,8 @@ export function readRuntimeZip(zip){
   }
   if(cursor!==end||localCursor!==start)throw new Error('ZIP contains unlisted payloads.');validateRuntime(files);return files;
 }
-export async function createRelease(root=projectRoot,allowlist){
+export async function createRelease(root=projectRoot,allowlist,target="chrome"){
+  if(!["chrome","firefox"].includes(target))throw Error("Unknown release target.");
   const base=await realpath(root),paths=allowlist??JSON.parse(await readFile(resolve(base,'scripts/runtime-files.json'),'utf8'));
   if(!Array.isArray(paths)||!paths.length||paths.length>1000||paths.some(path=>!validPath(path)||!runtimePath(path))||new Set(paths).size!==paths.length)throw new Error('Invalid explicit runtime allowlist.');
   const files=new Map();let total=0;
@@ -77,6 +78,7 @@ export async function createRelease(root=projectRoot,allowlist){
     if(['.js','.mjs','.css','.html','.json'].includes(extname(path)))bytes=Buffer.from(bytes.toString('utf8').replace(/\r\n?/gu,'\n'));
     files.set(path,bytes);total+=bytes.length;if(total>40*1024*1024)throw new Error('Runtime package exceeds bound.');
   }
+  if(target==='firefox'){const overlay=JSON.parse(await readFile(resolve(base,'manifests/firefox.json'),'utf8')),manifest={...JSON.parse(files.get('manifest.json')),...overlay};delete manifest.minimum_chrome_version;files.set('manifest.json',Buffer.from(JSON.stringify(manifest,null,2)+'\n'));}
   const manifest=validateRuntime(files),zip=runtimeZip(files),extracted=readRuntimeZip(zip);if(extracted.size!==files.size)throw new Error('Archive file count mismatch.');
   const report={name:manifest.name,version:manifest.version,sha256:hash(zip),files:[...files].map(([path,bytes])=>({path,bytes:bytes.length,sha256:hash(bytes)}))};return {zip,files:extracted,report};
 }
