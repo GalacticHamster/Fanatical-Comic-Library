@@ -11,6 +11,7 @@
     "runtime-check": "node tests/runtime-check.mjs",
     "runtime-check:central": "node tests/runtime-check.mjs --central",
     "package:firefox": "node scripts/package-release.mjs --firefox",
-    "check:package:firefox": "node scripts/package-release.mjs --firefox --check"
+    "check:package:firefox": "node scripts/package-release.mjs --firefox --check",
+    "browser-check:firefox": "node tests/browser-check.mjs --release --firefox"
   }
 }

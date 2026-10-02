@@ -4,15 +4,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn,execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {setTimeout as pause} from 'node:timers/promises';
 import {createRelease} from '../scripts/release.mjs';
-const packaged=process.argv.includes('--release')?await createRelease():null;
+const firefox=process.argv.includes('--firefox');
+const packaged=process.argv.includes('--release')?await createRelease(undefined,undefined,firefox?'firefox':'chrome'):null;
 const readRuntime=name=>packaged?packaged.files.get(name)?.toString('utf8')??(()=>{throw Error('Absent runtime '+name);})():fs.readFileSync(new URL('../'+name,import.meta.url),'utf8');
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const chromePath = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+let browserPath=process.env.CHROME_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe';
+if(firefox){const candidates=[process.env.FIREFOX_BIN,'C:/Program Files/Mozilla Firefox/firefox.exe'];if(process.platform==='win32'){try{const root=execFileSync('powershell.exe',['-NoProfile','-Command','(Get-AppxPackage -Name Mozilla.Firefox).InstallLocation'],{windowsHide:true,encoding:'utf8'}).trim();if(root)candidates.push(path.join(root,'VFS/ProgramFiles/Firefox Package Root/firefox.exe'));}catch{}}browserPath=candidates.filter(Boolean).find(file=>fs.existsSync(file));if(!browserPath)throw Error('Set FIREFOX_BIN to run Firefox checks.');}
 const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'Fanatical-ui-check-'));
 const products = ['Comic #10', 'Comic #2', 'External comic', 'New comic'].map((name, index) => ({ _id: `product-12345${index}`, name, slug: `comic-${index}`, type: 'book', regionAvailable: true }));
 const bundle = { _id: 'bundle-123456', name: 'Test comics', slug: 'test-comics', bundles: [{ price: { USD: 100 }, games: [products[1], products[3]] }, { price: { USD: 1000 }, games: [products[0], products[2]] }] };
@@ -274,12 +276,14 @@ const server = http.createServer((request, response) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
   const allRoutes = ['/options', '/en/bundle/test-comics', '/en/pick-and-mix/test-mix', '/en/bundle/books', '/en/bundle/test-editions', '/en/pick-and-mix/test-editions', '/en/orders', '/en/bundle/test-contents', '/en/pick-and-mix/test-contents'];
-  const selectedRoutes=process.argv.slice(2).filter(arg=>arg!=='--release');const routes=selectedRoutes.length?selectedRoutes:allRoutes;
+  const selectedRoutes=process.argv.slice(2).filter(arg=>!['--release','--firefox'].includes(arg));const routes=selectedRoutes.length?selectedRoutes:allRoutes;
   if (routes.some(route => !allRoutes.includes(route))) throw new Error('Unknown browser fixture route');
   for (const [index, route] of routes.entries()) {
     let stopped=Promise.resolve();
     const result = await new Promise((resolve, reject) => {
-      const child = spawn(chromePath, ['--headless', '--disable-gpu', '--no-first-run', '--no-default-browser-check', `--user-data-dir=${path.join(profileRoot, String(index))}`, `http://127.0.0.1:${server.address().port}${route}`], { windowsHide: true });
+      const profile=path.join(profileRoot,String(index));fs.mkdirSync(profile);const url=`http://127.0.0.1:${server.address().port}${route}`;
+      const args=firefox?['--headless','--no-remote','--profile',profile,url]:['--headless','--disable-gpu','--no-first-run','--no-default-browser-check',`--user-data-dir=${profile}`,url];
+      const child = spawn(browserPath,args, { windowsHide: true });
       stopped=new Promise(resolve=>child.once('exit',resolve));
       child.stdout.resume(); child.stderr.resume();
       const timeout = setTimeout(() => { pendingResults.delete(route); child.kill(); reject(new Error(`Browser check timed out: ${route}`)); }, 25000);
@@ -287,7 +291,7 @@ try {
       child.on('error', error => { clearTimeout(timeout); pendingResults.delete(route); reject(error); });
     });
     await Promise.race([stopped,pause(3000)]);
-    console.log(JSON.stringify({...result,packaged:Boolean(packaged)}));
+    console.log(JSON.stringify({...result,browser:firefox?'Firefox':'Chrome',packaged:Boolean(packaged)}));
     if (!result.ok) process.exitCode = 1;
   }
 } finally { await new Promise(resolve=>server.close(resolve));const target=path.resolve(profileRoot),base=path.resolve(os.tmpdir());if(!target.startsWith(base+path.sep)||!target.slice(base.length+1).startsWith('Fanatical-ui-check-'))throw Error('Unsafe browser cleanup.');fs.rmSync(target,{recursive:true,force:true,maxRetries:5,retryDelay:200}); }
