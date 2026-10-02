@@ -10,5 +10,7 @@
   "src/options.html",
   "src/ui.css",
   "src/popup.js",
-  "src/popup.html"
+  "src/popup.html",
+  "src/planning.js",
+  "src/planning-ui.js"
 ]

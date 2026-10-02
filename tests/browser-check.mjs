@@ -125,8 +125,9 @@ try {
   $('#test-galactic').click();await wait();
   assert($('#galactic-status').textContent.includes('Connected')&&$('#galactic-status').textContent.includes('reviewed contents supported')&&$('#galactic-status').textContent.includes('software'),'Galactic capability test failed');
   $('#show-diagnostics').click();await wait();assert(values.fanaticalShowDiagnostics===true,'Diagnostics setting not saved');
+  $('#wishlist-title').value='Manual wish';$('#wishlist-media').value='book';$('#wishlist-weight').value='7';$('#add-wish').click();await wait();assert(values.fanaticalWishlistItems?.[0].weight===7,'Manual wish was not saved');
   $('#export').click();await wait();
-  const backup=JSON.parse(await exportedBlob.text());assert(backup.items.length===1&&!backup.orderFingerprints,'Export leaked skip history');
+  const backup=JSON.parse(await exportedBlob.text());assert(backup.items.length===1&&!backup.orderFingerprints&&backup.schemaVersion===3&&backup.wishlistItems[0].weight===7,'Backup omitted wishlist or leaked scan authority');
   const upload=async text=>{const transfer=new DataTransfer();transfer.items.add(new File([text],'backup.json',{type:'application/json'}));$('#import-file').files=transfer.files;$('#import-file').dispatchEvent(new Event('change'));for(let attempt=0;attempt<8;attempt++){await wait();if(!$('#import-file').disabled)return;}throw new Error('File import did not finish')};
   $('#export-catalog').click();await wait();const catalog=JSON.parse(await exportedBlob.text());assert(catalog.format==='fanatical-title-catalog'&&!catalog.items[0].bundle&&!catalog.items[0].purchaseDate,'Catalog retained purchase evidence');await upload(JSON.stringify(catalog));assert(values.fanaticalLibraryItems.length===1&&$('#import-status').textContent.includes('failed'),'Catalog was accepted as ownership backup');
   await upload('invalid JSON');assert(values.fanaticalLibraryItems.length===1,'Invalid JSON changed library');
@@ -208,6 +209,12 @@ try {
     const card=[...document.querySelectorAll('article')].find(card=>card.textContent.includes('Saga Collection 1'));card.classList.add('selected');card.click();await wait();
     assert(content().textContent.includes('Selected items: 1 distinct additional units'),'Selection did not update additional-unit counts');
   } else assert(content().textContent.includes('$1.00 tier: 1 distinct additional units')&&content().textContent.includes('$10.00 tier: 4 distinct additional units'),'Cumulative tier unit counts are wrong');
+  const planning=()=>document.querySelector('.fanatical-library-planning');planning().open=true;await wait();planning().querySelector('details').open=true;
+  const wishRow=planning().querySelector('li[data-product-id="contents-product-2"]');wishRow.querySelector('input').value='5';[...wishRow.querySelectorAll('button')].find(button=>button.textContent==='Add wish').click();await wait();
+  assert(values.fanaticalWishlistItems?.length===1&&values.fanaticalWishlistItems[0].weight===5,'Bundle wishlist did not persist');
+  const goal=planning().querySelector('[aria-label="Purchase planning goal"]');goal.value='wishlist';goal.dispatchEvent(new Event('change'));assert(planning().textContent.includes('5 wishlist points'),'Wishlist weights did not affect plan value');
+  if(location.pathname.includes('pick-and-mix')){assert(planning().querySelector('.fanatical-library-plan-result').textContent.includes('No priced tier'),'Uncertain fillers entered Pick and Mix implicitly');planning().querySelector('label input[type="checkbox"]').click();assert(planning().querySelector('.fanatical-library-plan-result').textContent.includes('$1.00'),'Explicit uncertainty did not produce an available complete Pick and Mix selection');}else assert(planning().querySelector('.fanatical-library-plan-result').textContent.includes('$10.00'),'Wishlist goal did not choose the cheapest containing tier');
+  assert(document.querySelectorAll('.fanatical-library-partial-badge').length===2,'Planning changed ownership badges');
   document.querySelector('.fanatical-library-partial-badge').click();
   const inspector=document.querySelector('#fanatical-library-evidence');
   assert(inspector?.textContent.includes('Reviewed publisher contents')&&inspector.textContent.includes('2026-08-01'),'Central contents evidence/freshness missing from inspector');
@@ -253,12 +260,12 @@ const server = http.createServer((request, response) => {
     const html = readRuntime('src/options.html').replace('<head>', '<head><base href="/src/">').replace('<script src="shared.js">', '<script src="/mock.js"></script><script src="shared.js">').replace('</body>', '<script type="module" src="/options-check.js"></script></body>');
     return send('text/html', html);
   }
-  if (url === '/en/orders') return send('text/html', '<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"></head><body><main>Mock orders</main><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/content.js"></script><script type="module" src="/order-check.js"></script></body></html>');
+  if (url === '/en/orders') return send('text/html', '<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"></head><body><main>Mock orders</main><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/order-check.js"></script></body></html>');
   if (url === '/en/bundle/test-comics' || url === '/en/bundle/books' || url === '/en/pick-and-mix/test-mix' || url.endsWith('/test-editions') || url.endsWith('/test-contents')) {
     const isCatalogue = url.endsWith('/books');
     const isEdition = url.endsWith('/test-editions');
     const isContents = url.endsWith('/test-contents');
-    return send('text/html', `<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"><style>.fan-grid-container{display:grid;grid-template-columns:repeat(3,240px);gap:20px}.fanatical-library-pick-mix-reflow{grid-column:1/-1}article{min-height:160px}.cover-container{min-height:120px}</style></head><body><main>${isCatalogue ? `<ul class="HitCardsRow row">${catalogue}</ul>` : `<section class="tier"><div class="fan-grid-container">${cards(url.includes('pick-and-mix') ? 'PickAndMixCard' : 'bundle-product-card', isContents ? contentsProducts : isEdition ? editionProducts : products)}</div></section>`}</main><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/content.js"></script><script type="module" src="/${isCatalogue ? 'catalogue' : isContents ? 'contents' : isEdition ? 'edition' : 'bundle'}-check.js"></script></body></html>`);
+    return send('text/html', `<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"><style>.fan-grid-container{display:grid;grid-template-columns:repeat(3,240px);gap:20px}.fanatical-library-pick-mix-reflow{grid-column:1/-1}article{min-height:160px}.cover-container{min-height:120px}</style></head><body><main>${isCatalogue ? `<ul class="HitCardsRow row">${catalogue}</ul>` : `<section class="tier"><div class="fan-grid-container">${cards(url.includes('pick-and-mix') ? 'PickAndMixCard' : 'bundle-product-card', isContents ? contentsProducts : isEdition ? editionProducts : products)}</div></section>`}</main><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/${isCatalogue ? 'catalogue' : isContents ? 'contents' : isEdition ? 'edition' : 'bundle'}-check.js"></script></body></html>`);
   }
   response.writeHead(404).end();
 });

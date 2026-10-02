@@ -1,0 +1,9 @@
+# Wishlist and purchase planning (FAN-17)
+
+Bundle summaries have a collapsible planner. Choose all eligible products, verified additional issues/volumes, or wishlist products. Add wishes directly from the offer with weights from 1 to 100; settings also support manual wishes, search, removal and paged browsing. Wishes affect suggestions only, never ownership. Recoverable version 3 backups include them.
+
+Standard tiers are cumulative. The planner finds the cheapest valid USD-cent price covering the entire selected goal. Pick & Mix suggestions use the exact tier quantity, exclude sold-out/region-unavailable/hidden products, deduplicate product IDs and avoid owned fillers. Conflicting availability on duplicate cards excludes the item. Wishlist weights prioritize suggestions when a tier cannot cover every wish; those partial suggestions are not labeled complete.
+
+Verified additional units are deduplicated across overlapping collections using the same scoped contents evidence as badges. Cost per additional unit is shown only when verified units exist; title counts never substitute for unknown comic contents. Possible and unchecked products require the explicit uncertainty checkbox. Verified Partial products can satisfy the additional-units goal; ownership and edition badges retain their evidence semantics. The checkbox does not fabricate contents after a failed lookup.
+
+For small Pick & Mix unit goals, a bounded set-cover search proves feasible coverage and checks lower tiers. Large pools or exhausted search budgets use a validated greedy selection and explicitly label a found plan feasible, with cheaper coverage unproven. No cart selection, checkout, currency conversion or purchase action is automated. Tests cover overlap, weights, uncertainty, availability, tier validation, bounded search and the shipped UI from the release ZIP.

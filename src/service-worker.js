@@ -88,7 +88,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if(message?.type==='FANATICAL_STORE'){
-    if(_sender?.id!==chrome.runtime.id||typeof _sender.url!=='string'||!(_sender.url.startsWith(chrome.runtime.getURL(''))||message.operation==='patch'&&_sender.url.startsWith('https://www.fanatical.com/'))||!['restore','clear','patch','unlink'].includes(message.operation)){sendResponse({ok:false,error:'Untrusted storage request.'});return false;}
+    if(_sender?.id!==chrome.runtime.id||typeof _sender.url!=='string'||!(_sender.url.startsWith(chrome.runtime.getURL(''))||['patch','wishlist'].includes(message.operation)&&_sender.url.startsWith('https://www.fanatical.com/'))||!['restore','clear','patch','unlink','wishlist','backup'].includes(message.operation)){sendResponse({ok:false,error:'Untrusted storage request.'});return false;}
     syncStore.execute(message.operation,message.args).then(result=>sendResponse({ok:true,result}),error=>sendResponse({ok:false,error:error.message}));return true;
   }
   if (message?.type === 'FANATICAL_IMPORT_PURCHASES') {

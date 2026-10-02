@@ -17,7 +17,7 @@ test('inspector explains actual titles, edition differences, rule scores and evi
 });
 
 test('central review navigation trusts stored pairing and own sender, never caller URLs', async () => {
-  const source = fs.readFileSync(new URL('../src/service-worker.js', import.meta.url), 'utf8').replace(/^import .*;\r?\n/mu, '');
+  const source = fs.readFileSync(new URL('../src/service-worker.js', import.meta.url), 'utf8').replace(/^import .*;\r?\n/gmu, '');
   const urls = []; let listener; let id = 'b'.repeat(32);
   const chrome = { runtime: { id: 'a'.repeat(32), onMessage: { addListener(handler) { listener = handler; } } },
     storage: { local: { get: async () => ({ galacticLibraryExtensionId: id }) } }, tabs: { create: async data => urls.push(data.url) } };

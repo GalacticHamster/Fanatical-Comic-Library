@@ -1,5 +1,6 @@
 // Shared by the purchase importer and backup UI. Never persist raw input.
 import './shared.js';
+import './planning.js';
 const safeText = (value, max = 500) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 export const safeId = (value) => /^[a-zA-Z0-9_-]{6,128}$/u.test(String(value ?? '')) ? String(value) : '';
 const safeDate = (value) => typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? new Date(value).toISOString() : null;
@@ -64,11 +65,12 @@ export function sanitizeImportResult(value) {
 }
 
 export function parseLibraryBackup(value) {
-  if (!value || value.format!==undefined&&value.format!=='fanatical-library-backup' || ![1,2].includes(value.schemaVersion) || !Array.isArray(value.items) || value.items.length>500000) throw new Error('Expected a supported Fanatical Library backup with an items array.');
-  if(value.schemaVersion===2&&(typeof value.profileLabel!=='string'||value.profileLabel.length>100||!Array.isArray(value.profileArchives)||value.profileArchives.length>100))throw new Error('Invalid account/profile backup.');
+  if (!value || value.format!==undefined&&value.format!=='fanatical-library-backup' || ![1,2,3].includes(value.schemaVersion) || !Array.isArray(value.items) || value.items.length>500000) throw new Error('Expected a supported Fanatical Library backup with an items array.');
+  if(value.schemaVersion>=2&&(typeof value.profileLabel!=='string'||value.profileLabel.length>100||!Array.isArray(value.profileArchives)||value.profileArchives.length>100))throw new Error('Invalid account/profile backup.');
   if (value.items.some((item) => item?.source !== 'fanatical' || !safeId(item?.sourceItemId) || !safeText(item?.title))) {
     throw new Error('The backup contains an invalid Fanatical ownership record. Nothing was imported.');
   }
+  if(value.schemaVersion===3){if(value.format!=='fanatical-library-backup'||!Array.isArray(value.wishlistItems))throw Error('Invalid recoverable backup.');globalThis.FanaticalLibrary.normalizeWishlist(value.wishlistItems);}
   for(const item of value.items){if(item.mediaType!==undefined&&!['game','book','audiobook','software','audio','elearning','other'].includes(item.mediaType))throw new Error('Invalid backup media type.');purchaseOrigins(item.purchaseOrigins,true);}
   return sanitizeImportResult(value).items;
 }
@@ -99,7 +101,7 @@ export function validateScanResult(value, { fullScan = false, knownOrderFingerpr
     pagesFetched: coverage.pagesFetched, expectedTotal: coverage.expectedTotal, paginationEvidence: coverage.paginationEvidence, retries: coverage.retries, concurrency: 3 } };
 }
 
-export function createLibraryBackup(items, summary, exportedAt = new Date().toISOString(), profileLabel='', profileArchives=[]) {
+export function createLibraryBackup(items, summary, exportedAt = new Date().toISOString(), profileLabel='', profileArchives=[],wishlistItems=[]) {
   // Scan metadata is informational only: restore never trusts its skip history.
   const safeSummary = summary && ['full', 'quick'].includes(summary.scanMode) ? {
     importedAt: safeDate(summary.importedAt), scanMode: summary.scanMode,
@@ -107,18 +109,18 @@ export function createLibraryBackup(items, summary, exportedAt = new Date().toIS
     addedProducts: count(summary.addedProducts), ownedLeafProducts: count(summary.ownedLeafProducts),
     historyCoverage: safeText(summary.historyCoverage)
   } : null;
-  const scoped={schemaVersion:2,items:sanitizeImportResult({items}).items,profileLabel,profileArchives};
+  const scoped={format:'fanatical-library-backup',schemaVersion:3,wishlistItems:globalThis.FanaticalLibrary.normalizeWishlist(wishlistItems),items:sanitizeImportResult({items}).items,profileLabel,profileArchives};
   parseLibraryBackup(scoped);
   const safeArchives=backupRestoreState(scoped.items,scoped).fanaticalProfileArchives;
   return { format:'fanatical-library-backup', ...scoped, exportedAt: safeDate(exportedAt), summary: safeSummary, profileArchives:safeArchives };
 }
 
 export function backupRestoreState(items, backup={}) {
-  const profileArchives=(backup.schemaVersion===2?backup.profileArchives:[]).map(entry=>{
+  const profileArchives=(backup.schemaVersion>=2?backup.profileArchives:[]).map(entry=>{
     if(!entry||typeof entry.profileLabel!=='string'||!entry.profileLabel||entry.profileLabel.length>100)throw new Error('Invalid archived profile.');
     return {profileLabel:entry.profileLabel,items:parseLibraryBackup({schemaVersion:1,items:entry.items}),archivedAt:safeDate(entry.archivedAt)};
   });
-  return { fanaticalLibraryItems: items, fanaticalImportSummary: null, fanaticalScannedOrderFingerprints: [], fanaticalLastScanAttempt: null, fanaticalProfileLabel:backup.schemaVersion===2?backup.profileLabel:'', fanaticalProfileArchives:profileArchives };
+  return { fanaticalLibraryItems: items, fanaticalImportSummary: null, fanaticalScannedOrderFingerprints: [], fanaticalLastScanAttempt: null, fanaticalProfileLabel:backup.schemaVersion>=2?backup.profileLabel:'', fanaticalProfileArchives:profileArchives,...(backup.schemaVersion===3?{fanaticalWishlistItems:globalThis.FanaticalLibrary.normalizeWishlist(backup.wishlistItems)}:{}) };
 }
 
 export function createSyncStore(area){
@@ -142,6 +144,13 @@ export function createSyncStore(area){
       const state=await area.get(defaults);const archives=[...state.fanaticalProfileArchives];
       if(control.changing){archives.push({profileLabel:state.fanaticalProfileLabel,items:state.fanaticalLibraryItems,archivedAt:new Date().toISOString()});if(archives.length>100)throw new Error('Too many archived profiles; export a backup first.');}
       await area.set({...updates,fanaticalProfileLabel:control.label,fanaticalProfileArchives:archives,[key]:null});return true;
+    }
+    if(operation==='backup'){
+      const state=await area.get({...defaults,fanaticalImportSummary:null,fanaticalWishlistItems:[]});return createLibraryBackup(state.fanaticalLibraryItems,state.fanaticalImportSummary,undefined,state.fanaticalProfileLabel,state.fanaticalProfileArchives,state.fanaticalWishlistItems);
+    }
+    if(operation==='wishlist'){
+      const [action,value]=args,F=globalThis.FanaticalLibrary,stored=await area.get({fanaticalWishlistItems:[]}),current=F.normalizeWishlist(stored.fanaticalWishlistItems);if(!['add','remove','replace'].includes(action))throw Error('Unsupported wishlist action.');
+      const next=action==='remove'?current.filter(item=>F.wishlistKey(item)!==value):F.normalizeWishlist(action==='add'?[...current,...F.normalizeWishlist(value)]:value);await area.set({fanaticalWishlistItems:next});return next;
     }
     if(operation==='restore'){
       const backup=args[0];const items=parseLibraryBackup(backup);await area.set({...backupRestoreState(items,backup),[key]:null});return true;

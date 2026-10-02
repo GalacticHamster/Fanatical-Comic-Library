@@ -10,7 +10,7 @@ const item = (title, id = 'product-123456') => ({ source: 'fanatical', sourceIte
 
 async function optionsHarness(initial = {}) {
   const stored = structuredClone(initial); const writes = []; const messages = []; const nodes = new Map();
-  const element = () => ({ textContent: '', value: '', checked: false, disabled: false, files: [], children: [], listeners: {}, addEventListener(type, handler) { this.listeners[type] = handler; }, replaceChildren(...children) { this.children = children; }, click() {} });
+  const element = () => ({ textContent: '', value: '', checked: false, disabled: false, files: [], children: [], listeners: {}, addEventListener(type, handler) { this.listeners[type] = handler; }, replaceChildren(...children) { this.children = children; }, append(...children) {this.children.push(...children);}, click() {} });
   const get = (selector) => { if (!nodes.has(selector)) nodes.set(selector, element()); return nodes.get(selector); };
   const config = { confirm: true, response: { ok: true, apiVersion: 1, appVersion: '0.1.0' }, failure: false };
   const context = vm.createContext({
@@ -106,4 +106,9 @@ test('save/remove Galactic link and diagnostics switch persist only their intend
   ui.get('#show-diagnostics').checked = true; await ui.get('#show-diagnostics').listeners.change();
   assert.equal(ui.stored.fanaticalShowDiagnostics, true);
   assert.equal(ui.stored.fanaticalLibraryItems[0].title, 'Kept');
+});
+
+
+test('wishlist controls preserve ownership, enforce weights and make every page/search result reachable',async()=>{
+  const ui=await optionsHarness({fanaticalLibraryItems:[item('Owned')],fanaticalWishlistItems:Array.from({length:61},(_,n)=>({title:'Wish '+n,mediaType:'book',weight:1}))});assert.equal(ui.get('#wishlist-list').children.length,50);await ui.click('#wishlist-next');assert.equal(ui.get('#wishlist-list').children.length,11);ui.get('#wishlist-search').value='Wish 60';ui.get('#wishlist-search').listeners.input();assert.equal(ui.get('#wishlist-list').children.length,1);assert(ui.get('#wishlist-list').children[0].textContent.includes('Wish 60'));ui.get('#wishlist-title').value='Preferred';ui.get('#wishlist-media').value='game';ui.get('#wishlist-weight').value='5';await ui.click('#add-wish');assert.equal(ui.stored.fanaticalWishlistItems.length,62);assert.equal(ui.stored.fanaticalLibraryItems[0].title,'Owned');ui.get('#wishlist-weight').value='0';ui.get('#wishlist-title').value='Invalid';await ui.click('#add-wish');assert.equal(ui.stored.fanaticalWishlistItems.length,62);assert.match(ui.get('#wishlist-status').textContent,/weight/);
 });

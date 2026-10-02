@@ -3,7 +3,7 @@
   const F = globalThis.FanaticalLibrary;
   if (!F) return;
   const titleCollator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
-  const state = { capabilityId:null, softwareSupported:false, capabilityFailed:false, url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), requests: new Map(), failed: new Set(), lookupFailures: new Set(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false, showNewOnlyLoaded: false, pickMixReflow: [], summaryDirty: false, summaryMinimized: false, revision: 0 };
+  const state = { wishlist:[],planGoal:'products',planUncertain:false,planOpen:false,wishOpen:false,offerWishPage:0, capabilityId:null, softwareSupported:false, capabilityFailed:false, url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), requests: new Map(), failed: new Set(), lookupFailures: new Set(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false, showNewOnlyLoaded: false, pickMixReflow: [], summaryDirty: false, summaryMinimized: false, revision: 0 };
   const catalogueState = { items: null, filters: null, rendering: false };
   let observer = null;
   let diagnosticsEnabled = false;
@@ -205,7 +205,7 @@
       }
       document.querySelector('[data-fanatical-library-summary]')?.remove();
       if (!catalogueState.items || !catalogueState.filters) {
-        const stored = await chrome.storage.local.get({ fanaticalLibraryItems: [], fanaticalCatalogueFilters: {}, fanaticalShowDiagnostics: false });
+        const stored = await chrome.storage.local.get({ fanaticalLibraryItems: [], fanaticalCatalogueFilters: {}, fanaticalShowDiagnostics: false,fanaticalWishlistItems:[] });
         catalogueState.items = stored.fanaticalLibraryItems;
         catalogueState.filters = catalogueFilters(stored.fanaticalCatalogueFilters);
         diagnosticsEnabled = Boolean(stored.fanaticalShowDiagnostics);
@@ -699,6 +699,7 @@
     heading.textContent = `Your Fanatical items: ${counts.owned} owned${counts.elsewhere ? ` \u00b7 ${counts.elsewhere} elsewhere` : ''} \u00b7 ${counts.new} new${counts.partial ? ` \u00b7 ${counts.partial} partial` : ''}${counts.possible ? ` \u00b7 ${counts.possible} possible` : ''}`;
     if (counts.unchecked) heading.textContent += ` · ${counts.unchecked} not checked`;
     appendContentsSummary(element, parsed, matches);
+    element.append(F.createPurchasePlanning(parsed,matches,state));
     appendReadingSummary(element, matches);
     const purchase = (Array.isArray(localItems) ? localItems : []).flatMap(item=>item.purchaseOrigins?.length?item.purchaseOrigins:[item]).filter(item=>item?.bundle?.sourceItemId===parsed.sourceItemId).sort((a,b)=>(Date.parse(b.purchaseDate)||0)-(Date.parse(a.purchaseDate)||0))[0];
     if (purchase?.purchaseDate) {
@@ -854,6 +855,7 @@
     try {
       const [parsed, stored] = await Promise.all([loadPublicBundle(current), chrome.storage.local.get({ fanaticalLibraryItems: [], fanaticalImportSummary: null, galacticLibraryExtensionId: '', fanaticalShowNewItemsOnly: false, fanaticalShowDiagnostics: false })]);
       if (revision !== state.revision || pageUrl !== location.href) return;
+      state.wishlist=F.normalizeWishlist(stored.fanaticalWishlistItems);
       state.lastImport = stored.fanaticalImportSummary?.importedAt || null;
       diagnosticsEnabled = Boolean(stored.fanaticalShowDiagnostics);
       if (!state.showNewOnlyLoaded) {
@@ -937,6 +939,7 @@
   observer.observe(document.documentElement, { childList: true, subtree: true });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
+    if(changes.fanaticalWishlistItems)state.summaryDirty=true;
     if (changes.fanaticalLibraryItems || changes.galacticLibraryExtensionId) {
       state.summaryDirty = true; state.revision++; state.galactic.clear(); state.failed.clear();
     }

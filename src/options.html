@@ -27,6 +27,17 @@
         <p id="galactic-status" role="status"></p>
       </section>
       <section>
+        <h2>Wishlist</h2>
+        <p>Preferences are separate from ownership. Weights influence purchase planning and are saved in full backups.</p>
+        <label>Title <input id="wishlist-title" maxlength="500"></label>
+        <label>Media <select id="wishlist-media"><option value="book">Book/comic/manga</option><option value="game">Game</option><option value="audiobook">Audiobook</option><option value="software">Software</option></select></label>
+        <label>Weight (1-100) <input id="wishlist-weight" type="number" min="1" max="100" value="1"></label>
+        <button id="add-wish" type="button">Add wish</button><button id="clear-wishlist" type="button">Clear wishlist</button>
+        <label>Find wishes <input id="wishlist-search" type="search"></label>
+        <p id="wishlist-count"></p><button id="wishlist-previous" type="button">Previous wishes</button><button id="wishlist-next" type="button">Next wishes</button>
+        <ol id="wishlist-list"></ol><p id="wishlist-status" role="status"></p>
+      </section>
+      <section>
         <h2>Diagnostics</h2>
         <label><input id="show-diagnostics" type="checkbox"> Show bundle and catalogue diagnostics</label>
         <p>Leave this off for a clean bundle summary. Turn it on when troubleshooting loading, matching, or sorting. Diagnostics stay on the page and include only counts, current bundle titles, and match reasons.</p>

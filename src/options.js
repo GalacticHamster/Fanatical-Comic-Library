@@ -4,7 +4,11 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
   async function mutate(operation,...args){const result=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation,args});if(!result?.ok)throw new Error(result?.error??'Library storage is unavailable.');return result.result;}
   const $ = (selector) => document.querySelector(selector);
   const linkSaved = 'Link saved. In Galactic Library, allow the Fanatical Library extension ID shown above.';
-  let libraryBusy = false;
+  let libraryBusy = false,wishlist=[],wishlistPage=0;
+  function renderWishlist(){
+    const filtered=wishlist.filter(item=>item.title.toLowerCase().includes($("#wishlist-search").value.toLowerCase())).sort((a,b)=>b.weight-a.weight||a.title.localeCompare(b.title));wishlistPage=Math.min(wishlistPage,Math.max(0,Math.ceil(filtered.length/50)-1));$("#wishlist-count").textContent=`${filtered.length} wishes; page ${wishlistPage+1} of ${Math.max(1,Math.ceil(filtered.length/50))}.`;$("#wishlist-previous").disabled=wishlistPage===0;$("#wishlist-next").disabled=(wishlistPage+1)*50>=filtered.length;
+    $("#wishlist-list").replaceChildren(...filtered.slice(wishlistPage*50,wishlistPage*50+50).map(item=>{const row=document.createElement("li"),remove=document.createElement("button");row.textContent=`${item.title} (${item.mediaType}); weight ${item.weight} `;remove.type="button";remove.textContent="Remove wish";remove.addEventListener("click",async()=>{try{wishlist=await mutate("wishlist","remove",FanaticalLibrary.wishlistKey(item));renderWishlist();}catch(error){$("#wishlist-status").textContent=error.message;}});row.append(remove);return row;}));
+  }
 
   function setLibraryBusy(busy) {
     libraryBusy = busy;
@@ -30,6 +34,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     $('#galactic-status').textContent = extensionId ? linkSaved : 'No Galactic Library link configured.';
     $('#fanatical-extension-id').textContent = chrome.runtime.id;
     $('#show-diagnostics').checked = Boolean(diagnostics);
+    const wishes=await chrome.storage.local.get({fanaticalWishlistItems:[]});wishlist=FanaticalLibrary.normalizeWishlist(wishes.fanaticalWishlistItems);renderWishlist();
     const counts = new Map();
     for (const item of items) counts.set(item.mediaType || 'other', (counts.get(item.mediaType || 'other') || 0) + 1);
     if (counts.size) $('#library-count').textContent += ` ${[...counts].sort().map(([kind, total]) => `${total} ${kind}`).join(', ')}.`;
@@ -91,6 +96,10 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     catch { input.checked = !input.checked; $('#local-status').textContent = 'Could not save the diagnostics setting.'; }
   });
 
+  $('#add-wish').addEventListener('click',async()=>{try{wishlist=await mutate('wishlist','add',[{title:$('#wishlist-title').value,mediaType:$('#wishlist-media').value,weight:Number($('#wishlist-weight').value)}]);$('#wishlist-status').textContent='Wish saved. Ownership was not changed.';$('#wishlist-title').value='';renderWishlist();}catch(error){$('#wishlist-status').textContent=error.message;}});
+  $('#clear-wishlist').addEventListener('click',async()=>{if(!confirm('Clear your local wishlist?'))return;try{wishlist=await mutate('wishlist','replace',[]);renderWishlist();}catch(error){$('#wishlist-status').textContent=error.message;}});
+  $('#wishlist-search').addEventListener('input',()=>{wishlistPage=0;renderWishlist();});$('#wishlist-previous').addEventListener('click',()=>{wishlistPage--;renderWishlist();});$('#wishlist-next').addEventListener('click',()=>{wishlistPage++;renderWishlist();});
+
   $('#open-orders').addEventListener('click', () => {
     chrome.tabs.create({ url: 'https://www.fanatical.com/en/orders' });
   });
@@ -99,9 +108,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     if (libraryBusy) return;
     setLibraryBusy(true);
     try {
-      const { fanaticalLibraryItems: items = [], fanaticalImportSummary: summary = null } = await chrome.storage.local.get({ fanaticalLibraryItems: [], fanaticalImportSummary: null });
-      const scope=await chrome.storage.local.get({fanaticalProfileLabel:'',fanaticalProfileArchives:[]});
-      const backup = createLibraryBackup(items, summary,undefined,scope.fanaticalProfileLabel,scope.fanaticalProfileArchives);
+      const backup=await mutate('backup');
       const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
       const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'fanatical-library-export.json'; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 0);
       $('#local-status').textContent = `Exported ${backup.items.length} local ownership records.`;
