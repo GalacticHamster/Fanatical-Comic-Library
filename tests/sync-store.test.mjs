@@ -32,3 +32,52 @@ test('switches isolate fingerprints and items, preserve previous profiles, and r
   const restored=backupRestoreState(parseLibraryBackup(backup),backup);
   assert.equal(restored.fanaticalProfileArchives[0].profileLabel,'personal');assert.equal(restored.fanaticalProfileArchives[0].items[0].title,'Personal comic');
 });
+
+test('only successful full same-profile scans archive missing products and preserve their first disappearance',async()=>{
+  const f=fixture(),scan=await f.store.execute('begin',[options,1]);
+  await f.store.execute('commit',[scan.token,update,1]);
+  const history=structuredClone(f.state.fanaticalHistoricalItems);
+  assert.equal(history.length,1);assert.equal(history[0].item.title,item.title);assert.equal(history[0].profileLabel,'personal');
+  const repeat=await f.store.execute('begin',[options,1]);await f.store.execute('commit',[repeat.token,update,1]);
+  assert.deepEqual(f.state.fanaticalHistoricalItems,history);
+  const failed=await f.store.execute('begin',[options,1]);await f.store.execute('failure',[failed.token,null,1]);
+  assert.deepEqual(f.state.fanaticalHistoricalItems,history);
+  const quick=await f.store.execute('begin',[{...options,fullScan:false},1]);
+  await f.store.execute('commit',[quick.token,{...update,fanaticalImportSummary:{scanMode:'quick'}},1]);
+  assert.deepEqual(f.state.fanaticalHistoricalItems,history);
+  const returning=await f.store.execute('begin',[{...options,fullScan:false},1]);
+  await f.store.execute('commit',[returning.token,{...update,fanaticalLibraryItems:[item],fanaticalImportSummary:{scanMode:'quick'}},1]);
+  assert.deepEqual(f.state.fanaticalHistoricalItems,[]);
+});
+
+test('quick scans and initial profile assignment never infer missing records',async()=>{
+  const f=fixture(),quick=await f.store.execute('begin',[{...options,fullScan:false},1]);
+  await f.store.execute('commit',[quick.token,{...update,fanaticalImportSummary:{scanMode:'quick'}},1]);
+  assert.deepEqual(f.state.fanaticalHistoricalItems,[]);
+  const legacy=fixture();legacy.state.fanaticalProfileLabel='';
+  const first=await legacy.store.execute('begin',[options,1]);await legacy.store.execute('commit',[first.token,update,1]);
+  assert.deepEqual(legacy.state.fanaticalHistoricalItems,[]);
+});
+
+test('history is profile isolated, safely recoverable, removed on clear and reset by older backups',async()=>{
+  const f=fixture(),scan=await f.store.execute('begin',[options,1]);await f.store.execute('commit',[scan.token,update,1]);
+  f.state.fanaticalHistoricalItems[0].item.key='SECRET';
+  const backup=await f.store.execute('backup');assert.equal(backup.schemaVersion,4);assert.equal(JSON.stringify(backup).includes('SECRET'),false);
+  const switchScan=await f.store.execute('begin',[{...options,profileLabel:'work',switchProfile:true},1]);
+  await f.store.execute('commit',[switchScan.token,update,1]);assert.deepEqual(f.state.fanaticalHistoricalItems,[]);
+  assert.equal(f.state.fanaticalProfileArchives[0].historicalItems[0].item.title,item.title);
+  await f.store.execute('restore',[backup]);assert.equal(f.state.fanaticalHistoricalItems.length,1);
+  const before=structuredClone(f.state),invalid=structuredClone(backup);invalid.historicalItems[0].profileLabel='foreign';
+  await assert.rejects(f.store.execute('restore',[invalid]),/profile/);assert.deepEqual(f.state,before);
+  invalid.historicalItems[0].profileLabel='personal';invalid.historicalItems[0].missingSince='invalid';
+  await assert.rejects(f.store.execute('restore',[invalid]),/date/);assert.deepEqual(f.state,before);
+  await f.store.execute('restore',[{...backup,schemaVersion:3}]);assert.deepEqual(f.state.fanaticalHistoricalItems,[]);
+  await f.store.execute('restore',[backup]);await f.store.execute('clear');assert.equal('fanaticalHistoricalItems' in f.state,false);
+});
+
+test('stale full scans and malformed commits cannot alter current or historical evidence',async()=>{
+  const f=fixture(),old=await f.store.execute('begin',[options,1]),newer=await f.store.execute('begin',[options,1]);
+  const before=structuredClone(f.state);
+  await assert.rejects(f.store.execute('commit',[old.token,update,1]),/superseded/);assert.deepEqual(f.state,before);
+  await assert.rejects(f.store.execute('commit',[newer.token,{...update,fanaticalLibraryItems:[{...item,title:''}]},1]),/invalid/);assert.deepEqual(f.state,before);
+});
