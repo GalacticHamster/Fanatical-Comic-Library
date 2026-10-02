@@ -79,7 +79,7 @@ test('same-work, contains and temporary exact records cannot imply ownership of 
   for (const row of [record({ relationship: 'same-work' }), record(), record({ relationship: 'same-edition', ownership: 'subscription' })]) {
     assert.equal(F.mergeGalactic({ state: 'new' }, { matches: [row] }, product()).state, 'possible');
   }
-  assert.equal(F.mergeGalactic({ state: 'new' }, { matches: [record({ provider: 'fanatical', relationship: 'same-edition' })] }, product()).state, 'new');
+  assert.equal(F.mergeGalactic({ state: 'new' }, { matches: [record({ provider: 'fanatical', relationship: 'same-edition' })] }, product()).state, 'possible');
 });
 test('older title-only book matches remain Possible while compatible identifier evidence can prove an edition', () => {
   const legacy = { matches: [record({ title: 'Saga collection', relationship: undefined })] };
@@ -165,4 +165,22 @@ test('shipped Fanatical requests and resolver integrate with the current Galacti
   const resolved = F.resolveProduct(product(), [], [], () => response.results[0]);
   assert.equal(resolved.coverage.owned, 2);
   assert.equal(resolved.state, 'owned-elsewhere');
+});
+
+
+test('central Fanatical copies remain review-only even if an older response includes forged local item fields',()=>{
+  const copied=record({provider:'fanatical',relationship:'same-edition',item:{sourceItemId:'copied-123456'}}),match=F.mergeGalactic({state:'new'},{matches:[copied]},product());assert.equal(match.state,'possible');assert.equal(match.provenance,'fanatical');assert.match(match.reason,/current local purchase snapshot/);assert(F.explanationLines(match).some(line=>/source authority/.test(line)));
+  const coverage=F.coverageFor(F.offerContents(product()),[],{coverage:{covered:[{...unit(1),evidence:[copied]}]}});assert.equal(coverage.owned,0);
+});
+test('unsuccessful, incompatible, duplicated and malformed API results stay incomplete with safe visible reasons',async()=>{
+  const request={requestId:'one',title:'Title',mediaType:'game'},good={requestId:'one',matches:[]};
+  for(const response of [{ok:false,apiVersion:1,results:[good],error:'SECRET'},{ok:true,apiVersion:2,results:[good]},{ok:true,apiVersion:1,results:[good,good]},{ok:true,apiVersion:1,results:[{...good,matches:[null]}]},{ok:true,apiVersion:1,results:[{...good,matches:[{title:'Title',provider:'Fanatical',ownership:'owned'}]}]},{ok:true,apiVersion:1,results:[]}]){const result=await F.queryGalacticItems([request],async()=>response);assert.equal(result.results.size,0);assert(result.failed.has('one'));assert(result.failures.size>0);assert(!JSON.stringify([...result.failures]).includes('SECRET'));}
+  const success=await F.queryGalacticItems([request],async()=>({ok:true,apiVersion:1,results:[good]}));assert.equal(success.failed.size,0);assert.equal(success.results.size,1);
+});
+
+
+test('software requests require affirmative capability support and pairing discloses supported features safely',async()=>{
+  const software={sourceItemId:'soft-123456',title:'Creative Software',mediaType:'software'};assert.equal(F.galacticRequestItems([software]).length,0);assert.equal(F.galacticRequestItems([software],true)[0].mediaType,'software');const messages=[];
+  const connected=await F.testGalacticLink(async message=>{messages.push(message.type);return message.type==='PING'?{ok:true,apiVersion:1,appVersion:'1.0'}:{ok:true,apiVersion:1,ready:true,capabilities:{mediaTypes:['software','book','unsupported'],reviewedContents:true,entitlementReminders:true,secret:'SECRET'}};});assert.deepEqual(messages,['PING','GET_STATUS']);assert.deepEqual(connected.mediaTypes,['software','book']);assert(connected.entitlementReminders);assert(!JSON.stringify(connected).includes('SECRET'));
+  await assert.rejects(F.testGalacticLink(async()=>({ok:false,apiVersion:1,error:'SECRET'})),/pairing/);
 });

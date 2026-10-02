@@ -4,6 +4,9 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests",
-    "browser-check": "node tests/browser-check.mjs"
+    "browser-check": "node tests/browser-check.mjs",
+    "package": "node scripts/package-release.mjs",
+    "check:package": "node scripts/package-release.mjs --check",
+    "browser-check:release": "node tests/browser-check.mjs --release"
   }
 }

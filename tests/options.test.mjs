@@ -89,7 +89,7 @@ test('Galactic test validates IDs and API compatibility without saving or transf
   const ui = await optionsHarness();
   ui.get('#galactic-id').value = 'invalid'; await ui.click('#test-galactic'); assert.equal(ui.messages.length, 0);
   ui.get('#galactic-id').value = 'b'.repeat(32); await ui.click('#test-galactic');
-  assert.equal(JSON.stringify(ui.messages), JSON.stringify([{ id: 'b'.repeat(32), message: { type: 'PING' } }]));
+  assert.equal(JSON.stringify(ui.messages), JSON.stringify([{ id: 'b'.repeat(32), message: { type: 'PING' } }, { id: 'b'.repeat(32), message: { type: 'GET_STATUS' } }]));
   assert.match(ui.get('#galactic-status').textContent, /Connected/); assert.equal(ui.writes.length, 0);
   ui.config.response.apiVersion = 2; await ui.click('#test-galactic'); assert.match(ui.get('#galactic-status').textContent, /Could not connect/);
   ui.config.failure = true; await ui.click('#test-galactic');

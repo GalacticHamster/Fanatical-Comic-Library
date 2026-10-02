@@ -6,6 +6,10 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import {setTimeout as pause} from 'node:timers/promises';
+import {createRelease} from '../scripts/release.mjs';
+const packaged=process.argv.includes('--release')?await createRelease():null;
+const readRuntime=name=>packaged?packaged.files.get(name)?.toString('utf8')??(()=>{throw Error('Absent runtime '+name);})():fs.readFileSync(new URL('../'+name,import.meta.url),'utf8');
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const chromePath = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
@@ -39,11 +43,13 @@ globalThis.chrome = {runtime:{id:'a'.repeat(32),sendMessage:async(first,second)=
     globalThis.fixtureStore??=createSyncStore(chrome.storage.local);
     try{return {ok:true,result:await fixtureStore.execute(message.operation,message.args)};}catch(error){return {ok:false,error:error.message};}
   }
+  if(message.type==='GET_STATUS')return {ok:true,apiVersion:1,ready:true,capabilities:{mediaTypes:['game','book','audiobook','software'],reviewedContents:true,entitlementReminders:true}};
   if(message.type==='PING')return {ok:true,apiVersion:1,appVersion:'0.1.0'};
   if(message.type==='FANATICAL_IMPORT_PURCHASES'){
     await new Promise(resolve=>setTimeout(resolve,100));
     return scanFailure?{ok:false,error:'Scan incomplete; previous purchases and successful scan history were kept.'}:{ok:true,summary:{ordersScanned:1,ordersSkipped:0,addedProducts:1,ownedLeafProducts:1,historyCoverage:'No pagination metadata: silent server truncation cannot be independently ruled out.'}};
   }
+  if(message.type==='MATCH_ITEMS'&&centralMode==='fanatical')return {ok:true,apiVersion:1,results:message.items.map(item=>({requestId:item.requestId,matches:item.title==='External comic'?[{provider:'fanatical',title:item.title,ownership:'owned',relationship:'same-edition'}]:[]}))};
   if(message.type==='MATCH_ITEMS'&&centralMode==='reject')return {ok:false,apiVersion:1};
   if(message.type==='MATCH_ITEMS'&&centralMode==='legacy')return {ok:true,apiVersion:1,results:message.items.map(item=>({requestId:item.requestId,matches:[]}))};
   if(message.type==='MATCH_ITEMS'&&location.pathname.includes('test-contents'))return {ok:true,apiVersion:1,results:message.items.map(item=>{
@@ -117,11 +123,12 @@ try {
   assert($('#history-note').textContent.includes('Last scan incomplete'),'Incomplete coverage warning missing');
   assert($('#fanatical-extension-id').textContent==='a'.repeat(32),'Own extension ID missing');
   $('#test-galactic').click();await wait();
-  assert($('#galactic-status').textContent.includes('Connected'),'Galactic PING failed');
+  assert($('#galactic-status').textContent.includes('Connected')&&$('#galactic-status').textContent.includes('reviewed contents supported')&&$('#galactic-status').textContent.includes('software'),'Galactic capability test failed');
   $('#show-diagnostics').click();await wait();assert(values.fanaticalShowDiagnostics===true,'Diagnostics setting not saved');
   $('#export').click();await wait();
   const backup=JSON.parse(await exportedBlob.text());assert(backup.items.length===1&&!backup.orderFingerprints,'Export leaked skip history');
   const upload=async text=>{const transfer=new DataTransfer();transfer.items.add(new File([text],'backup.json',{type:'application/json'}));$('#import-file').files=transfer.files;$('#import-file').dispatchEvent(new Event('change'));for(let attempt=0;attempt<8;attempt++){await wait();if(!$('#import-file').disabled)return;}throw new Error('File import did not finish')};
+  $('#export-catalog').click();await wait();const catalog=JSON.parse(await exportedBlob.text());assert(catalog.format==='fanatical-title-catalog'&&!catalog.items[0].bundle&&!catalog.items[0].purchaseDate,'Catalog retained purchase evidence');await upload(JSON.stringify(catalog));assert(values.fanaticalLibraryItems.length===1&&$('#import-status').textContent.includes('failed'),'Catalog was accepted as ownership backup');
   await upload('invalid JSON');assert(values.fanaticalLibraryItems.length===1,'Invalid JSON changed library');
   confirmAnswer=false;await upload(JSON.stringify({schemaVersion:1,items:[]}));assert(values.fanaticalLibraryItems.length===1,'Cancelled restore changed library');
   confirmAnswer=true;backup.items[0].title='Restored comic';await upload(JSON.stringify(backup));
@@ -240,10 +247,10 @@ const server = http.createServer((request, response) => {
   if (url === '/order-check.js') return send('text/javascript', orderChecks);
   if (url === '/contents-check.js') return send('text/javascript', contentsChecks);
   if (url.startsWith('/src/') && /^\/src\/[a-z-]+\.(?:js|mjs|css)$/u.test(url)) {
-    return send(url.endsWith('.css') ? 'text/css' : 'text/javascript', fs.readFileSync(path.join(root, url.slice(1)), 'utf8'));
+    return send(url.endsWith('.css') ? 'text/css' : 'text/javascript', readRuntime(url.slice(1)));
   }
   if (url === '/options') {
-    const html = fs.readFileSync(path.join(root, 'src/options.html'), 'utf8').replace('<head>', '<head><base href="/src/">').replace('<script src="shared.js">', '<script src="/mock.js"></script><script src="shared.js">').replace('</body>', '<script type="module" src="/options-check.js"></script></body>');
+    const html = readRuntime('src/options.html').replace('<head>', '<head><base href="/src/">').replace('<script src="shared.js">', '<script src="/mock.js"></script><script src="shared.js">').replace('</body>', '<script type="module" src="/options-check.js"></script></body>');
     return send('text/html', html);
   }
   if (url === '/en/orders') return send('text/html', '<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"></head><body><main>Mock orders</main><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/content.js"></script><script type="module" src="/order-check.js"></script></body></html>');
@@ -258,17 +265,20 @@ const server = http.createServer((request, response) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
   const allRoutes = ['/options', '/en/bundle/test-comics', '/en/pick-and-mix/test-mix', '/en/bundle/books', '/en/bundle/test-editions', '/en/pick-and-mix/test-editions', '/en/orders', '/en/bundle/test-contents', '/en/pick-and-mix/test-contents'];
-  const routes = process.argv.length > 2 ? process.argv.slice(2) : allRoutes;
+  const selectedRoutes=process.argv.slice(2).filter(arg=>arg!=='--release');const routes=selectedRoutes.length?selectedRoutes:allRoutes;
   if (routes.some(route => !allRoutes.includes(route))) throw new Error('Unknown browser fixture route');
   for (const [index, route] of routes.entries()) {
+    let stopped=Promise.resolve();
     const result = await new Promise((resolve, reject) => {
       const child = spawn(chromePath, ['--headless', '--disable-gpu', '--no-first-run', '--no-default-browser-check', `--user-data-dir=${path.join(profileRoot, String(index))}`, `http://127.0.0.1:${server.address().port}${route}`], { windowsHide: true });
+      stopped=new Promise(resolve=>child.once('exit',resolve));
       child.stdout.resume(); child.stderr.resume();
       const timeout = setTimeout(() => { pendingResults.delete(route); child.kill(); reject(new Error(`Browser check timed out: ${route}`)); }, 25000);
       pendingResults.set(route, result => { clearTimeout(timeout); pendingResults.delete(route); child.kill(); resolve(result); });
       child.on('error', error => { clearTimeout(timeout); pendingResults.delete(route); reject(error); });
     });
-    console.log(JSON.stringify(result));
+    await Promise.race([stopped,pause(3000)]);
+    console.log(JSON.stringify({...result,packaged:Boolean(packaged)}));
     if (!result.ok) process.exitCode = 1;
   }
-} finally { server.close(); }
+} finally { await new Promise(resolve=>server.close(resolve));const target=path.resolve(profileRoot),base=path.resolve(os.tmpdir());if(!target.startsWith(base+path.sep)||!target.slice(base.length+1).startsWith('Fanatical-ui-check-'))throw Error('Unsafe browser cleanup.');fs.rmSync(target,{recursive:true,force:true,maxRetries:5,retryDelay:200}); }

@@ -313,7 +313,7 @@
     };
     if (!contentsIndexCache.has(local)) contentsIndexCache.set(local, build(local));
     const localIndex = contentsIndexCache.get(local);
-    const externalIndex = build([...(result?.coverage?.covered ?? []), ...(result?.coverage?.possibleCovered ?? []).map(entry => ({ ...entry, uncertain: true }))]);
+    const externalIndex = build([...(result?.coverage?.covered ?? []), ...(result?.coverage?.possibleCovered ?? []).map(entry => ({ ...entry, uncertain: true }))].map(entry=>({...entry,central:true})));
     const units = [...new Map(target.entries.filter(entry => entry.completeness === 'full').map(entry => [contentKey(entry), entry])).values()];
     const covered = []; const missing = []; const possibleCovered = [];
     for (const entry of units) {
@@ -321,7 +321,7 @@
       for (const candidate of [...(localIndex.get(unitToken(entry)) ?? []), ...(externalIndex.get(unitToken(entry)) ?? [])]) {
         if (candidate.completeness !== 'full') continue;
         if (entry.run && candidate.run && scopeKey(entry.run) !== scopeKey(candidate.run) || entry.language && candidate.language && scopeKey(entry.language) !== scopeKey(candidate.language)) continue;
-        const evidence = (candidate.evidence ?? []).filter(record => permanent(record) && (record.provider !== 'fanatical' || record.item));
+        const evidence = (candidate.evidence ?? []).filter(record => permanent(record) && (record.provider !== 'fanatical' || !candidate.central));
         if (!candidate.uncertain && entry.run && entry.language && candidate.run && candidate.language && contentKey(entry) === contentKey(candidate)) confirmed.push(...evidence);
         else possible.push(...evidence);
       }
@@ -362,10 +362,12 @@
         else if (coverage?.possibleCovered.length) match = { state: 'possible', provenance: coverage.possibleCovered[0]?.evidence[0]?.provider, reason: 'Potential contents coverage needs run/language confirmation' };
       }
     }
-    return { ...match, offered: product, localMatch: local, externalResult: result, coverage };
+    const centralFanatical=[...(result?.matches??[]),...(result?.possibleMatches??[]),...(result?.partialMatches??[])].filter(record=>record?.provider==='fanatical');
+    if(match.state==='new'&&centralFanatical.length){const record=centralFanatical[0];match={state:'possible',provenance:'fanatical',item:record,ownershipReview:true,reason:'Fanatical copy in Galactic Library: "'+record.title+'". It is absent from the current local purchase snapshot; rescan Fanatical before deciding ownership.'};}
+    return { ...match, offered: product, localMatch: local, externalResult: result, coverage, ...(centralFanatical.length?{centralFanaticalIgnored:true}:{}) };
   }
-  function galacticRequestItems(products) {
-    const supported = new Set(['game', 'book', 'audiobook']);
+  function galacticRequestItems(products,softwareSupported=false) {
+    const supported = new Set(['game', 'book', 'audiobook',...(softwareSupported?['software']:[])]);
     return (Array.isArray(products) ? products : []).filter((product) => product?.sourceItemId && typeof product?.title === 'string' && supported.has(mediaType(product.mediaType))).map((product) => {
       const data = bibliographicFields(product); delete data.publisher;
       const isbn = externalIds(product).isbn; const target = offerContents(product);
@@ -420,23 +422,22 @@
     return resolved;
   }
   async function queryGalacticItems(requests, send, timeoutMs = 3500) {
-    const results = new Map(); const failed = new Set();
-    for (const batch of galacticBatches(requests)) {
-      let timeout;
-      try {
-        const response = await Promise.race([send({ type: 'MATCH_ITEMS', apiVersion: 1, items: batch }), new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('timeout')), timeoutMs); })]);
-        if (!response?.ok || response.apiVersion !== 1 || !Array.isArray(response.results)) throw new Error('Unsuccessful companion lookup');
-        for (const request of batch) {
-          const rows = response.results.filter(result => result?.requestId === request.requestId);
-          const valid = row => Array.isArray(row?.matches) && ['possibleMatches', 'partialMatches'].every(field => row[field] === undefined || Array.isArray(row[field]))
-            && (!row.coverage || typeof row.coverage === 'object' && ['covered', 'possibleCovered', 'missing'].every(field => Array.isArray(row.coverage[field])));
-          if (rows.length !== 1 || !valid(rows[0])) failed.add(request.requestId);
-          else results.set(request.requestId, rows[0]);
+    const results=new Map(),failed=new Set(),failures=new Set();
+    const record=row=>row&&typeof row==='object'&&['steam','gog','epic','amazon-games','audible','kindle','amazon-video','fandango-at-home','kobo','fanatical','humble'].includes(row.provider)&&typeof row.title==='string'&&row.title.trim()&&row.title.length<=500&&['owned','claimed','unknown','subscription','rental','borrowed'].includes(row.ownership)&&(row.relationship===undefined||['same-work','same-edition','contains'].includes(row.relationship));
+    const entries=value=>Array.isArray(value)&&value.length<=2000&&value.every(entry=>entry&&typeof entry.series==='string'&&typeof entry.number==='string'&&Array.isArray(entry.evidence??[])&&(entry.evidence??[]).every(record));
+    for(const batch of galacticBatches(requests)){
+      let timer,reason='Connection unavailable';
+      try{
+        const response=await Promise.race([send({type:'MATCH_ITEMS',apiVersion:1,items:batch}),new Promise((_,reject)=>{timer=setTimeout(()=>{reason='Connection timed out';reject(Error('timeout'));},timeoutMs);})]);
+        if(response?.ok!==true){reason='API response rejected';throw Error(reason);}if(response.apiVersion!==1){reason='Incompatible API version';throw Error(reason);}if(!Array.isArray(response.results)||response.results.length>batch.length){reason='Invalid match response';throw Error(reason);}
+        for(const request of batch){
+          const rows=response.results.filter(row=>row?.requestId===request.requestId),row=rows[0];
+          const valid=rows.length===1&&['matches','possibleMatches','partialMatches'].every(field=>(field!=='matches'&&row[field]===undefined)||Array.isArray(row[field])&&row[field].length<=10000&&row[field].every(record))&&(!row.coverage||Number.isSafeInteger(row.coverage.total)&&Number.isSafeInteger(row.coverage.owned)&&row.coverage.total>=0&&row.coverage.owned>=0&&row.coverage.owned<=row.coverage.total&&typeof row.coverage.complete==='boolean'&&typeof row.coverage.scopeUncertain==='boolean'&&['covered','possibleCovered','missing'].every(field=>entries(row.coverage[field])));
+          if(!valid){failed.add(request.requestId);failures.add('Missing or invalid item response');}else results.set(request.requestId,row);
         }
-      } catch { batch.forEach(request => failed.add(request.requestId)); }
-      finally { clearTimeout(timeout); }
+      }catch{batch.forEach(request=>failed.add(request.requestId));failures.add(reason);}finally{clearTimeout(timer);}
     }
-    return { results, failed };
+    return {results,failed,failures};
   }
 
   function overlayLabel(match) {
@@ -495,7 +496,9 @@
       lines.push(`${label}: ${fields.join(' · ') || 'No bibliographic identity supplied'}`);
     };
     describe('Offered evidence', offered);
-    if (offered.mediaType && !['game', 'book', 'audiobook'].includes(mediaType(offered.mediaType))) lines.push(`Central lookup does not support ${offered.mediaType}; this offer uses local Fanatical evidence only.`);
+    if (offered.mediaType && !['game', 'book', 'audiobook'].includes(mediaType(offered.mediaType))&&!match.externalResult) lines.push(`Central lookup does not support ${offered.mediaType}; this offer uses local Fanatical evidence only.`);
+    if(match.externalResult)lines.push('Local Fanatical purchases are the source authority. Central Fanatical copies are excluded from ownership elsewhere; rescan local orders if the snapshots disagree.');
+    if(match.centralFanaticalIgnored)lines.push('A returned central Fanatical copy was kept for review only and supplied no owned contents.');
     if (match.lookupIncomplete) lines.push('Central lookup incomplete. An unavailable or omitted result is not proof of absence.');
     if (match.contentsLookupIncomplete) lines.push('Central contents coverage was not supplied; unit absence cannot be established from this lookup.');
     lines.push(`Fanatical last successful import: ${lastImport || 'unknown'}. Synced libraries may not cover the entire purchase history.`);
@@ -656,6 +659,15 @@
     return reminders;
   }
 
+  async function companionCall(send,message,timeoutMs=5000){
+    let timer;try{const response=await Promise.race([send(message),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Connection timed out.')),timeoutMs);})]);if(response?.ok!==true)throw Error('Galactic Library rejected the request. Check pairing permission.');if(response.apiVersion!==1)throw Error('Incompatible Galactic Library API version.');return response;}catch(error){if(['Connection timed out.','Galactic Library rejected the request. Check pairing permission.','Incompatible Galactic Library API version.'].includes(error.message))throw error;throw Error('Galactic Library connection unavailable.');}finally{clearTimeout(timer);}
+  }
+  async function galacticCapabilities(send){
+    const status=await companionCall(send,{type:'GET_STATUS'});if(status.ready===false)throw Error('Galactic Library is not ready.');const caps=status.capabilities;
+    return {advertised:Boolean(caps&&typeof caps==='object'),mediaTypes:Array.isArray(caps?.mediaTypes)?caps.mediaTypes.filter(type=>['game','book','audiobook','software'].includes(type)):[],reviewedContents:caps?.reviewedContents===true,entitlementReminders:caps?.entitlementReminders===true};
+  }
+  async function testGalacticLink(send){const ping=await companionCall(send,{type:'PING'}),capabilities=await galacticCapabilities(send);return {appVersion:typeof ping.appVersion==='string'?ping.appVersion.slice(0,40):'',...capabilities};}
+
   function isExtensionId(value) {
     const id = String(value ?? '').trim();
     return /^[a-p]{32}$/u.test(id) || /^[a-z0-9](?:[a-z0-9._+-]*[a-z0-9])?@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/iu.test(id);
@@ -727,5 +739,5 @@
   }
 
   async function storageSet(updates){const response=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'patch',args:[updates]});if(!response?.ok)throw new Error(response?.error??'Settings storage is unavailable.');}
-  global.FanaticalLibrary = { storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
+  global.FanaticalLibrary = { storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
 }(globalThis));

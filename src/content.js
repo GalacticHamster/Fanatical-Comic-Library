@@ -3,7 +3,7 @@
   const F = globalThis.FanaticalLibrary;
   if (!F) return;
   const titleCollator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
-  const state = { url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), requests: new Map(), failed: new Set(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false, showNewOnlyLoaded: false, pickMixReflow: [], summaryDirty: false, summaryMinimized: false, revision: 0 };
+  const state = { capabilityId:null, softwareSupported:false, capabilityFailed:false, url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), requests: new Map(), failed: new Set(), lookupFailures: new Set(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false, showNewOnlyLoaded: false, pickMixReflow: [], summaryDirty: false, summaryMinimized: false, revision: 0 };
   const catalogueState = { items: null, filters: null, rendering: false };
   let observer = null;
   let diagnosticsEnabled = false;
@@ -378,22 +378,27 @@
     const response = await chrome.runtime.sendMessage({ type: 'FANATICAL_GET_PUBLIC_BUNDLE', path: current.endpoint });
     if (!response?.ok) throw new Error(response?.error ?? 'Fanatical bundle data is unavailable.');
     const parsed = parse(response.bundle, current.kind);
-    if (pageUrl === location.href) { state.parsed = parsed; state.url = pageUrl; state.galactic.clear(); state.requests.clear(); state.failed.clear(); }
+    if (pageUrl === location.href) { state.parsed = parsed; state.url = pageUrl; state.capabilityId=null;state.galactic.clear(); state.requests.clear(); state.failed.clear(); }
     return parsed;
   }
 
   async function queryGalactic(products, extensionId) {
     state.galacticEnabled = F.isExtensionId(extensionId);
     if (!state.galacticEnabled) { state.galacticStatus = 'Not configured.'; return; }
-    const requests = [...new Map(F.galacticRequestItems(products).map(request => { request.requestId = requestId(request); return [request.requestId, request]; })).values()].filter(request => !state.galactic.has(request.requestId));
+    const revision=state.revision,pageUrl=location.href;
+    if(state.capabilityId!==extensionId&&products.some(product=>product.mediaType==='software')){
+      state.capabilityId=extensionId;state.softwareSupported=false;state.capabilityFailed=false;
+      try{const capabilities=await F.galacticCapabilities(message=>chrome.runtime.sendMessage(extensionId,message));if(revision!==state.revision||pageUrl!==location.href)return;state.softwareSupported=capabilities.mediaTypes.includes('software');}catch{if(revision!==state.revision||pageUrl!==location.href)return;state.capabilityFailed=true;}
+    }
+    const requests = [...new Map(F.galacticRequestItems(products,state.softwareSupported).map(request => { request.requestId = requestId(request); return [request.requestId, request]; })).values()].filter(request => !state.galactic.has(request.requestId));
+    if(state.capabilityFailed&&!requests.length){state.galacticStatus='Incomplete: capability check failed; software ownership was not checked.';return;}
     if (!requests.length && !state.galactic.size) { state.galacticStatus = 'No unresolved supported items to check; pairing has not been tested on this page.'; return; }
-    const revision = state.revision;
-    const pageUrl = location.href;
     const lookup = await F.queryGalacticItems(requests, message => chrome.runtime.sendMessage(extensionId, message));
     if (revision !== state.revision || pageUrl !== location.href) return;
     for (const [id, result] of lookup.results) { state.galactic.set(id, result); state.failed.delete(id); }
     for (const id of lookup.failed) state.failed.add(id);
-    state.galacticStatus = state.failed.size ? `Incomplete: ${state.failed.size} lookups failed; absence is not established.` : `Available. ${state.galactic.size} items checked; not found means not found in synced libraries.`;
+    state.lookupFailures=lookup.failures;
+    state.galacticStatus = state.capabilityFailed?'Incomplete: software capability check failed.':state.failed.size ? `Incomplete: ${state.failed.size} lookups failed; absence is not established. ${[...state.lookupFailures].join("; ")}.` : `Available. ${state.galactic.size} items checked; not found means not found in synced libraries.`;
   }
 
   function requestId(request) {
@@ -403,13 +408,13 @@
     return state.requests.get(key);
   }
   function externalResult(product) {
-    const request = F.galacticRequestItems([product])[0];
+    const request = F.galacticRequestItems([product],state.softwareSupported)[0];
     return request ? state.galactic.get(requestId(request)) || (state.galacticEnabled ? { matches: [], lookupIncomplete: true } : null) : null;
   }
   function status(product, localItems, localUnits) {
     const result = externalResult(product);
     const match = F.resolveProduct(product, localItems, localUnits, externalResult);
-    if (state.galacticEnabled && (!result || result.lookupIncomplete) && match.state !== 'owned' && ['game', 'book', 'audiobook'].includes(product.mediaType)) {
+    if (state.galacticEnabled && (!result || result.lookupIncomplete) && match.state !== 'owned' && (['game', 'book', 'audiobook'].includes(product.mediaType)||product.mediaType==='software'&&(state.softwareSupported||state.capabilityFailed))) {
       match.lookupIncomplete = true;
       if (match.state === 'new') { match.state = 'unchecked'; match.reason = 'Central lookup incomplete; no absence claim is available.'; }
     }
@@ -705,7 +710,7 @@
     const legend = document.createElement('div'); legend.className = 'fanatical-library-legend';
     for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partial'], ['possible', 'Possible']]) { const chip = document.createElement('span'); chip.className = `fanatical-library-legend-${state}`; chip.textContent = label; legend.append(chip); }
     element.append(legend);
-    if (state.galacticEnabled) { const galactic = document.createElement('p'); galactic.className = 'fanatical-library-galactic-status'; galactic.textContent = `Galactic Library: ${state.galacticStatus}`; galactic.title = 'Galactic Library receives only current Fanatical titles and returns narrow ownership matches from connected providers.'; element.append(galactic); }
+    if (state.galacticEnabled) { const galactic = document.createElement('p'); galactic.className = 'fanatical-library-galactic-status'; galactic.textContent = `Galactic Library: ${state.galacticStatus}`; galactic.title = 'Checks catalog and contents evidence with local Galactic Library. Central Fanatical copies are excluded; rescan local orders if the snapshots disagree.'; element.append(galactic); }
     appendNewOnlyFilter(element);
     if (counts.partial) {
       const partial = document.createElement('p'); partial.className = 'fanatical-library-match-note';

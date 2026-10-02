@@ -71,17 +71,11 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     const id = $('#galactic-id').value.trim(); const button = $('#test-galactic'); const status = $('#galactic-status');
     if (!FanaticalLibrary.isExtensionId(id)) { status.textContent = 'Enter a valid Chrome or Firefox extension ID.'; return; }
     button.disabled = true; status.textContent = 'Testing Galactic Library link…';
-    let timeout;
-    let failure = 'The extension is unavailable or has not allowed Fanatical Library.';
-    try {
-      const response = await Promise.race([
-        chrome.runtime.sendMessage(id, { type: 'PING' }),
-        new Promise((_resolve, reject) => { timeout = setTimeout(() => { failure = 'Connection timed out.'; reject(new Error(failure)); }, 5000); })
-      ]);
-      if (!response?.ok || response.apiVersion !== 1) { failure = 'Galactic Library did not return a compatible API version 1 response.'; throw new Error(failure); }
-      status.textContent = `Connected to Galactic Library${typeof response.appVersion === 'string' ? ` ${response.appVersion.slice(0, 40)}` : ''}.`;
-    } catch { status.textContent = `Could not connect: ${failure} Check the extension ID, enable Galactic Library, and allow the Fanatical Library extension ID shown above.`; }
-    finally { clearTimeout(timeout); button.disabled = false; }
+    try{
+      const capabilities=await FanaticalLibrary.testGalacticLink(message=>chrome.runtime.sendMessage(id,message));
+      status.textContent=`Connected to Galactic Library${capabilities.appVersion?' '+capabilities.appVersion:''}. ${capabilities.advertised?'Media: '+(capabilities.mediaTypes.join(', ')||'none')+'; reviewed contents '+(capabilities.reviewedContents?'supported':'unavailable')+'; entitlement reminders '+(capabilities.entitlementReminders?'supported':'unavailable')+'.':'Capabilities not advertised; newer features remain unconfirmed.'}`;
+    }catch(error){status.textContent='Could not connect: '+error.message+' Check the extension ID, enable Galactic Library, and allow the Fanatical Library extension ID shown above.';}finally{button.disabled=false;}
+
   });
 
   $('#remove-galactic').addEventListener('click', async () => {

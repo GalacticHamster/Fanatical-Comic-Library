@@ -1,0 +1,14 @@
+[
+  "manifest.json",
+  "src/shared.js",
+  "src/service-worker.js",
+  "src/order-importer.mjs",
+  "src/library-data.mjs",
+  "src/content.js",
+  "src/content.css",
+  "src/options.js",
+  "src/options.html",
+  "src/ui.css",
+  "src/popup.js",
+  "src/popup.html"
+]
