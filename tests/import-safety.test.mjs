@@ -3,9 +3,11 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { createHash, webcrypto } from 'node:crypto';
 import test from 'node:test';
-import { safeId, validateScanResult, createSyncStore } from '../src/library-data.mjs';
+import { safeId, validateScanResult, createSyncStore, mergeLibraryItems } from '../src/library-data.mjs';
 
-const source = fs.readFileSync(new URL('../src/service-worker.js', import.meta.url), 'utf8').replace(/^import .*;\r?\n/mu, '');
+import {importFanaticalOrdersInPage} from '../src/order-importer.mjs';
+
+const source = fs.readFileSync(new URL('../src/service-worker.js', import.meta.url), 'utf8').replace(/^import .*;\r?\n/gmu, '');
 const orderId = 'order-123456';
 const fingerprint = (id) => createHash('sha256').update(id).digest('hex');
 const detail = { _id: orderId, status: 'COMPLETE', items: [{ _id: 'bundle-123456', name: 'Bundle', bundles: [{ games: [{ _id: 'product-123456', name: 'New purchase', type: 'game' }] }] }] };
@@ -35,7 +37,7 @@ function harness({ list = [summary], details = { [orderId]: detail }, headers = 
     const mainWorld = vm.runInNewContext(`(${func.toString()})`, page);
     const result = await mainWorld(...args); receipts.push(structuredClone(result)); return [{ result }];
   } } };
-  const worker = vm.runInNewContext(`${source}\n;({ importPurchases, syncStore });`, { chrome, safeId, validateScanResult, createSyncStore });
+  const worker = vm.runInNewContext(`${source}\n;({ importPurchases, syncStore });`, { chrome, safeId, validateScanResult, createSyncStore, mergeLibraryItems, importFanaticalOrdersInPage });
   return { stored, before, writes, paths, receipts, get maxActive() { return maxActive; }, scan: (fullScan = true) => worker.importPurchases({ fullScan,profileLabel:'fixture',confirmed:true }),
     send: (fullScan = true) => new Promise((resolve) => listener({ type: 'FANATICAL_IMPORT_PURCHASES', fullScan,profileLabel:'fixture',confirmed:true }, {id:chrome.runtime.id,url:'https://www.fanatical.com/en/orders',tab:{id:1}}, resolve)) };
 }
@@ -431,4 +433,11 @@ test('5,000 purchases across 100 pages retain every product and finish at bounde
 });
 test('an advertised last page remains mandatory when later headers omit it, and cannot change mid-scan',async()=>{
   for(const changed of [false,true]){let page=0;const run=harness({respond:async()=>{page++;return {status:200,data:[{...summary,_id:'order-'+String(page).padStart(6,'0')}],headers:page===1?{link:'<?page=2>; rel="next", <?page=3>; rel="last"'}:changed?{link:'<?page=2>; rel="last"'}:{}};}});await assert.rejects(run.scan(),/incomplete/);assert.equal(run.writes.length,0);assert.deepEqual(run.stored.fanaticalLibraryItems,run.before.fanaticalLibraryItems);}
+});
+
+
+test('full and quick imports retain separate same-product purchases and multiplicity without raw order identifiers',async()=>{
+  const orders=[1,2].map(n=>{const id='repeat-order-'+n,leaf={...detail.items[0].bundles[0].games[0]};return {summary:{...summary,_id:id,items:[{name:'Bundle '+n,bundles:[{games:Array.from({length:n},()=>({name:leaf.name}))}]}]},detail:{...detail,_id:id,date:'2026-09-0'+n+'T00:00:00Z',items:[{...detail.items[0],name:'Bundle '+n,bundles:[{games:Array.from({length:n},()=>leaf)}]}]}};});
+  const run=harness({respond:async path=>({status:200,data:path==='/api/user/orders'?orders.map(row=>row.summary):orders.find(row=>row.detail._id===path.split('/').at(-1))?.detail})});await run.scan();let item=run.stored.fanaticalLibraryItems[0];assert.equal(run.stored.fanaticalLibraryItems.length,1);assert.equal(item.purchaseOrigins.length,2);assert.deepEqual(item.purchaseOrigins.map(row=>row.quantity),[1,2]);assert.equal(item.bundle.title,'Bundle 2');
+  const third=structuredClone(orders[0]);third.summary._id=third.detail._id='repeat-order-3';third.detail.date='2026-09-03T00:00:00Z';orders.push(third);await run.scan(false);item=run.stored.fanaticalLibraryItems[0];assert.equal(item.purchaseOrigins.length,3);await run.scan(false);assert.equal(run.stored.fanaticalLibraryItems[0].purchaseOrigins.length,3);assert(!JSON.stringify(run.stored).includes('repeat-order'));
 });

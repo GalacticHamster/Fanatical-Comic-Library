@@ -6,6 +6,26 @@ const safeDate = (value) => typeof value === 'string' && !Number.isNaN(Date.pars
 const safeList = (value) => [...new Set((Array.isArray(value) ? value : []).map((entry) => safeText(entry, 40)).filter(Boolean))].sort().slice(0, 30);
 const count = (value) => Number.isFinite(Number(value)) ? Math.max(0, Math.floor(Number(value))) : 0;
 
+function purchaseOrigins(value,strict=false){
+  if(value===undefined)return undefined;
+  if(!Array.isArray(value)||value.length>100000)throw new Error('Invalid purchase origins.');
+  return value.map(origin=>{
+    if(!origin||typeof origin!=='object'||origin.purchaseRef!==undefined&&origin.purchaseRef!==null&&!/^[a-f0-9]{64}$/iu.test(origin.purchaseRef)||!Number.isSafeInteger(origin.quantity??1)||(origin.quantity??1)<1||(origin.quantity??1)>100000)throw new Error('Invalid purchase origin.');
+    if(strict&&(origin.bundle?.sourceItemId&&!safeId(origin.bundle.sourceItemId)||origin.purchaseDate!=null&&!safeDate(origin.purchaseDate)))throw new Error('Invalid purchase provenance.');
+    return {...(origin.purchaseRef?{purchaseRef:origin.purchaseRef.toLowerCase()}:{}),bundle:{sourceItemId:safeId(origin.bundle?.sourceItemId),title:safeText(origin.bundle?.title),...(safeText(origin.bundle?.slug,300)?{slug:safeText(origin.bundle.slug,300)}:{})},purchaseDate:safeDate(origin.purchaseDate),quantity:origin.quantity??1};
+  });
+}
+function mergeProduct(previous,incoming){
+  if(!previous)return incoming;
+  const origins=new Map();
+  for(const item of [previous,incoming])for(const origin of item.purchaseOrigins??[{bundle:item.bundle,purchaseDate:item.purchaseDate,quantity:1}]){
+    const key=origin.purchaseRef?JSON.stringify([origin.purchaseRef,origin.bundle.sourceItemId]):JSON.stringify(['legacy',origin.bundle.sourceItemId,origin.bundle.title,origin.purchaseDate]);origins.set(key,origin);
+  }
+  const latest=Date.parse(previous.purchaseDate)>Date.parse(incoming.purchaseDate)?previous:incoming;
+  return {...latest,purchaseOrigins:[...origins.values()]};
+}
+export function mergeLibraryItems(items){return sanitizeImportResult({items}).items;}
+
 /** Defense in depth: re-allowlist the main-world importer result or backup. */
 export function sanitizeImportResult(value) {
   const input = value && typeof value === 'object' ? value : {};
@@ -17,18 +37,21 @@ export function sanitizeImportResult(value) {
     const externalIds = {};
     if (/^\d{1,16}$/u.test(String(candidate?.externalIds?.steamAppId ?? ''))) externalIds.steamAppId = String(candidate.externalIds.steamAppId);
     if (/^[0-9X]{10,17}$/iu.test(String(candidate?.externalIds?.isbn ?? ''))) externalIds.isbn = String(candidate.externalIds.isbn).toUpperCase();
-    deduplicated.set(sourceItemId, {
+    const projected = {
       source: 'fanatical', sourceItemId, title,
       ...(safeText(candidate?.slug, 300) ? { slug: safeText(candidate.slug, 300) } : {}),
       mediaType: ['game', 'book', 'audiobook', 'software', 'audio', 'elearning', 'other'].includes(candidate?.mediaType) ? candidate.mediaType : 'other',
       ...(Object.keys(externalIds).length ? { externalIds } : {}),
       ...globalThis.FanaticalLibrary.bibliographicFields(candidate),
+      ...globalThis.FanaticalLibrary.contentsMetadata(candidate),
       ...(safeList(candidate?.drm).length ? { drm: safeList(candidate.drm) } : {}),
       ...(safeList(candidate?.platforms).length ? { platforms: safeList(candidate.platforms) } : {}),
       ...(safeList(candidate?.formats).length ? { formats: safeList(candidate.formats) } : {}),
       bundle: { sourceItemId: safeId(candidate?.bundle?.sourceItemId), title: safeText(candidate?.bundle?.title), ...(safeText(candidate?.bundle?.slug, 300) ? { slug: safeText(candidate.bundle.slug, 300) } : {}) },
-      purchaseDate: safeDate(candidate?.purchaseDate)
-    });
+      purchaseDate: safeDate(candidate?.purchaseDate),
+      ...(candidate.purchaseOrigins!==undefined?{purchaseOrigins:purchaseOrigins(candidate.purchaseOrigins)}:{})
+    };
+    deduplicated.set(sourceItemId,mergeProduct(deduplicated.get(sourceItemId),projected));
   }
   return {
     schemaVersion: 1,
@@ -41,11 +64,12 @@ export function sanitizeImportResult(value) {
 }
 
 export function parseLibraryBackup(value) {
-  if (!value || ![1,2].includes(value.schemaVersion) || !Array.isArray(value.items)) throw new Error('Expected a supported Fanatical Library backup with an items array.');
+  if (!value || value.format!==undefined&&value.format!=='fanatical-library-backup' || ![1,2].includes(value.schemaVersion) || !Array.isArray(value.items) || value.items.length>500000) throw new Error('Expected a supported Fanatical Library backup with an items array.');
   if(value.schemaVersion===2&&(typeof value.profileLabel!=='string'||value.profileLabel.length>100||!Array.isArray(value.profileArchives)||value.profileArchives.length>100))throw new Error('Invalid account/profile backup.');
   if (value.items.some((item) => item?.source !== 'fanatical' || !safeId(item?.sourceItemId) || !safeText(item?.title))) {
     throw new Error('The backup contains an invalid Fanatical ownership record. Nothing was imported.');
   }
+  for(const item of value.items){if(item.mediaType!==undefined&&!['game','book','audiobook','software','audio','elearning','other'].includes(item.mediaType))throw new Error('Invalid backup media type.');purchaseOrigins(item.purchaseOrigins,true);}
   return sanitizeImportResult(value).items;
 }
 
@@ -86,7 +110,7 @@ export function createLibraryBackup(items, summary, exportedAt = new Date().toIS
   const scoped={schemaVersion:2,items:sanitizeImportResult({items}).items,profileLabel,profileArchives};
   parseLibraryBackup(scoped);
   const safeArchives=backupRestoreState(scoped.items,scoped).fanaticalProfileArchives;
-  return { ...scoped, exportedAt: safeDate(exportedAt), summary: safeSummary, profileArchives:safeArchives };
+  return { format:'fanatical-library-backup', ...scoped, exportedAt: safeDate(exportedAt), summary: safeSummary, profileArchives:safeArchives };
 }
 
 export function backupRestoreState(items, backup={}) {
@@ -133,4 +157,9 @@ export function createSyncStore(area){
     throw new Error('Unsupported storage operation.');
   }
   return {execute(operation,args=[]){const captured=structuredClone(args);const task=tail.then(()=>operate(operation,captured));tail=task.catch(()=>{});return task;}};
+}
+
+/** Portable catalog metadata deliberately excludes purchase/ownership evidence. */
+export function createTitleCatalog(items){
+  return {format:'fanatical-title-catalog',version:1,items:sanitizeImportResult({items}).items.map(item=>({title:item.title,mediaType:item.mediaType,...(item.externalIds?{externalIds:item.externalIds}:{}),...globalThis.FanaticalLibrary.bibliographicFields(item)}))};
 }

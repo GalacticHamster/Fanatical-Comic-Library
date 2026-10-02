@@ -1,4 +1,4 @@
-import { backupRestoreState, createLibraryBackup, parseLibraryBackup } from './library-data.mjs';
+import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitleCatalog } from './library-data.mjs';
 
 (async function options() {
   async function mutate(operation,...args){const result=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation,args});if(!result?.ok)throw new Error(result?.error??'Library storage is unavailable.');return result.result;}
@@ -8,7 +8,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup } from './l
 
   function setLibraryBusy(busy) {
     libraryBusy = busy;
-    for (const selector of ['#import-file', '#export', '#reset']) $(selector).disabled = busy;
+    for (const selector of ['#import-file', '#export', '#export-catalog', '#reset']) $(selector).disabled = busy;
   }
 
   async function refresh() {
@@ -35,7 +35,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup } from './l
     if (counts.size) $('#library-count').textContent += ` ${[...counts].sort().map(([kind, total]) => `${total} ${kind}`).join(', ')}.`;
     const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
     $('#library-preview').replaceChildren(...[...items].sort((a, b) => collator.compare(a.title, b.title)).slice(0, 50).map((item) => {
-      const row = document.createElement('li'); row.textContent = item.bundle?.title ? `${item.title} — ${item.bundle.title}` : item.title; return row;
+      const row = document.createElement('li'); row.textContent = item.bundle?.title ? `${item.title} — ${item.bundle.title}` : item.title; if(item.purchaseOrigins?.length>1)row.textContent+=` (${item.purchaseOrigins.length} purchase origins)`; return row;
     }));
     $('#preview-note').textContent = items.length ? `Showing ${Math.min(50, items.length)} of ${items.length} items, alphabetically.` : 'Your library is empty. Import purchases or restore a backup to see a preview.';
   }
@@ -113,6 +113,11 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup } from './l
       $('#local-status').textContent = `Exported ${backup.items.length} local ownership records.`;
     } catch { $('#local-status').textContent = 'Could not export the library.'; }
     finally { setLibraryBusy(false); }
+  });
+
+  $('#export-catalog').addEventListener('click',async()=>{
+    if(libraryBusy)return;setLibraryBusy(true);
+    try{const saved=await chrome.storage.local.get({fanaticalLibraryItems:[]}),catalog=createTitleCatalog(saved.fanaticalLibraryItems),link=document.createElement('a');link.href=URL.createObjectURL(new Blob([JSON.stringify(catalog,null,2)],{type:'application/json'}));link.download='fanatical-title-catalog.json';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),0);$('#local-status').textContent='Exported catalog titles and identity metadata only; this is not a recoverable ownership backup.';}catch{$('#local-status').textContent='Could not export the title catalog.';}finally{setLibraryBusy(false);}
   });
 
   $('#reset').addEventListener('click', async () => {

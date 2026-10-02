@@ -43,3 +43,15 @@ test('shared importer sanitizer validates IDs, bounded lists, counts and fingerp
   assert.equal(result.ordersAvailable, 0);
   assert.deepEqual(result.orderFingerprints, ['a'.repeat(64)]);
 });
+
+
+test('all purchase origins round-trip through sanitization, backup and profile archives without secret fields',()=>{
+  const origin=n=>({purchaseRef:String(n).repeat(64),bundle:{sourceItemId:'bundle-00000'+n,title:'Bundle '+n,slug:'bundle-'+n,key:'SECRET'},purchaseDate:'2026-09-0'+n+'T00:00:00Z',quantity:n,orderId:'SECRET'});
+  const owned={...item,purchaseOrigins:[origin(1),origin(2)]};const backup=createLibraryBackup([owned],null,undefined,'personal',[{profileLabel:'other',items:[owned],archivedAt:'2026-10-01'}]);assert.equal(JSON.stringify(backup).includes('SECRET'),false);const restored=backupRestoreState(parseLibraryBackup(backup),backup);assert.equal(restored.fanaticalLibraryItems[0].purchaseOrigins.length,2);assert.equal(restored.fanaticalProfileArchives[0].items[0].purchaseOrigins[1].quantity,2);
+  for(const delta of [{purchaseRef:'invalid'},{quantity:0},{purchaseDate:'invalid'}])assert.throws(()=>parseLibraryBackup({schemaVersion:1,items:[{...item,purchaseOrigins:[{...origin(1),...delta}]}]}));
+});
+
+
+test('portable catalogs are distinct from full recoverable backups and cannot restore ownership',async()=>{
+  const {createTitleCatalog}=await import('../src/library-data.mjs'),catalog=createTitleCatalog([{...item,purchaseOrigins:[{purchaseRef:'a'.repeat(64),bundle:item.bundle,purchaseDate:item.purchaseDate,quantity:1}]}]);assert.equal(catalog.format,'fanatical-title-catalog');assert.equal(catalog.items[0].title,item.title);for(const field of ['source','sourceItemId','bundle','purchaseDate','purchaseOrigins'])assert.equal(field in catalog.items[0],false);assert.throws(()=>parseLibraryBackup(catalog));assert.throws(()=>parseLibraryBackup({...createLibraryBackup([item],null),format:catalog.format}));
+});

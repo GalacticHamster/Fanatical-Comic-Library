@@ -695,7 +695,7 @@
     if (counts.unchecked) heading.textContent += ` · ${counts.unchecked} not checked`;
     appendContentsSummary(element, parsed, matches);
     appendReadingSummary(element, matches);
-    const purchase = (Array.isArray(localItems) ? localItems : []).find((item) => item?.bundle?.sourceItemId === parsed.sourceItemId);
+    const purchase = (Array.isArray(localItems) ? localItems : []).flatMap(item=>item.purchaseOrigins?.length?item.purchaseOrigins:[item]).filter(item=>item?.bundle?.sourceItemId===parsed.sourceItemId).sort((a,b)=>(Date.parse(b.purchaseDate)||0)-(Date.parse(a.purchaseDate)||0))[0];
     if (purchase?.purchaseDate) {
       const notice = document.createElement('p'); notice.className = 'fanatical-library-purchased';
       const date = new Date(purchase.purchaseDate);

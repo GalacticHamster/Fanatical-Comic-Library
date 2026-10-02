@@ -21,8 +21,8 @@ Options now include confirmed JSON backup restore, a naturally ordered
 opt-in bundle/catalogue diagnostics switch. The options page also shows this
 extension's ID for Galactic Library's companion allowlist.
 
-Restoring a version 1 Fanatical backup replaces the local library after
-confirmation, keeping product IDs, matching IDs and purchase provenance.
+Restoring a supported Fanatical backup replaces the local library after
+confirmation, keeping product IDs, matching IDs, every purchase origin and profile archives.
 It clears the last scan summary and order fingerprints so the next quick
 scan checks every completed order. Pairing and display settings are kept.
 Invalid backups are rejected without changing storage; unknown fields are
@@ -54,7 +54,8 @@ fanaticalLibraryItems: Array<{
   source: 'fanatical', sourceItemId, title, slug?, mediaType,
   externalIds?: { steamAppId?, isbn? }, drm?, platforms?, formats?,
   authors?, language?, edition?, series?, run?, volume?, issue?, publisher?,
-  bundle: { sourceItemId, title, slug? }, purchaseDate
+  bundle: { sourceItemId, title, slug? }, purchaseDate,
+  purchaseOrigins?: [{ purchaseRef?, bundle, purchaseDate, quantity }]
 }>
 
 fanaticalImportSummary: {
@@ -73,7 +74,7 @@ fanaticalShowNewItemsOnly: boolean
 fanaticalCatalogueFilters: { hidePurchased, endingSoon }
 ```
 
-The export uses the same allowlisted ownership data; scan fingerprints are
+Recoverable backups and separately labeled portable title catalogs are explained in [backups and purchase origins](docs/backups-and-purchases.md). The export uses the same allowlisted ownership data; scan fingerprints are
 local importer state and are not exported.
 
 ## Edition and package matching

@@ -516,6 +516,7 @@
       lines.push(`Source: ${record.evidence?.source || 'Fanatical purchase import'} · observed ${record.evidence?.checkedAt || 'unknown'} · contents verified ${record.verifiedAt || 'unknown'}`);
       if (item.purchaseDate) lines.push(`Purchase date: ${item.purchaseDate}`);
       if (item.bundle?.title) lines.push(`Purchased bundle: ${item.bundle.title}`);
+      if(item.purchaseOrigins?.length){for(const origin of item.purchaseOrigins.slice(0,100))lines.push(`Purchase origin: ${origin.bundle?.title||'Unknown bundle'}; ${origin.purchaseDate||'date unknown'}; quantity ${origin.quantity||1}${origin.purchaseRef?'':' (legacy provenance)'}.`);if(item.purchaseOrigins.length>100)lines.push(`${item.purchaseOrigins.length-100} more origins retained in backup.`);}
     }
     if (match.coverage?.total) {
       lines.push(`Contents: ${match.coverage.owned}/${match.coverage.total} full units covered.`);
@@ -702,11 +703,12 @@
 
   function purchasedBundleSlugs(items) {
     const bundles = new Map();
-    for (const item of Array.isArray(items) ? items : []) {
-      const bundle = item?.bundle;
-      const slug = String(bundle?.slug ?? '').trim().toLowerCase();
-      if (!/^[a-z0-9-]+$/u.test(slug) || !bundle?.sourceItemId || item?.source !== 'fanatical') continue;
-      if (!bundles.has(slug)) bundles.set(slug, { sourceItemId: String(bundle.sourceItemId), title: String(bundle.title ?? ''), purchaseDate: item.purchaseDate ?? null });
+    for(const item of Array.isArray(items)?items:[]){
+      if(item?.source!=='fanatical')continue;
+      for(const origin of item.purchaseOrigins?.length?item.purchaseOrigins:[item]){
+        const bundle=origin.bundle,slug=String(bundle?.slug??'').trim().toLowerCase();if(!/^[a-z0-9-]+$/u.test(slug)||!bundle?.sourceItemId)continue;
+        const previous=bundles.get(slug);if(!previous||Date.parse(origin.purchaseDate)>Date.parse(previous.purchaseDate))bundles.set(slug,{sourceItemId:String(bundle.sourceItemId),title:String(bundle.title??''),purchaseDate:origin.purchaseDate??null});
+      }
     }
     return bundles;
   }
