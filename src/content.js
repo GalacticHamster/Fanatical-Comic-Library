@@ -853,7 +853,7 @@
     observer?.disconnect();
     if (!hasStableSummary) showPanel('Fanatical Library: loading ownership status…');
     try {
-      const [parsed, stored] = await Promise.all([loadPublicBundle(current), chrome.storage.local.get({ fanaticalLibraryItems: [], fanaticalHistoricalItems: [], fanaticalProfileLabel: '', fanaticalImportSummary: null, galacticLibraryExtensionId: '', fanaticalShowNewItemsOnly: false, fanaticalShowDiagnostics: false })]);
+      const [parsed, stored] = await Promise.all([loadPublicBundle(current), chrome.storage.local.get({ fanaticalLibraryItems: [], fanaticalHistoricalItems: [], fanaticalProfileLabel: '', fanaticalWishlistItems: [], fanaticalImportSummary: null, galacticLibraryExtensionId: '', fanaticalShowNewItemsOnly: false, fanaticalShowDiagnostics: false })]);
       if (revision !== state.revision || pageUrl !== location.href) return;
       state.history = stored.fanaticalProfileLabel ? stored.fanaticalHistoricalItems
         .filter(entry => entry.profileLabel === stored.fanaticalProfileLabel).map(entry => entry.item) : [];

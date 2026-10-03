@@ -34,6 +34,7 @@ const listeners = [];
 globalThis.values = { fanaticalLibraryItems: [{source:'fanatical',sourceItemId:'product-123450',title:'Comic #10',mediaType:'book',bundle:{sourceItemId:'bundle-123456',title:'Test comics',slug:'test-comics'},purchaseDate:null}],galacticLibraryExtensionId:'b'.repeat(32),fanaticalScannedOrderFingerprints:['a'.repeat(64)] };
 if(location.pathname.includes('test-editions')) values.fanaticalLibraryItems=[${JSON.stringify(editionBase)}];
 if(location.pathname.includes('test-contents')) values.fanaticalLibraryItems=[{source:'fanatical',sourceItemId:'owned-issue-123456',title:'Saga #1',mediaType:'book',run:'2020',language:'en'}];
+if(location.pathname.includes('test-contents')) values.fanaticalWishlistItems=JSON.parse(sessionStorage.getItem('fixture-wishlist')||'null')||[{sourceItemId:'contents-product-2',title:'Saga #6',mediaType:'book',weight:7}];
 if(location.pathname==='/options') values.fanaticalLastScanAttempt={status:'incomplete'};
 globalThis.scanFailure = false;
 globalThis.centralMode = 'normal';
@@ -63,7 +64,7 @@ globalThis.chrome = {runtime:{id:'a'.repeat(32),sendMessage:async(first,second)=
   })};
   if(message.type==='MATCH_ITEMS')return {ok:true,apiVersion:1,results:message.items.map(item=>({requestId:item.requestId,matches:item.title==='External comic'?[{provider:'humble',title:'External comic',ownership:'owned',relationship:'same-edition',evidence:{source:'Reviewed same-edition relationship',checkedAt:null}}]:[]}))};
   if(message.type==='FANATICAL_GET_PUBLIC_BUNDLE')return {ok:true,bundle:message.path.includes('test-contents')?(message.path.includes('pick-and-mix')?${JSON.stringify(contentsBundle)}:${JSON.stringify({ ...contentsBundle, products: undefined, tiers: undefined })}):message.path.includes('test-editions')?${JSON.stringify(editionBundle)}:message.path.includes('pick-and-mix')?${JSON.stringify({ ...bundle, products, tiers: [{ quantity: 2, price: { USD: 100 } }] })}:${JSON.stringify(bundle)}};
-}},storage:{local:{get:async defaults=>({...defaults,...values}),set:async changes=>{Object.assign(values,changes); const events={};for(const key in changes)events[key]={newValue:changes[key]};listeners.forEach(listener=>listener(events,'local'));},remove:async key=>{delete values[key];listeners.forEach(listener=>listener({[key]:{newValue:undefined}},'local'));}},onChanged:{addListener:listener=>listeners.push(listener)}},tabs:{create(){}}};
+}},storage:{local:{get:async defaults=>{if(defaults==null)return structuredClone(values);if(typeof defaults==='string')return defaults in values?{[defaults]:structuredClone(values[defaults])}:{};if(Array.isArray(defaults))return Object.fromEntries(defaults.filter(key=>key in values).map(key=>[key,structuredClone(values[key])]));return structuredClone({...defaults,...Object.fromEntries(Object.keys(defaults).filter(key=>key in values).map(key=>[key,values[key]]))});},set:async changes=>{Object.assign(values,changes);if('fanaticalWishlistItems' in changes)sessionStorage.setItem('fixture-wishlist',JSON.stringify(changes.fanaticalWishlistItems)); const events={};for(const key in changes)events[key]={newValue:changes[key]};listeners.forEach(listener=>listener(events,'local'));},remove:async keys=>{const changes={};for(const key of Array.isArray(keys)?keys:[keys]){delete values[key];changes[key]={newValue:undefined};}listeners.forEach(listener=>listener(changes,'local'));}},onChanged:{addListener:listener=>listeners.push(listener)}},tabs:{create(){}}};
 globalThis.confirmAnswer = true;
 globalThis.confirm = () => confirmAnswer;
 globalThis.exportedBlob = null;
@@ -211,6 +212,7 @@ try {
 const contentsChecks = `${common}
 try {
   await wait();
+  if(sessionStorage.getItem('verify-wishlist-reload')){const panel=document.querySelector('.fanatical-library-planning');panel.open=true;panel.querySelector('details').open=true;const goal=panel.querySelector('[aria-label="Purchase planning goal"]');goal.value='wishlist';goal.dispatchEvent(new Event('change'));assert(panel.textContent.includes('5 wishlist points'),'Reload dropped the saved wishlist');assert(panel.querySelector('li[data-product-id="contents-product-2"] input').value==='5','Reload reset saved wishlist weight');finish({ok:true,scenario:'initial/restored/reloaded wishlist and contents planning',route:location.pathname});}else{
   const content=()=>document.querySelector('.fanatical-library-contents');
   assert(content()?.textContent.includes('4 additional · 2 covered · 0 uncertain'),'Distinct bundle unit counts are wrong');
   assert(document.querySelectorAll('.fanatical-library-partial-badge').length===2,'Central and local union coverage did not resolve Partial');
@@ -222,7 +224,10 @@ try {
     assert(content().textContent.includes('Selected items: 1 distinct additional units'),'Selection did not update additional-unit counts');
   } else assert(content().textContent.includes('$1.00 tier: 1 distinct additional units')&&content().textContent.includes('$10.00 tier: 4 distinct additional units'),'Cumulative tier unit counts are wrong');
   const planning=()=>document.querySelector('.fanatical-library-planning');planning().open=true;await wait();planning().querySelector('details').open=true;
-  const wishRow=planning().querySelector('li[data-product-id="contents-product-2"]');wishRow.querySelector('input').value='5';[...wishRow.querySelectorAll('button')].find(button=>button.textContent==='Add wish').click();await wait();
+  const wishRow=planning().querySelector('li[data-product-id="contents-product-2"]');assert(wishRow.querySelector('input').value==='7'&&wishRow.textContent.includes('Save wish weight'),'Saved wishlist was ignored on initial bundle load');
+  const initialGoal=planning().querySelector('[aria-label="Purchase planning goal"]');initialGoal.value='wishlist';initialGoal.dispatchEvent(new Event('change'));assert(planning().textContent.includes('7 wishlist points'),'Initial saved wishlist did not affect purchase value');
+  globalThis.fixtureStore??= (await import('/src/library-data.mjs')).createSyncStore(chrome.storage.local);const savedBackup=(await fixtureStore.execute('backup'));await fixtureStore.execute('wishlist',['replace',[]]);savedBackup.wishlistItems[0].weight=9;await fixtureStore.execute('restore',[savedBackup]);await wait();assert(planning().textContent.includes('9 wishlist points'),'Restored wishlist was ignored by the open bundle');
+  const restoredRow=planning().querySelector('li[data-product-id="contents-product-2"]');restoredRow.querySelector('input').value='5';[...restoredRow.querySelectorAll('button')].find(button=>button.textContent==='Save wish weight').click();await wait();
   assert(values.fanaticalWishlistItems?.length===1&&values.fanaticalWishlistItems[0].weight===5,'Bundle wishlist did not persist');
   const goal=planning().querySelector('[aria-label="Purchase planning goal"]');goal.value='wishlist';goal.dispatchEvent(new Event('change'));assert(planning().textContent.includes('5 wishlist points'),'Wishlist weights did not affect plan value');
   if(location.pathname.includes('pick-and-mix')){assert(planning().querySelector('.fanatical-library-plan-result').textContent.includes('No priced tier'),'Uncertain fillers entered Pick and Mix implicitly');planning().querySelector('label input[type="checkbox"]').click();assert(planning().querySelector('.fanatical-library-plan-result').textContent.includes('$1.00'),'Explicit uncertainty did not produce an available complete Pick and Mix selection');}else assert(planning().querySelector('.fanatical-library-plan-result').textContent.includes('$10.00'),'Wishlist goal did not choose the cheapest containing tier');
@@ -244,7 +249,8 @@ try {
   assert(!document.querySelector('.fanatical-library-buy-recommendation'),'Failed lookups produced a buy recommendation');
   centralMode='normal';reminders().querySelector('button').click();await wait();
   assert(content().textContent.includes('4 additional · 2 covered · 0 uncertain'),'Successful retry did not restore central coverage');
-  finish({ok:true,scenario:'central contents union, distinct unit value, tier/selection counts',route:location.pathname});
+  sessionStorage.setItem('verify-wishlist-reload','true');location.reload();
+  }
 }catch(error){finish({ok:false,error:error.message})}
 `;
 const cards = (kind, items = products) => items.map(product => `<div class="three-column-row"><article class="${kind}"><div class="cover-container"><img alt="${product.name}"><h2 class="card-product-name">${product.name}</h2></div></article></div>`).join('');
