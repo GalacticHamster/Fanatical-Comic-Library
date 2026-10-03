@@ -380,7 +380,7 @@
     if (isbn && compatibleMedia(media, isbn.mediaType ?? isbn.type)) return { state: 'owned', provenance: 'fanatical', item: isbn, reason: 'exact ISBN' };
     const isbnRelated = (indexes.byIsbn.get(ids.isbn) ?? []).find(owned => compatibleMedia(media, owned.mediaType ?? owned.type) && !identityConflicts(item, owned).length);
     if (isbnRelated) return { state: 'possible', provenance: 'fanatical', item: isbnRelated, reason: `Owned "${isbnRelated.title}"; offered "${item.title}". Shared validated ISBN but ${identityConflicts(item, isbnRelated, true).join('; ') || 'edition identity needs review'}.` };
-    if (steamDifference) return packageRelationship(item, steamDifference, 'Shared Steam App ID identifies the base game only');
+    if (steamDifference) return {...packageRelationship(item, steamDifference, 'Shared Steam App ID identifies the base game only'),candidates:[...new Set([steamDifference,...steamMatches.filter(owned=>!identityConflicts(item,owned).length)])]};
     const titleDifference = titleMatches.find((owned) => differentGamePackage(item, owned));
     if (titleDifference) return packageRelationship(item, titleDifference, 'Normalized title hides a package difference');
     if (hasComponents && (steam || exact)) return packageRelationship(item, steam || exact, 'Package component coverage is unknown');
@@ -896,6 +896,12 @@
     return hours ? Number(hours[1]) / 24 : null;
   }
 
+  function normalizeSummaryPreferences(value={},strict=false) {
+    const positions=['bottom-right','bottom-left','top-right','top-left'];
+    if(strict&&(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(key=>!['minimized','position'].includes(key))||Object.hasOwn(value,'minimized')&&typeof value.minimized!=='boolean'||Object.hasOwn(value,'position')&&!positions.includes(value.position)))throw new Error('Invalid bundle summary preferences.');
+    return {minimized:value?.minimized===true,position:positions.includes(value?.position)?value.position:'bottom-right'};
+  }
+
   async function storageSet(updates){const response=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'patch',args:[updates]});if(!response?.ok)throw new Error(response?.error??'Settings storage is unavailable.');}
-  global.FanaticalLibrary = { storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
+  global.FanaticalLibrary = { normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
 }(globalThis));

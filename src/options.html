@@ -12,10 +12,15 @@
         <p id="last-import" role="status"></p>
       </section>
       <section>
-        <h2>Import backup</h2>
-        <p>Choose a Fanatical Library JSON backup exported below. Restoring replaces your local library after confirmation and resets scan history. Your Galactic link and settings are kept. The next quick scan rechecks all completed orders.</p>
-        <input id="import-file" type="file" accept="application/json,.json" aria-label="Import Fanatical Library backup">
-        <p id="import-status" role="status"></p>
+        <h2>Wishlist and priorities</h2>
+        <p>Add titles here or use Wishlist and purchase planning on a bundle. Priority is your preference from 1 to 100; higher priorities matter more in plans. Wishes are separate from ownership and are included in full backups.</p>
+        <label>Title <input id="wishlist-title" maxlength="500"></label>
+        <label>Media <select id="wishlist-media"><option value="book">Book/comic/manga</option><option value="game">Game</option><option value="audiobook">Audiobook</option><option value="software">Software</option></select></label>
+        <label>Priority (1-100) <input id="wishlist-weight" type="number" min="1" max="100" value="1"></label>
+        <button id="add-wish" type="button">Add to wishlist</button><button id="clear-wishlist" type="button">Clear wishlist</button>
+        <label>Find wishes <input id="wishlist-search" type="search"></label>
+        <p id="wishlist-count"></p><button id="wishlist-previous" type="button">Previous wishes</button><button id="wishlist-next" type="button">Next wishes</button>
+        <ol id="wishlist-list"></ol><p id="wishlist-status" role="status"></p>
       </section>
       <section>
         <h2>Galactic Library link</h2>
@@ -34,18 +39,11 @@
         <p id="reminder-status" role="status">Reminders have not been checked.</p><button id="reminder-previous" type="button" disabled>Previous reminders</button><button id="reminder-next" type="button" disabled>Next reminders</button><ol id="reminder-list"></ol>
       </section>
       <section>
-        <h2>Wishlist</h2>
-        <p>Preferences are separate from ownership. Weights influence purchase planning and are saved in full backups.</p>
-        <label>Title <input id="wishlist-title" maxlength="500"></label>
-        <label>Media <select id="wishlist-media"><option value="book">Book/comic/manga</option><option value="game">Game</option><option value="audiobook">Audiobook</option><option value="software">Software</option></select></label>
-        <label>Weight (1-100) <input id="wishlist-weight" type="number" min="1" max="100" value="1"></label>
-        <button id="add-wish" type="button">Add wish</button><button id="clear-wishlist" type="button">Clear wishlist</button>
-        <label>Find wishes <input id="wishlist-search" type="search"></label>
-        <p id="wishlist-count"></p><button id="wishlist-previous" type="button">Previous wishes</button><button id="wishlist-next" type="button">Next wishes</button>
-        <ol id="wishlist-list"></ol><p id="wishlist-status" role="status"></p>
-      </section>
-      <section>
-        <h2>Diagnostics</h2>
+        <h2>Display and diagnostics</h2>
+        <p>Bundle summaries remember their size and corner across visits. You can also change the corner on an expanded summary.</p>
+        <label><input id="summary-minimized" type="checkbox"> Keep bundle summaries minimized</label>
+        <label>Bundle summary position <select id="summary-position"><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option><option value="top-right">Top right</option><option value="top-left">Top left</option></select></label>
+        <p id="summary-preferences-status" role="status"></p>
         <label><input id="show-diagnostics" type="checkbox"> Show bundle and catalogue diagnostics</label>
         <p>Leave this off for a clean bundle summary. Turn it on when troubleshooting loading, matching, or sorting. Diagnostics stay on the page and include only counts, current bundle titles, and match reasons.</p>
       </section>
@@ -57,6 +55,12 @@
         <p>Backup restores ownership, purchase origins, profile archives and wishlist. Title catalog exports only titles and catalog identity; it cannot restore purchase evidence. Pairing, display settings, session tokens and scan fingerprints are excluded from backups. Restores reset scan authority for a safe recheck.</p><p id="local-status" role="status"></p>
         <p id="preview-note"></p>
         <ol id="library-preview"></ol>
+      </section>
+      <section>
+        <h2>Restore backup</h2>
+        <p>Choose a Fanatical Library JSON backup exported below. Restoring replaces your local library and, in full backups, your wishlist after confirmation and resets scan history. Your Galactic link and settings are kept. The next quick scan rechecks all completed orders.</p>
+        <input id="import-file" type="file" accept="application/json,.json" aria-label="Import Fanatical Library backup">
+        <p id="import-status" role="status"></p>
       </section>
       <section>
         <h2>Privacy</h2>

@@ -185,7 +185,8 @@ export function createSyncStore(area){
       await area.remove([...Object.keys(defaults),'fanaticalImportSummary','fanaticalLastScanAttempt',key]);return true;
     }
     if(operation==='patch'){
-      const updates=args[0];if(!updates||Object.keys(updates).some(name=>!['galacticLibraryExtensionId','fanaticalShowDiagnostics','fanaticalShowNewItemsOnly','fanaticalCatalogueFilters'].includes(name)))throw new Error('Unsupported settings patch.');
+      const updates=args[0];if(!updates||Object.keys(updates).some(name=>!['galacticLibraryExtensionId','fanaticalShowDiagnostics','fanaticalShowNewItemsOnly','fanaticalCatalogueFilters','fanaticalSummaryPreferences'].includes(name)))throw new Error('Unsupported settings patch.');
+      if(Object.hasOwn(updates,'fanaticalSummaryPreferences')){const F=globalThis.FanaticalLibrary;F.normalizeSummaryPreferences(updates.fanaticalSummaryPreferences,true);const current=await area.get({fanaticalSummaryPreferences:{}});updates.fanaticalSummaryPreferences=F.normalizeSummaryPreferences({...F.normalizeSummaryPreferences(current.fanaticalSummaryPreferences),...updates.fanaticalSummaryPreferences},true);}
       await area.set(updates);return true;
     }
     if(operation==='unlink'){await area.remove('galacticLibraryExtensionId');return true;}

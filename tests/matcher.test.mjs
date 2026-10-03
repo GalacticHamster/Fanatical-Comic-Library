@@ -153,3 +153,9 @@ test('rebinding removes an obsolete hover-overlay badge before adding the stable
   testContext.FanaticalLibrary.upsertBadge(card, 'product-123456', { state: 'owned' }, host);
   assert.equal(nodes[0].removed, true); assert.equal(nodes.length, 2);
 });
+
+test('shared Steam game editions retain every related purchase for review in either order without proving extras',()=>{
+  const records=[owned({title:'Space Adventure',mediaType:'game',sourceItemId:'base-123456',externalIds:{steamAppId:'42'}}),owned({title:'Space Adventure Gold Edition',mediaType:'game',sourceItemId:'gold-123456',externalIds:{steamAppId:'42'}})];
+  const offered={title:'Space Adventure Deluxe Edition',mediaType:'game',externalIds:{steamAppId:'42'}};
+  for(const library of [records,[...records].reverse()]){const match=F.classify(offered,library);assert.equal(match.state,'possible');assert.deepEqual(new Set(match.candidates.map(item=>item.title)),new Set(records.map(item=>item.title)));const lines=F.explanationLines({...match,offered}).join('\n');for(const item of records)assert.ok(lines.includes(item.title));assert.equal(match.owned,undefined);}
+});

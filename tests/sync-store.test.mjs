@@ -81,3 +81,9 @@ test('stale full scans and malformed commits cannot alter current or historical 
   await assert.rejects(f.store.execute('commit',[old.token,update,1]),/superseded/);assert.deepEqual(f.state,before);
   await assert.rejects(f.store.execute('commit',[newer.token,{...update,fanaticalLibraryItems:[{...item,title:''}]},1]),/invalid/);assert.deepEqual(f.state,before);
 });
+
+test('summary preferences merge through the writer, reject invalid patches atomically, and survive restore and clear outside backups',async()=>{
+  const f=fixture();await f.store.execute('patch',[{fanaticalSummaryPreferences:{position:'top-left'}}]);await f.store.execute('patch',[{fanaticalSummaryPreferences:{minimized:true}}]);assert.deepEqual(f.state.fanaticalSummaryPreferences,{position:'top-left',minimized:true});const before=structuredClone(f.state);
+  for(const value of [{position:'offscreen'},{minimized:'true'},{extra:'private'},null,[]]){await assert.rejects(f.store.execute('patch',[{fanaticalShowDiagnostics:true,fanaticalSummaryPreferences:value}]),/preferences/);assert.deepEqual(f.state,before);}
+  assert.equal(JSON.stringify(await f.store.execute('backup')).includes('fanaticalSummaryPreferences'),false);await f.store.execute('restore',[{schemaVersion:1,items:[item]}]);assert.deepEqual(f.state.fanaticalSummaryPreferences,before.fanaticalSummaryPreferences);await f.store.execute('clear');assert.deepEqual(f.state.fanaticalSummaryPreferences,before.fanaticalSummaryPreferences);
+});

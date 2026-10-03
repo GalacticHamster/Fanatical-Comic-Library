@@ -280,3 +280,9 @@ Run `npm run package:firefox`, extract `dist/FanaticalLibrary-0.1.0-firefox.zip`
 Allow `fanatical-library@galactichamster.com` in Galactic Library and save `galactic-library@galactichamster.com` in Fanatical settings. Use **Test link**. Firefox central review asks the allowed GL extension to open its own options; it needs no native helper or private URL. Older GL versions show toolbar instructions.
 
 `npm run browser-check:firefox` checks all nine packaged DOM fixtures. From the adjacent GalacticLibrary repo, `node tests/firefox.mjs --companions` verifies actual installed pairing and GL/FAN MAIN injection against 200 synthetic purchases over ten pages, a quick scan over eleven pages fetching only one new detail, and rejection of broken pagination. These test isolated profiles and synthetic accounts.
+
+## Companion interface
+
+Bundle summaries use the same status vocabulary, Explain action, evidence dialog sizing, and compact panel controls. Possible and Partial items show the actual related library title, with other candidates available in the summary. Use the corner selector to move the panel; Minimize/Expand and the corner are saved across visits. Settings contains the same display preferences. These device preferences survive ownership restore and clear and stay outside backups. HB key purchases still say Purchased because a key purchase cannot prove destination activation. FAN edition/package captions retain warnings about unverified extras.
+
+Wishlist priorities range from 1 to 100 and affect planning without establishing ownership. FAN full backups include the wishlist; HB exports/restores its wishlist separately and preserves it during ownership restore. Clearing the ownership library preserves wishes in both extensions. Settings begins with imports, wishlist and Galactic Library linking, followed by provider-specific reminders, display, and backup/recovery.

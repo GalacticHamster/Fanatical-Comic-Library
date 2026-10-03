@@ -3,7 +3,7 @@
   const F = globalThis.FanaticalLibrary;
   if (!F) return;
   const titleCollator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
-  const state = { wishlist:[],planGoal:'products',planUncertain:false,planOpen:false,wishOpen:false,offerWishPage:0, capabilityId:null, softwareSupported:false, capabilityFailed:false, url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), requests: new Map(), failed: new Set(), lookupFailures: new Set(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false, showNewOnlyLoaded: false, pickMixReflow: [], summaryDirty: false, summaryMinimized: false, revision: 0 };
+  const state = { wishlist:[],planGoal:'products',planUncertain:false,planOpen:false,wishOpen:false,offerWishPage:0, capabilityId:null, softwareSupported:false, capabilityFailed:false, url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), requests: new Map(), failed: new Set(), lookupFailures: new Set(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false, showNewOnlyLoaded: false, pickMixReflow: [], summaryDirty: false, summaryPreferences:{minimized:false,position:'bottom-right'}, revision: 0 };
   const catalogueState = { items: null, filters: null, rendering: false };
   let observer = null;
   let diagnosticsEnabled = false;
@@ -270,16 +270,8 @@
     host.append(label);
     label.textContent = product.title;
     label.title = product.title;
-    if (['possible', 'partial'].includes(match?.state) && match.item?.title) {
-      label.setAttribute('aria-hidden', 'false');
-      label.classList.add('fanatical-library-card-title-with-match');
-      const note = document.createElement('span'); note.className = 'fanatical-library-card-edition-note';
-      const permanent = !match.item.provider || ['owned', 'claimed'].includes(match.item.ownership);
-      const relation = product.mediaType === 'game' ? (match.state === 'partial' ? `Partial package (${match.owned}/${match.total} components)` : 'Different edition/package; extras not verified')
-        : match.state === 'partial' ? `Partial contents (${match.owned}/${match.total} full units)` : permanent ? 'Related edition; identity needs review' : 'Ownership needs review';
-      note.textContent = `${relation} — ${permanent ? 'owned' : 'library item'}: ${match.item.title}`;
-      note.title = match.reason; label.append(note);
-    }
+    appendRelatedTitles(label,match);
+    if(['possible','partial'].includes(match?.state)){label.setAttribute('aria-hidden','false');label.classList.add('fanatical-library-card-title-with-match');}
   }
 
   function sortPickMixCards() {
@@ -589,6 +581,14 @@
     panel(failed).textContent = message;
   }
 
+  function appendRelatedTitles(host, match) {
+    if(!['possible','partial'].includes(match?.state))return;
+    const records=[match.item,match.localMatch?.item,...(match.historicalItems??[]),...(match.candidates??[]),...(match.localMatch?.candidates??[]),...(match.externalResult?.possibleMatches??[]),...(match.externalResult?.partialMatches??[]),...(match.coverage?.covered??[]).flatMap(entry=>entry.evidence??[])].filter(Boolean);
+    const titles=[...new Set(records.filter(record=>(record.item??record).title).map(record=>{const item=record.item??record,evidence=record.evidence??item;return [item.title,record.provider??'fanatical',item.historical?'previously recorded; access unconfirmed':record.provider?record.ownership??'ownership unconfirmed':'local purchase',evidence.edition,evidence.isbn?.length?'ISBN '+[evidence.isbn].flat().join(', '):''].filter(Boolean).join(' - ');}))];if(!titles.length)return;
+    const note=document.createElement('small');note.className='fanatical-library-related-titles';if(host.classList.contains('fanatical-library-card-title')){note.classList.add('fanatical-library-card-edition-note');}note.textContent=(match.ownershipReview?'Check ownership: ':'Related library item: ')+titles[0];if(host.classList.contains('fanatical-library-card-title')){const relation=match.state==='partial'?(match.offered?.mediaType==='game'?'Partial package ('+match.owned+'/'+match.total+' components)':'Partial contents ('+match.owned+'/'+match.total+' full units)'):match.offered?.mediaType==='game'?'Different edition/package; extras not verified':'Identity needs review';note.textContent+=' - '+relation;}note.title=titles.join('; ');host.append(note);
+    if(titles.length>1&&host.tagName==='LI'){const details=document.createElement('details'),heading=document.createElement('summary');heading.textContent='Other related items ('+(titles.length-1)+')';details.append(heading);const list=document.createElement('ul');for(const title of titles.slice(1)){const row=document.createElement('li');row.textContent=title;list.append(row);}details.append(list);host.append(details);}
+  }
+
   function appendSummaryControls(summary) {
     const controls = document.createElement('div');
     controls.className = 'fanatical-library-summary-controls';
@@ -602,24 +602,31 @@
     expand.className = 'fanatical-library-summary-expand';
     expand.textContent = 'Fanatical Library — Expand';
     expand.setAttribute('aria-label', 'Expand Fanatical Library bundle summary');
+    const position=document.createElement('select');position.setAttribute('aria-label','Bundle summary position');
+    for(const [value,label]of [['bottom-right','Bottom right'],['bottom-left','Bottom left'],['top-right','Top right'],['top-left','Top left']]){const option=document.createElement('option');option.value=value;option.textContent=label;position.append(option);}
+    const status=document.createElement('small');status.setAttribute('role','status');status.hidden=true;
+    const persist=()=>F.storageSet({fanaticalSummaryPreferences:{...state.summaryPreferences}}).catch(error=>{status.hidden=false;status.textContent='Could not save panel preferences: '+error.message;});
+    position.addEventListener('change',()=>{state.summaryPreferences.position=position.value;update();persist();});
+    summary.addEventListener('fanatical-summary-preferences',()=>update());
     const update = () => {
-      summary.classList.toggle('fanatical-library-summary-minimized', state.summaryMinimized);
-      minimize.hidden = state.summaryMinimized;
-      expand.hidden = !state.summaryMinimized;
-      minimize.setAttribute('aria-expanded', String(!state.summaryMinimized));
-      expand.setAttribute('aria-expanded', String(!state.summaryMinimized));
+      summary.classList.toggle('fanatical-library-summary-minimized', state.summaryPreferences.minimized);
+      summary.dataset.position=state.summaryPreferences.position;position.value=state.summaryPreferences.position;position.hidden=state.summaryPreferences.minimized;
+      minimize.hidden = state.summaryPreferences.minimized;
+      expand.hidden = !state.summaryPreferences.minimized;
+      minimize.setAttribute('aria-expanded', String(!state.summaryPreferences.minimized));
+      expand.setAttribute('aria-expanded', String(!state.summaryPreferences.minimized));
     };
     minimize.addEventListener('click', () => {
-      state.summaryMinimized = true;
-      update();
+      state.summaryPreferences.minimized = true;
+      update();persist();
       expand.focus();
     });
     expand.addEventListener('click', () => {
-      state.summaryMinimized = false;
-      update();
+      state.summaryPreferences.minimized = false;
+      update();persist();
       minimize.focus();
     });
-    controls.append(minimize, expand);
+    controls.append(position,minimize, expand,status);
     summary.prepend(controls);
     update();
   }
@@ -709,7 +716,7 @@
       element.append(notice);
     }
     const legend = document.createElement('div'); legend.className = 'fanatical-library-legend';
-    for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partial'], ['possible', 'Possible']]) { const chip = document.createElement('span'); chip.className = `fanatical-library-legend-${state}`; chip.textContent = label; legend.append(chip); }
+    for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partial'], ['possible', 'Possible'], ['unchecked', 'Not checked']]) { const chip = document.createElement('span'); chip.className = `fanatical-library-legend-${state}`; chip.textContent = label; legend.append(chip); }
     element.append(legend);
     if (state.galacticEnabled) { const galactic = document.createElement('p'); galactic.className = 'fanatical-library-galactic-status'; galactic.textContent = `Galactic Library: ${state.galacticStatus}`; galactic.title = 'Checks catalog and contents evidence with local Galactic Library. Central Fanatical copies are excluded; rescan local orders if the snapshots disagree.'; element.append(galactic); }
     appendNewOnlyFilter(element);
@@ -756,15 +763,15 @@
       tierDownload = document.createElement('button'); tierDownload.type = 'button'; tierDownload.className = 'fanatical-library-download'; tierDownload.textContent = 'Download complete tier list'; tierDownload.addEventListener('click', () => downloadTierList(parsed, matches));
     }
     if (detail || rates) { const extra = document.createElement('div'); extra.textContent = `${detail}${rates ? ` USD: ${rates}.` : ''}`; element.append(extra); }
-    for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'Not found'], ['partial', 'Partially owned'], ['possible', 'Possible matches'], ['unchecked', 'Not checked']]) {
+    for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partial'], ['possible', 'Possible matches'], ['unchecked', 'Not checked']]) {
       const entries = parsed.products.filter((_product, index) => (state === 'owned-elsewhere' ? matches[index].state === 'owned-elsewhere' : matches[index].state === state));
       if (!entries.length) continue;
       const detailList = document.createElement('details'); detailList.className = 'fanatical-library-title-list'; const title = document.createElement('summary'); title.textContent = `${label} (${entries.length})`; detailList.append(title); const list = document.createElement('ol'); alphabetize(entries).forEach((product) => {
         const match = matches[parsed.products.findIndex((candidate) => candidate.sourceItemId === product.sourceItemId)];
         const row = document.createElement('li');
-        const inspect = document.createElement('button'); inspect.type = 'button'; inspect.className = 'fanatical-library-inspect'; inspect.textContent = product.title;
-        inspect.addEventListener('click', () => showEvidence(match, inspect)); row.append(inspect);
-        if (['possible', 'partial'].includes(match?.state) && match.item?.title) row.append(` — ${match.reason}`);
+        const inspect = document.createElement('button'); inspect.type = 'button'; inspect.className = 'fanatical-library-inspect'; inspect.textContent = 'Explain';inspect.setAttribute('aria-label','Explain '+product.title);
+        inspect.addEventListener('click', () => showEvidence(match, inspect)); row.append(document.createTextNode(product.title+' '),inspect);
+        appendRelatedTitles(row,match);
         list.append(row);
       }); detailList.append(list); element.append(detailList);
     }
@@ -853,10 +860,11 @@
     observer?.disconnect();
     if (!hasStableSummary) showPanel('Fanatical Library: loading ownership status…');
     try {
-      const [parsed, stored] = await Promise.all([loadPublicBundle(current), chrome.storage.local.get({ fanaticalLibraryItems: [], fanaticalHistoricalItems: [], fanaticalProfileLabel: '', fanaticalWishlistItems: [], fanaticalImportSummary: null, galacticLibraryExtensionId: '', fanaticalShowNewItemsOnly: false, fanaticalShowDiagnostics: false })]);
+      const [parsed, stored] = await Promise.all([loadPublicBundle(current), chrome.storage.local.get({ fanaticalLibraryItems: [], fanaticalHistoricalItems: [], fanaticalProfileLabel: '', fanaticalWishlistItems: [], fanaticalImportSummary: null, galacticLibraryExtensionId: '', fanaticalShowNewItemsOnly: false, fanaticalShowDiagnostics: false,fanaticalSummaryPreferences:{} })]);
       if (revision !== state.revision || pageUrl !== location.href) return;
       state.history = stored.fanaticalProfileLabel ? stored.fanaticalHistoricalItems
         .filter(entry => entry.profileLabel === stored.fanaticalProfileLabel).map(entry => entry.item) : [];
+      state.summaryPreferences=F.normalizeSummaryPreferences(stored.fanaticalSummaryPreferences);
       state.wishlist=F.normalizeWishlist(stored.fanaticalWishlistItems);
       state.lastImport = stored.fanaticalImportSummary?.importedAt || null;
       diagnosticsEnabled = Boolean(stored.fanaticalShowDiagnostics);
@@ -941,6 +949,7 @@
   observer.observe(document.documentElement, { childList: true, subtree: true });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
+    if(changes.fanaticalSummaryPreferences){state.summaryPreferences=F.normalizeSummaryPreferences(changes.fanaticalSummaryPreferences.newValue);document.querySelector('[data-fanatical-library-summary]')?.dispatchEvent(new Event('fanatical-summary-preferences'));}
     if(changes.fanaticalWishlistItems)state.summaryDirty=true;
     if (changes.fanaticalLibraryItems || changes.fanaticalHistoricalItems || changes.fanaticalProfileLabel || changes.galacticLibraryExtensionId) {
       state.summaryDirty = true; state.revision++; state.galactic.clear(); state.failed.clear();
