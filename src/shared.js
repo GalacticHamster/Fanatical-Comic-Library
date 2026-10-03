@@ -409,9 +409,12 @@
   function identityConflicts(candidate, owned, edition = false) {
     const left = bibliographicFields(candidate); const right = bibliographicFields(owned.evidence ? { ...owned.evidence, title: owned.title } : owned);
     const reasons = [];
+    const offeredIsbn = externalIds(candidate).isbn;
+    const supplied = owned.evidence?.isbn;
+    const ownedIsbns = [externalIds(owned).isbn, ...(Array.isArray(supplied) ? supplied : [supplied])].map(validIsbn).filter(Boolean);
     const authors = global.LibraryMatchingPolicy.authorRelation(left.authors,right.authors);
     if (authors === 'different') reasons.push('Different known authors');
-    if (edition && authors === 'variant') reasons.push('Author name variation needs review');
+    if (edition && authors === 'variant' && !(offeredIsbn && ownedIsbns.includes(offeredIsbn))) reasons.push('Author name variation needs review');
     for (const field of ['run', 'issue', 'volume', ...(edition ? ['series', 'edition', 'language'] : [])]) {
       const normalize = ['volume', 'issue'].includes(field) ? global.LibraryMatchingPolicy.unitKey : scopeKey;
       if (left[field] && right[field] && normalize(left[field]) !== normalize(right[field])) reasons.push(`Different ${field}`);
@@ -425,10 +428,7 @@
     if (edition) {
       const limited = title => /\b(?:preview|sample|excerpt|read\s+now|demo|trial)\b/iu.test(title);
       if (limited(candidate.title) !== limited(owned.title)) reasons.push('Preview/sample and full-product access differ');
-      const l = externalIds(candidate).isbn;
-      const supplied=owned.evidence?.isbn;
-      const r=[externalIds(owned).isbn,...(Array.isArray(supplied)?supplied:[supplied])].map(validIsbn).filter(Boolean);
-      if (l && r.length && !r.includes(l)) reasons.push('Different validated ISBNs');
+      if (offeredIsbn && ownedIsbns.length && !ownedIsbns.includes(offeredIsbn)) reasons.push('Different validated ISBNs');
       if (editionBase(candidate.title) === editionBase(owned.title) && normalizeTitle(candidate.title) !== normalizeTitle(owned.title)
         && (mediaType(candidate.mediaType) !== 'game' || gamePackageIdentity(candidate.title) !== gamePackageIdentity(owned.title))) reasons.push('Different edition/package wording');
     }
