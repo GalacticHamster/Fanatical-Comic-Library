@@ -149,7 +149,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
 
   $('#reset').addEventListener('click', async () => {
     if (libraryBusy) return;
-    if (!confirm('Clear every locally stored Fanatical title, scan history, and import summary?')) return;
+    if (!confirm('Clear every locally stored Fanatical title, scan history, profile archives, and import summary? Your wishlist, display preferences and Galactic Library link will be kept.')) return;
     setLibraryBusy(true);
     try {
       await mutate('clear');
