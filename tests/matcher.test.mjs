@@ -89,7 +89,7 @@ test('only explicitly enumerable collections may be partial', () => {
   const result = F.classify({ title: 'Trilogy', mediaType: 'book', components: [
     { sourceItemId: 'product-123456', title: 'One', mediaType: 'book' },
     { sourceItemId: 'other-123456', title: 'Two', mediaType: 'book' }
-  ] }, [owned()]);
+  ] }, [owned({title:'One',mediaType:'book'})]);
   assert.deepEqual(JSON.parse(JSON.stringify(result)), { state: 'partial', provenance: 'fanatical', owned: 1, total: 2, reason: 'some enumerable components owned' });
 });
 

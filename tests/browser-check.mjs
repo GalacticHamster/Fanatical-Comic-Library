@@ -286,7 +286,7 @@ try {
   assert(reminders()?.textContent.includes('unknown ownership')&&reminders().textContent.includes('Observation date unavailable'),'Central ownership/freshness reminders missing');
   centralMode='legacy';reminders().querySelector('button').click();await wait();
   assert(content()?.textContent.includes('0 additional'),'Legacy title lookup falsely established unit absence');
-  assert(reading().textContent.includes('issue 7: Not checked'),'Missing central contents capability falsely established a reading gap');
+  assert(reading().textContent.includes('issue 7: Check incomplete'),'Missing central contents capability falsely established a reading gap');
   centralMode='reject';reminders().querySelector('button').click();await wait();
   assert(document.querySelectorAll('.fanatical-library-unchecked-badge').length===3,'Failed lookups were presented as New');
   assertBadgesVisible();

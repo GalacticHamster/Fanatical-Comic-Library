@@ -398,14 +398,14 @@
       try{const capabilities=await F.galacticCapabilities(message=>chrome.runtime.sendMessage(extensionId,message));if(revision!==state.revision||pageUrl!==location.href)return;state.softwareSupported=capabilities.mediaTypes.includes('software');}catch{if(revision!==state.revision||pageUrl!==location.href)return;state.capabilityFailed=true;}
     }
     const requests = [...new Map(F.galacticRequestItems(products,state.softwareSupported).map(request => { request.requestId = requestId(request); return [request.requestId, request]; })).values()].filter(request => !state.galactic.has(request.requestId));
-    if(state.capabilityFailed&&!requests.length){state.galacticStatus='Incomplete: capability check failed; software ownership was not checked.';return;}
+    if(state.capabilityFailed&&!requests.length){state.galacticStatus='Check incomplete: capability check failed; software ownership is unresolved.';return;}
     if (!requests.length && !state.galactic.size) { state.galacticStatus = 'No unresolved supported items to check; pairing has not been tested on this page.'; return; }
     const lookup = await F.queryGalacticItems(requests, message => chrome.runtime.sendMessage(extensionId, message));
     if (revision !== state.revision || pageUrl !== location.href) return;
     for (const [id, result] of lookup.results) { state.galactic.set(id, result); state.failed.delete(id); }
     for (const id of lookup.failed) state.failed.add(id);
     state.lookupFailures=lookup.failures;
-    state.galacticStatus = state.capabilityFailed?'Incomplete: software capability check failed.':state.failed.size ? `Incomplete: ${state.failed.size} lookups failed; absence is not established. ${[...state.lookupFailures].join("; ")}.` : `Available. ${state.galactic.size} items checked; not found means not found in synced libraries.`;
+    state.galacticStatus = state.capabilityFailed?'Incomplete: software capability check failed.':state.failed.size ? `Check incomplete: ${state.failed.size} ownership checks failed; these items may already be owned. ${[...state.lookupFailures].join("; ")}.` : `Available. ${state.galactic.size} items checked; not found means not found in synced libraries.`;
   }
 
   function requestId(request) {
@@ -423,7 +423,7 @@
     const match = F.resolveProduct(product, localItems, localUnits, externalResult, 0, state.history);
     if (state.galacticEnabled && (!result || result.lookupIncomplete) && match.state !== 'owned' && (['game', 'book', 'audiobook'].includes(product.mediaType)||product.mediaType==='software'&&(state.softwareSupported||state.capabilityFailed))) {
       match.lookupIncomplete = true;
-      if (match.state === 'new') { match.state = 'unchecked'; match.reason = 'Central lookup incomplete; no absence claim is available.'; }
+      if (match.state === 'new') { match.state = 'unchecked'; match.reason = 'No local match found. Galactic Library could not complete the ownership check; this item may already be owned.'; }
     }
     return match;
   }
@@ -719,7 +719,12 @@
     const element = panel();
     const heading = document.createElement('strong'); heading.textContent = `Your Fanatical items: ${counts.owned} owned${counts.elsewhere ? ` · ${counts.elsewhere} elsewhere` : ''} · ${counts.new} new${counts.possible ? ` · ${counts.possible} possible` : ''}`; element.append(heading);
     heading.textContent = `Your Fanatical items: ${counts.owned} owned${counts.elsewhere ? ` \u00b7 ${counts.elsewhere} elsewhere` : ''} \u00b7 ${counts.new} new${counts.partial ? ` \u00b7 ${counts.partial} partial` : ''}${counts.possible ? ` \u00b7 ${counts.possible} possible` : ''}`;
-    if (counts.unchecked) heading.textContent += ` · ${counts.unchecked} not checked`;
+    if (counts.unchecked) heading.textContent += ` · ${counts.unchecked} check incomplete`;
+    if (counts.unchecked) {
+      const explanation = document.createElement('p');
+      explanation.textContent = 'Check incomplete: no local match found, but Galactic Library could not finish checking. These items may already be owned. Retry Galactic Library checks to resolve them.';
+      element.append(explanation);
+    }
     appendContentsSummary(element, parsed, matches);
     element.append(F.createPurchasePlanning(parsed,matches,state));
     appendReadingSummary(element, matches);
@@ -731,7 +736,7 @@
       element.append(notice);
     }
     const legend = document.createElement('div'); legend.className = 'fanatical-library-legend';
-    for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partial'], ['possible', 'Possible'], ['unchecked', 'Not checked']]) { const chip = document.createElement('span'); chip.className = `fanatical-library-legend-${state}`; chip.textContent = label; legend.append(chip); }
+    for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partial'], ['possible', 'Possible'], ['unchecked', 'Check incomplete']]) { const chip = document.createElement('span'); chip.className = `fanatical-library-legend-${state}`; chip.textContent = label; legend.append(chip); }
     element.append(legend);
     if (state.galacticEnabled) {
       const galactic = document.createElement('p'); galactic.className = 'fanatical-library-galactic-status'; galactic.textContent = `Galactic Library: ${state.galacticStatus}`; galactic.title = 'Checks catalog and contents evidence with local Galactic Library. Central Fanatical copies are excluded; rescan local orders if the snapshots disagree.'; element.append(galactic);
@@ -794,7 +799,7 @@
       tierDownload = document.createElement('button'); tierDownload.type = 'button'; tierDownload.className = 'fanatical-library-download'; tierDownload.textContent = 'Download complete tier list'; tierDownload.addEventListener('click', () => downloadTierList(parsed, matches));
     }
     if (detail || rates) { const extra = document.createElement('div'); extra.textContent = `${detail}${rates ? ` USD: ${rates}.` : ''}`; element.append(extra); }
-    for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partial'], ['possible', 'Possible matches'], ['unchecked', 'Not checked']]) {
+    for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partial'], ['possible', 'Possible matches'], ['unchecked', 'Check incomplete']]) {
       const entries = parsed.products.filter((_product, index) => (state === 'owned-elsewhere' ? matches[index].state === 'owned-elsewhere' : matches[index].state === state));
       if (!entries.length) continue;
       const detailList = document.createElement('details'); detailList.className = 'fanatical-library-title-list'; const title = document.createElement('summary'); title.textContent = `${label} (${entries.length})`; detailList.append(title); const list = document.createElement('ol'); alphabetize(entries).forEach((product) => {
@@ -858,7 +863,7 @@
           return Number.isFinite(a) && Number.isFinite(b) ? a - b : titleCollator.compare(left.number, right.number);
         });
         for (const entry of ordered.slice(0, 100)) {
-          const id = F.contentKey(entry); const status = confirmed.has(id) ? 'Covered' : possible.has(id) ? 'Possible coverage' : row.lookupIncomplete ? 'Not checked' : 'Not confirmed covered';
+          const id = F.contentKey(entry); const status = confirmed.has(id) ? 'Covered' : possible.has(id) ? 'Possible coverage' : row.lookupIncomplete ? 'Check incomplete' : 'Not confirmed covered';
           const item = document.createElement('li'); item.textContent = `${entry.unitType} ${entry.number}: ${status}${row.offeredKeys.has(id) ? ' · offered here' : ' · not offered here'}`; list.append(item);
         }
         if (ordered.length > 100) { const item = document.createElement('li'); item.textContent = `${ordered.length - 100} more compared units`; list.append(item); }

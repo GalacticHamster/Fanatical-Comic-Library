@@ -4,7 +4,7 @@
   const summary=()=>document.querySelector('.fanatical-library-summary');
   try{
     await until(()=>summary()?.querySelector('.fanatical-library-summary-controls'));
-    assert(!document.querySelector('.fanatical-library-unchecked-badge'),'A valid slow GL response was turned into Not checked');
+    assert(!document.querySelector('.fanatical-library-unchecked-badge'),'A valid slow GL response was turned into Check incomplete');
     assert(document.querySelector('.fanatical-library-owned-badge')&&document.querySelector('.fanatical-library-owned-elsewhere-badge'),'Slow central ownership erased local purchases or failed to show external ownership');
     assertBadgesVisible();
     assert(summary().classList.contains('fanatical-library-summary-minimized')&&summary().dataset.position==='top-left','Slow lookup reset the saved summary preferences');

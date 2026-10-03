@@ -1,3 +1,112 @@
+// BEGIN SHARED MATCHING POLICY
+(function installLibraryMatchingPolicy(global) {
+  'use strict';
+  const roman = { i: 1, ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7, viii: 8, ix: 9, x: 10 };
+  function presentationTitle(value, kind = 'book') {
+    let title = String(value ?? '').normalize('NFKC').toLowerCase().trim();
+    if (kind === 'book') {
+      const format = /\s+(?:[\[(]\s*)?(?:pdf|cbz|cbr|epub|mobi|kindle|tp|tpb|hc|hardcover|paperback|trade paperback|digital edition)(?:\s*[\])])?\s*$/iu;
+      while (format.test(title)) title = title.replace(format, '').trim();
+    }
+    return title.replace(/&/gu, ' and ').replace(/\bvolume\b|\bvol\.?\b/giu, ' vol ')
+      .replace(/['\u2018\u2019\u0060]/gu, '')
+      .replace(/\d+(?:[.\-\u2013\u2014]\d+)+|[^\p{L}\p{N}\p{M}+#/]+/gu,
+        part => /^\d/u.test(part) ? part.replace(/[\u2013\u2014]/gu, '-') : ' ')
+      .replace(/\b(vol|issue)\s+(i|ii|iii|iv|v|vi|vii|viii|ix|x)\b/gu, (_match, unit, number) => unit + ' ' + roman[number])
+      .replace(/\s+/gu, ' ').trim();
+  }
+  function ownershipTitleKeys(title, kind = 'book') {
+    const keys = [presentationTitle(title, kind)];
+    if (kind === 'book' && /\s*\(plus extra content\)\s*$/iu.test(title)) {
+      keys.push(presentationTitle(String(title).replace(/\s*\(plus extra content\)\s*$/iu, ''), kind));
+    }
+    return [...new Set(keys.filter(Boolean))];
+  }
+  function fullTitleMatches(offered, stored, kind = 'book') {
+    const key = presentationTitle(offered, kind);
+    return Boolean(key && ownershipTitleKeys(stored, kind).includes(key));
+  }
+  function relatedPresentationReason(left, right, kind = 'book') {
+    const a = presentationTitle(left, kind), b = presentationTitle(right, kind);
+    if (!a || !b || a === b) return '';
+    const articles = value => value.replace(/\b(?:the|a|an)\b/gu, ' ').replace(/\s+/gu, ' ').trim();
+    if (articles(a) && articles(a) === articles(b)) return 'The titles differ by an article; compare the library title.';
+    const accents = value => value.normalize('NFD').replace(/[\u0300-\u036f]/gu, '').normalize('NFC');
+    if (accents(a) === accents(b)) return 'The titles differ in accents; identity needs review.';
+    const numbering = value => value.replace(/(?<=\d)[.\-/](?=\d)/gu, ' ');
+    if (numbering(a) === numbering(b)) return 'Numbering punctuation differs; review the library item.';
+    const numerals = value => value.replace(/\b(i|ii|iii|iv|v|vi|vii|viii|ix|x)\b/gu, word => roman[word]);
+    if (numerals(a) === numerals(b)) return 'The titles differ in general Roman numeral wording; identity needs review.';
+    return '';
+  }
+  function relatedTitleKeys(value, kind = 'book') {
+    const title = presentationTitle(value, kind);
+    return [...new Set([
+      title.replace(/\b(?:the|a|an)\b/gu, ' ').replace(/\s+/gu, ' ').trim(),
+      title.normalize('NFD').replace(/[\u0300-\u036f]/gu, '').normalize('NFC'),
+      title.replace(/(?<=\d)[.\-/](?=\d)/gu, ' '),
+      title.replace(/\b(i|ii|iii|iv|v|vi|vii|viii|ix|x)\b/gu, word => roman[word])
+    ].filter(Boolean))].map(key => 'presentation:' + key);
+  }
+  function personKey(value) {
+    let name = String(value ?? '').normalize('NFKC').toLowerCase().trim();
+    name = name.replace(/\s*\((?:author|writer|artist|illustrator|editor|translator|pencill?er|inker|colorist|colourist|letterer)\)\s*$/u, '').trim();
+    const comma = /^([^,]+),\s*([^,]+)$/u.exec(name);
+    if (comma) name = comma[2] + ' ' + comma[1];
+    return name.replace(/['\u2018\u2019]/gu, '').replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ').replace(/\s+/gu, ' ').trim();
+  }
+  function authorNameVariant(left, right) {
+    const a = personKey(left), b = personKey(right);
+    if (!a || !b) return false;
+    const accent = name => name.normalize('NFD').replace(/[\u0300-\u036f]/gu, '').normalize('NFC');
+    if (accent(a) === accent(b)) return true;
+    const l = a.split(' '), r = b.split(' ');
+    if (l.length < 2 || r.length < 2) return false;
+    if ([...l].sort().join(' ') === [...r].sort().join(' ')) return true;
+    if (l.at(-1) !== r.at(-1)) return false;
+    const given = (x, y) => x === y || x.length === 1 && y.startsWith(x) || y.length === 1 && x.startsWith(y);
+    if (!given(l[0], r[0])) return false;
+    // An omitted middle name is missing information; two explicit incompatible
+    // middle names are not silently equivalent. Initials remain review-only.
+    const lm = l.slice(1, -1), rm = r.slice(1, -1);
+    return !lm.length || !rm.length || lm.length === rm.length && lm.every((name, index) => given(name, rm[index]));
+  }
+  function authorRelation(left = [], right = []) {
+    const a = (Array.isArray(left) ? left : [left]).map(personKey).filter(Boolean);
+    const b = (Array.isArray(right) ? right : [right]).map(personKey).filter(Boolean);
+    if (!a.length || !b.length) return 'missing';
+    if (a.some(name => b.includes(name))) return 'same';
+    if (a.some(name => b.some(other => authorNameVariant(name, other)))) return 'variant';
+    return 'different';
+  }
+  function authorNames(authors, contributors = []) {
+    const rows = Array.isArray(contributors) ? contributors : [];
+    const writers = rows.filter(row => /^(?:author|writer|story|story writer)$/iu.test(String(row?.role ?? '').trim()))
+      .map(row => row?.name).filter(name => typeof name === 'string' && name.trim());
+    // Known writer roles take precedence over a mixed creator list. An artist
+    // shared by two books must not conceal explicitly different writers.
+    const values = writers.length ? writers : Array.isArray(authors) ? authors : [authors];
+    return [...new Set(values.filter(name => typeof name === 'string' && name.trim()).map(name => name.trim()))];
+  }
+  function ambiguousWorks(records, fields, barrier = () => false) {
+    return records.some((left, index) => records.slice(index + 1).some(right => {
+      if (barrier(left, right)) return true;
+      const a = fields(left), b = fields(right);
+      if (authorRelation(a.authors, b.authors) === 'different') return true;
+      return ['run', 'unitType', 'unit', 'volume', 'issue'].some(field => a[field] && b[field]
+        && (['unit', 'volume', 'issue'].includes(field) ? unitKey(a[field]) !== unitKey(b[field]) : personKey(a[field]) !== personKey(b[field])));
+    }));
+  }
+  function unitKey(value) {
+    const text = String(value ?? '').trim();
+    const fraction = /^(\d+)\/(\d+)$/u.exec(text);
+    if (fraction && Number(fraction[2])) return String(Number(fraction[1]) / Number(fraction[2]));
+    return /^\d+(?:\.\d+)?$/u.test(text) ? String(Number(text)) : presentationTitle(text, 'unit');
+  }
+  global.LibraryMatchingPolicy = Object.freeze({ presentationTitle, ownershipTitleKeys, fullTitleMatches,
+    relatedPresentationReason, relatedTitleKeys, personKey, authorRelation, authorNames, unitKey, ambiguousWorks });
+}(globalThis));
+// END SHARED MATCHING POLICY
 /* Pure browser helpers shared by the page overlay and extension pages. */
 (function attachFanaticalLibrary(global) {
   'use strict';
@@ -22,18 +131,7 @@
   // Presentation equality is deliberately narrower than the discovery key:
   // Keep articles, general Roman numerals, preview labels and +/# symbols.
   // Roman numbers after an explicit volume/issue label are unit numbers.
-  function presentationTitle(value, kind = 'book') {
-    let title = String(value ?? '').normalize('NFKC').toLowerCase().trim();
-    if (kind === 'book') {
-      const format = /\s+(?:[\[(]\s*)?(?:pdf|cbz|cbr|epub|mobi|kindle|tp|tpb|hc|hardcover|paperback|trade paperback|digital edition)(?:\s*[\])])?\s*$/iu;
-      while (format.test(title)) title = title.replace(format, '').trim();
-    }
-    return title.replace(/&/gu, ' and ').replace(/\bvolume\b|\bvol\.?\b/giu, ' vol ')
-      .replace(/['\u2018\u2019\u0060]/gu, '').replace(/[^\p{L}\p{N}\p{M}+#/]+/gu, ' ')
-      .replace(/\b(vol|issue)\s+(i|ii|iii|iv|v|vi|vii|viii|ix|x)\b/gu,
-        (_match, unit, number) => unit + ' ' + ({ i: 1, ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7, viii: 8, ix: 9, x: 10 })[number])
-      .replace(/\s+/gu, ' ').trim();
-  }
+  function presentationTitle(value, kind = 'book') { return global.LibraryMatchingPolicy.presentationTitle(value, kind); }
 
   function relationTitleParts(value, kind) {
     let title = String(value ?? '').normalize('NFKC').replace(/\s+/gu, ' ').trim();
@@ -61,7 +159,7 @@
   const CANDIDATE_STOP_WORDS = new Set(['the', 'a', 'an', 'and', 'of', 'to', 'in', 'for', 'with', 'by', 'vol', 'volume', 'edition', 'book', 'game', 'software']);
   function candidateTitleKeys(title, kind) {
     const words = normalizeTitle(title).split(' ').filter(word => word.length > 1 && !CANDIDATE_STOP_WORDS.has(word));
-    const keys = words.map(word => 'word:' + word);
+    const keys = [...words.map(word => 'word:' + word), ...global.LibraryMatchingPolicy.relatedTitleKeys(title, kind)];
     for (const word of words) if (word.length >= 7 && !/\p{N}/u.test(word)) {
       keys.push('start:' + word.slice(0, 3), 'end:' + word.slice(-3));
     }
@@ -88,6 +186,8 @@
   function possibleTitleRelation(left, right, kind = 'book') {
     const a = normalizeTitle(left); const b = normalizeTitle(right);
     if (!a || !b) return '';
+    const presentation = global.LibraryMatchingPolicy.relatedPresentationReason(left, right, kind);
+    if (presentation) return presentation;
     if (a === b) return 'Related title presentation; identity needs review.';
     const access = value => value.replace(/\s+(?:preview|sample|excerpt|read now|demo|trial)$/iu, '').trim();
     if (access(a) === access(b)) return 'Related title, but preview/sample access does not establish the full product.';
@@ -220,7 +320,7 @@
     for (const name of ['language', 'edition', 'series', 'run', 'volume', 'issue', 'publisher']) {
       if (typeof raw?.[name] === 'string' && raw[name].trim()) result[name] = raw[name].trim().slice(0, 500);
     }
-    const authors = Array.isArray(raw?.authors) ? raw.authors : typeof raw?.author === 'string' ? [raw.author] : [];
+    const authors = global.LibraryMatchingPolicy.authorNames(raw?.authors ?? raw?.author, raw?.contributors);
     const names = [...new Set(authors.filter(value => typeof value === 'string').map(value => value.trim().slice(0, 500)).filter(Boolean))].slice(0, 50);
     if (names.length) result.authors = names;
     return result;
@@ -290,8 +390,10 @@
       if (ids.isbn) byIsbn.set(ids.isbn, [...(byIsbn.get(ids.isbn) ?? []), item]);
       const key = `${mediaType(item.mediaType ?? item.type)}:${titleKey(item.title)}`;
       if (item.title) byTitle.set(key, [...(byTitle.get(key) ?? []), item]);
-      const presentation = mediaType(item.mediaType ?? item.type) + ':' + presentationTitle(item.title, mediaType(item.mediaType ?? item.type));
-      if (item.title) byPresentation.set(presentation, [...(byPresentation.get(presentation) ?? []), item]);
+      for (const key of global.LibraryMatchingPolicy.ownershipTitleKeys(item.title,mediaType(item.mediaType ?? item.type))) {
+        const presentation = mediaType(item.mediaType ?? item.type) + ':' + key;
+        if (item.title) byPresentation.set(presentation, [...(byPresentation.get(presentation) ?? []), item]);
+      }
       for (const token of candidateTitleKeys(item.title, mediaType(item.mediaType ?? item.type))) {
         const possible = mediaType(item.mediaType ?? item.type) + ':' + token;
         byPossibleTitle.set(possible, [...(byPossibleTitle.get(possible) ?? []), item]);
@@ -307,9 +409,12 @@
   function identityConflicts(candidate, owned, edition = false) {
     const left = bibliographicFields(candidate); const right = bibliographicFields(owned.evidence ? { ...owned.evidence, title: owned.title } : owned);
     const reasons = [];
-    if (left.authors?.length && right.authors?.length && !left.authors.some(author => right.authors.map(scopeKey).includes(scopeKey(author)))) reasons.push('Different known authors');
-    for (const field of ['series', 'run', 'issue', 'volume', ...(edition ? ['edition', 'language'] : [])]) {
-      if (left[field] && right[field] && scopeKey(left[field]) !== scopeKey(right[field])) reasons.push(`Different ${field}`);
+    const authors = global.LibraryMatchingPolicy.authorRelation(left.authors,right.authors);
+    if (authors === 'different') reasons.push('Different known authors');
+    if (edition && authors === 'variant') reasons.push('Author name variation needs review');
+    for (const field of ['run', 'issue', 'volume', ...(edition ? ['series', 'edition', 'language'] : [])]) {
+      const normalize = ['volume', 'issue'].includes(field) ? global.LibraryMatchingPolicy.unitKey : scopeKey;
+      if (left[field] && right[field] && normalize(left[field]) !== normalize(right[field])) reasons.push(`Different ${field}`);
     }
     const offeredUnits = offerContents({ ...left, title: candidate.title }).entries;
     const ownedUnits = offerContents({ ...right, title: owned.title }).entries;
@@ -320,8 +425,10 @@
     if (edition) {
       const limited = title => /\b(?:preview|sample|excerpt|read\s+now|demo|trial)\b/iu.test(title);
       if (limited(candidate.title) !== limited(owned.title)) reasons.push('Preview/sample and full-product access differ');
-      const l = externalIds(candidate).isbn; const r = externalIds(owned).isbn || validIsbn(owned.evidence?.isbn?.[0]);
-      if (l && r && l !== r) reasons.push('Different validated ISBNs');
+      const l = externalIds(candidate).isbn;
+      const supplied=owned.evidence?.isbn;
+      const r=[externalIds(owned).isbn,...(Array.isArray(supplied)?supplied:[supplied])].map(validIsbn).filter(Boolean);
+      if (l && r.length && !r.includes(l)) reasons.push('Different validated ISBNs');
       if (editionBase(candidate.title) === editionBase(owned.title) && normalizeTitle(candidate.title) !== normalizeTitle(owned.title)
         && (mediaType(candidate.mediaType) !== 'game' || gamePackageIdentity(candidate.title) !== gamePackageIdentity(owned.title))) reasons.push('Different edition/package wording');
     }
@@ -348,7 +455,13 @@
     const library = Array.isArray(libraryItems) ? libraryItems : [];
     const indexes = makeIndexes(library);
     const id = String(item?.sourceItemId ?? item?._id ?? '');
-    if (id && indexes.byId.has(id)) return { state: 'owned', provenance: 'fanatical', item: indexes.byId.get(id), reason: 'exact Fanatical product ID' };
+    if (id && indexes.byId.has(id)) {
+      const owned=indexes.byId.get(id),differences=identityConflicts(item,owned,true);
+      if(!compatibleMedia(item.mediaType??item.type,owned.mediaType??owned.type))differences.push('Different media type');
+      if(differentGamePackage(item,owned))differences.push('Different game package');
+      return {state:differences.length?'possible':'owned',provenance:'fanatical',item:owned,
+        reason:differences.length?'Same Fanatical product ID, but '+differences.join('; ')+'. Review the library item.':'exact Fanatical product ID'};
+    }
     const ids = externalIds(item);
     const media = mediaType(item?.mediaType ?? item?.type);
     const steamMatches = (indexes.bySteam.get(ids.steamAppId) ?? []).filter((owned) => compatibleMedia(media, owned.mediaType ?? owned.type));
@@ -370,15 +483,17 @@
     const titleMatches = [...new Set([...(indexes.byTitle.get(`${media}:${titleKey(item?.title)}`) ?? []),
       ...(indexes.byPresentation.get(media + ':' + presentationTitle(item?.title, media)) ?? [])])];
     const compatibleTitles = titleMatches.filter(owned => !identityConflicts(item, owned).length);
-    const presentation = value => presentationTitle(value, media);
+    const policy=global.LibraryMatchingPolicy;
+    const full=compatibleTitles.filter(owned=>policy.fullTitleMatches(item.title,owned.title,media)&&!differentGamePackage(item,owned)&&!identityConflicts(item,owned,true).length);
+    const ambiguous=policy.ambiguousWorks(full,bibliographicFields);
     const exact = compatibleTitles.find((owned) => !differentGamePackage(item, owned) && !identityConflicts(item, owned, true).length
-      && presentation(item.title) && presentation(item.title) === presentation(owned.title)
-      && (titleMatches.length === 1 || bibliographicFields(item).authors?.some(author => bibliographicFields(owned).authors?.map(scopeKey).includes(scopeKey(author)))));
+      && policy.fullTitleMatches(item.title,owned.title,media) && !ambiguous);
     if (exact && !hasComponents) return { state: 'owned', provenance: 'fanatical', item: exact, reason: 'exact normalized title' };
     const steam = steamMatches.find((owned) => !differentGamePackage(item, owned));
     const steamProvesProduct = steam && !hasComponents && !componentProof && !identityConflicts(item, steam, true).length && (media !== 'game' || !gamePackageIdentity(item?.title));
     if (steamProvesProduct) return { state: 'owned', provenance: 'fanatical', item: steam, reason: 'exact Steam App ID' };
-    const isbn = ids.isbn && (indexes.byIsbn.get(ids.isbn) ?? []).find(owned => !identityConflicts(item, owned, true).length);
+    const isbnMatches = (indexes.byIsbn.get(ids.isbn) ?? []).filter(owned => compatibleMedia(media, owned.mediaType ?? owned.type) && !identityConflicts(item, owned, true).length);
+    const isbn = !policy.ambiguousWorks(isbnMatches, bibliographicFields) && isbnMatches[0];
     if (isbn && compatibleMedia(media, isbn.mediaType ?? isbn.type)) return { state: 'owned', provenance: 'fanatical', item: isbn, reason: 'exact ISBN' };
     const isbnRelated = (indexes.byIsbn.get(ids.isbn) ?? []).find(owned => compatibleMedia(media, owned.mediaType ?? owned.type) && !identityConflicts(item, owned).length);
     if (isbnRelated) return { state: 'possible', provenance: 'fanatical', item: isbnRelated, reason: `Owned "${isbnRelated.title}"; offered "${item.title}". Shared validated ISBN but ${identityConflicts(item, isbnRelated, true).join('; ') || 'edition identity needs review'}.` };
@@ -470,7 +585,8 @@
       const isbns = Array.isArray(record.evidence?.isbn) ? record.evidence.isbn : [record.evidence?.isbn];
       const authors = bibliographicFields(product).authors;
       return Boolean(isbn && isbns.map(validIsbn).includes(isbn)
-        || normalizeTitle(product.title) === normalizeTitle(record.title) && authors?.some(author => bibliographicFields(record.evidence || record).authors?.map(scopeKey).includes(scopeKey(author))));
+        || global.LibraryMatchingPolicy.fullTitleMatches(product.title, record.title, mediaType(product.mediaType))
+          && global.LibraryMatchingPolicy.authorRelation(authors, bibliographicFields(record.evidence || record).authors) === 'same');
     };
     const exact = records.find(record => permanent(record) && !(local.editionDifference && !record.title) && record.relationship !== 'same-work' && record.relationship !== 'contains'
       && strongEdition(record) && !identityConflicts(product, record, true).length && !differentGamePackage(product, { ...record, mediaType: product.mediaType }));
@@ -584,7 +700,7 @@
   }
 
   function overlayLabel(match) {
-    if (match?.state === 'unchecked') return 'Not checked';
+    if (match?.state === 'unchecked') return 'Check incomplete';
     if (match?.state === 'owned') return 'Owned';
     if (match?.state === 'owned-elsewhere') {
       const provider = String(match.provenance ?? 'another library');
@@ -642,7 +758,7 @@
     if (offered.mediaType && !['game', 'book', 'audiobook'].includes(mediaType(offered.mediaType))&&!match.externalResult) lines.push(`Central lookup does not support ${offered.mediaType}; this offer uses local Fanatical evidence only.`);
     if(match.externalResult)lines.push('Local Fanatical purchases are the source authority. Central Fanatical copies are excluded from ownership elsewhere; rescan local orders if the snapshots disagree.');
     if(match.centralFanaticalIgnored)lines.push('A returned central Fanatical copy was kept for review only and supplied no owned contents.');
-    if (match.lookupIncomplete) lines.push('Central lookup incomplete. An unavailable or omitted result is not proof of absence.');
+    if (match.lookupIncomplete) lines.push('Ownership check incomplete: Galactic Library could not complete this check. Local evidence is retained; this item may already be owned. A failed lookup is not proof of absence.');
     if (match.contentsLookupIncomplete) lines.push('Central contents coverage was not supplied; unit absence cannot be established from this lookup.');
     lines.push(`Fanatical last successful import: ${lastImport || 'unknown'}. Synced libraries may not cover the entire purchase history.`);
     if (match.localMatch?.reason && match.localMatch.reason !== match.reason) lines.push(`Local comparison: ${match.localMatch.reason}`);
