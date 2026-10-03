@@ -82,6 +82,16 @@ HTMLAnchorElement.prototype.click = function() {};
 const common = `
 const wait=()=>new Promise(resolve=>setTimeout(resolve,350));
 const assert=(condition,message)=>{if(!condition)throw new Error(message)};
+const assertBadgesVisible=()=>{const panel=document.querySelector('[data-fanatical-library-summary]'),oldVisibility=panel?.style.visibility;if(panel)panel.style.visibility='hidden';try{for(const badge of document.querySelectorAll('[data-fanatical-library-for]')){
+  const host=badge.parentElement,card=host.closest('article'),css=getComputedStyle(badge),outline=getComputedStyle(host),b=badge.getBoundingClientRect(),h=host.getBoundingClientRect();
+  if(!h.width||!h.height)continue;
+  assert(css.position==='absolute','Provider button CSS moved the ownership badge into normal flow');
+  assert(b.top>=h.top&&b.bottom<=h.bottom&&b.left>=h.left&&b.right<=h.right,'Ownership badge is clipped outside the cover');
+  assert(outline.outlineStyle==='solid'&&parseFloat(outline.outlineWidth)>=2,'Ownership status is missing its cover border');
+  assert(b.top-h.top<(card?.querySelector(':scope > .new-to-bundle-label')?45:15),'Ownership badge is not at the top of the cover');
+  if(card?.querySelector(':scope > .new-to-bundle-label'))assert(b.top-h.top>=35,'Ownership badge overlaps the native New to bundle label');
+  assert(document.elementFromPoint(b.left+Math.min(10,b.width/2),b.top+b.height/2)===badge||b.top>=innerHeight,'Ownership badge cannot receive a click above the native card link');
+}}finally{if(panel)panel.style.visibility=oldVisibility;}};
 const diagnostics=()=>document.querySelector('[data-fanatical-library-diagnostics]');
 const finish=result=>{const node=document.createElement('pre');node.id='browser-check-result';node.textContent=JSON.stringify(result);document.body.append(node);fetch('/result?route='+encodeURIComponent(location.pathname),{method:'POST',body:JSON.stringify(result)})};
 `;
@@ -90,6 +100,7 @@ try {
   await wait();
   assert(!diagnostics(),'Diagnostics should default off');
   assert(document.querySelectorAll('[data-fanatical-library-for]').length===4,'Missing card badges');
+  assertBadgesVisible();
   assert([...document.querySelectorAll('.card-product-name')].map(node=>node.textContent).join('|')==='Comic #2|Comic #10|External comic|New comic','Natural sorting changed');
   assert(document.querySelector('.fanatical-library-owned-elsewhere-badge'),'Missing external match');
   const badge=document.querySelector('.fanatical-library-owned-elsewhere-badge');
@@ -189,6 +200,7 @@ try {
   await wait();
   assert(document.querySelectorAll('.fanatical-library-possible-badge').length===1,'Deluxe package was not Possible');
   assert(document.querySelector('.fanatical-library-partial-badge')?.textContent==='Partial (1/2)','Ultimate package was not verified Partial');
+  assertBadgesVisible();
   const notes=[...document.querySelectorAll('.fanatical-library-card-edition-note')];
   assert(notes.length===2&&notes.every(note=>note.textContent.includes('Related library item: Space Adventure')),'Owned title missing from card captions');
   assert(notes.some(note=>note.textContent.includes('Different edition/package'))&&notes.some(note=>note.textContent.includes('Partial package (1/2 components)')),'Package differences missing from captions');
@@ -242,6 +254,7 @@ try {
   const content=()=>document.querySelector('.fanatical-library-contents');
   assert(content()?.textContent.includes('4 additional · 2 covered · 0 uncertain'),'Distinct bundle unit counts are wrong');
   assert(document.querySelectorAll('.fanatical-library-partial-badge').length===2,'Central and local union coverage did not resolve Partial');
+  assertBadgesVisible();
   const sent=requests.filter(message=>message.type==='MATCH_ITEMS').flatMap(message=>message.items);
   assert(sent.some(item=>item.title==='Saga Collection 1'&&item.contents.length===3&&item.excludeProviders.includes('fanatical')),'Live parser did not send explicit contents');
   if(location.pathname.includes('pick-and-mix')) {
@@ -272,6 +285,7 @@ try {
   assert(reading().textContent.includes('issue 7: Not checked'),'Missing central contents capability falsely established a reading gap');
   centralMode='reject';reminders().querySelector('button').click();await wait();
   assert(document.querySelectorAll('.fanatical-library-unchecked-badge').length===3,'Failed lookups were presented as New');
+  assertBadgesVisible();
   assert(!document.querySelector('.fanatical-library-buy-recommendation'),'Failed lookups produced a buy recommendation');
   centralMode='normal';reminders().querySelector('button').click();await wait();
   assert(content().textContent.includes('4 additional · 2 covered · 0 uncertain'),'Successful retry did not restore central coverage');
@@ -279,7 +293,7 @@ try {
   }
 }catch(error){finish({ok:false,error:error.message})}
 `;
-const cards = (kind, items = products) => items.map(product => `<div class="three-column-row"><article class="${kind}"><div class="cover-container"><img alt="${product.name}"><h2 class="card-product-name">${product.name}</h2></div></article></div>`).join('');
+const cards = (kind, items = products) => items.map((product,index) => `<div class="three-column-row"><article class="${kind} faux-block-link">${kind==='PickAndMixCard'&&index===0?'<span class="new-to-bundle-label">New to bundle</span>':''}<div class="cover-container"><img alt="${product.name}"></div><h2 class="card-product-name">${product.name}</h2></article></div>`).join('');
 const catalogue = [2, 10, null].map((days, index) => `<li class="HitCardContainer"><article class="HitCard"><a href="https://www.fanatical.com/en/bundle/test-${index}"><img alt="Test ${index}"><h2>Test ${index}</h2></a>${days === null ? '' : `<div class="CountdownTimer__clock">${days} Days Left</div>`}</article></li>`).join('');
 const pendingResults = new Map();
 const server = http.createServer((request, response) => {
@@ -309,7 +323,7 @@ const server = http.createServer((request, response) => {
     const isCatalogue = url.endsWith('/books');
     const isEdition = url.endsWith('/test-editions');
     const isContents = url.endsWith('/test-contents');
-    return send('text/html', `<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"><style>.fan-grid-container{display:grid;grid-template-columns:repeat(3,240px);gap:20px}.fanatical-library-pick-mix-reflow{grid-column:1/-1}article{min-height:160px}.cover-container{min-height:120px}</style></head><body><main>${isCatalogue ? `<ul class="HitCardsRow row">${catalogue}</ul>` : `<section class="tier"><div class="fan-grid-container">${cards(url.includes('pick-and-mix') ? 'PickAndMixCard' : 'bundle-product-card', isContents ? contentsProducts : isEdition ? editionProducts : products)}</div></section>`}</main><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/${isCatalogue ? 'catalogue' : isContents ? 'contents' : isEdition ? 'edition' : 'bundle'}-check.js"></script></body></html>`);
+    return send('text/html', `<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"><style>.fan-grid-container{display:grid;grid-template-columns:repeat(3,240px);gap:20px}.fanatical-library-pick-mix-reflow{grid-column:1/-1}article{min-height:350px;position:relative}.cover-container{height:310px;overflow:hidden;position:relative}.cover-container img{display:block;width:100%;height:310px}.faux-block-link a,.faux-block-link abbr[title],.faux-block-link button{position:relative;z-index:3}.new-to-bundle-label{position:absolute;top:0;left:0;z-index:3;height:32px}</style></head><body><main>${isCatalogue ? `<ul class="HitCardsRow row">${catalogue}</ul>` : `<section class="tier"><div class="fan-grid-container">${cards(url.includes('pick-and-mix') ? 'PickAndMixCard' : 'bundle-product-card', isContents ? contentsProducts : isEdition ? editionProducts : products)}</div></section>`}</main><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/${isCatalogue ? 'catalogue' : isContents ? 'contents' : isEdition ? 'edition' : 'bundle'}-check.js"></script></body></html>`);
   }
   response.writeHead(404).end();
 });
