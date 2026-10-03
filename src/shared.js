@@ -48,6 +48,51 @@
       title.replace(/\b(i|ii|iii|iv|v|vi|vii|viii|ix|x)\b/gu, word => roman[word])
     ].filter(Boolean))].map(key => 'presentation:' + key);
   }
+  // Discovery only: these parts never supply exact-title or edition identity.
+  // Prefer explicit structure/semantic markers to a list of accepted titles.
+  function revisionTitleParts(value, kind = 'book') {
+    const title = String(value ?? '').normalize('NFKC').replace(/\s+/gu, ' ').trim();
+    const result = (base, qualifier = '') => ({base, qualifier});
+    if (!['book', 'audiobook', 'software'].includes(kind)) return result(title);
+    const marker = /\b(?:edition|ed\.?|revision|rev\.?|revised|updated|expanded|annotated|abridged|unabridged|version|release|printing|print|reprint|format|paperback|hardcover|hardback|softcover|ebook|e-book|digital|pdf|epub|mobi|cbz|cbr)\b|\b\d+e\b|\bv\d+(?:\.\d+)*\b/iu;
+    // Delimiters identify the base even when an edition description is new.
+    const bracket = /^(.*?)\s*[([]([^()[\]]+)[)\]]\s*$/u.exec(title);
+    if (bracket?.[1]?.trim() && marker.test(bracket[2])) return result(bracket[1].trim(), bracket[2]);
+    const structured = /^(.*?)\s*(?:[,;:]\s*|\s+[\-\u2013\u2014]\s+)(.+)$/u.exec(title);
+    if (structured?.[1]?.trim() && marker.test(structured[2])) return result(structured[1].trim(), structured[2]);
+    // Numeric shorthand and bare revision/access/format labels.
+    const tail = /\s+((?:(?:edition|ed\.?|revision|rev\.?|version|release|printing)\s+\d+(?:\.\d+)*|\d+e|v(?:ersion)?\.?\s*\d+(?:\.\d+)*|(?:revised|updated|expanded|annotated)(?:\s*(?:and|&)\s*(?:revised|updated|expanded|annotated))*(?:\s+(?:edition|ed\.?|version))?|(?:abridged|unabridged|paperback|hardcover|hardback|softcover|ebook|e-book|digital|pdf|epub|mobi|cbz|cbr)))\s*$/iu.exec(title);
+    if (tail) return result(title.slice(0, tail.index).trim(), tail[1]);
+    // English ordinals are compositional: twenty-first, one hundred and first,
+    // eleventh and hundredth use the same rule; numeric ordinals are unbounded.
+    const ordinal = '(?:first|second|third|(?:four|fif|six|seven|eigh|nin|ten|eleven|twelf|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|hundred|thousand|million|billion)th|(?:twent|thirt|fort|fift|sixt|sevent|eight|ninet)ieth)';
+    const tens = '(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)';
+    const compound = '(?:(?:one|two|three|four|five|six|seven|eight|nine) (?:hundred|thousand|million|billion)(?: and)? )?(?:'+tens+'[- ])?'+ordinal;
+    const ordinalTail = new RegExp('\\s+('+compound+'|\\d+(?:st|nd|rd|th)?)$', 'iu');
+    const ending = /\s+(?:(?:revised|updated|expanded|annotated|anniversary)\s+)*(?:edition|ed\.?|revision|version|printing)\s*$/iu.exec(title);
+    if (ending) {
+      const prefix = title.slice(0, ending.index).trim();
+      const number = ordinalTail.exec(prefix);
+      if (number) return result(prefix.slice(0, number.index).trim(), title.slice(number.index).trim());
+    }
+    return result(title);
+  }
+  function revisionWordingConflict(left, right, kind = 'book') {
+    if (!['book', 'audiobook', 'software'].includes(kind)) return false;
+    const a = revisionTitleParts(left, kind), b = revisionTitleParts(right, kind);
+    const revision = /\b(?:edition|ed\.?|revision|rev\.?|revised|updated|expanded|annotated|abridged|unabridged|version|release|printing|reprint)\b|\b\d+e\b|\bv\d+(?:\.\d+)*\b/iu;
+    const titles = [presentationTitle(left, kind), presentationTitle(right, kind)];
+    // Pairwise fallback: an unfamiliar trailing descriptor can still warn
+    // when it explicitly labels a revision of the complete shorter title.
+    for (const [base, longer] of [titles, [...titles].reverse()]) {
+      if (base.replace(/\s/gu, '').length >= (kind === 'software' ? 8 : 4)
+        && longer.startsWith(base+' ') && revision.test(longer.slice(base.length+1))) return true;
+    }
+    return Boolean((revision.test(a.qualifier) || revision.test(b.qualifier))
+      && presentationTitle(a.base, kind).replace(/\s/gu, '').length >= (kind === 'software' ? 8 : 4)
+      && presentationTitle(a.base, kind) === presentationTitle(b.base, kind)
+      && presentationTitle(a.qualifier, kind) !== presentationTitle(b.qualifier, kind));
+  }
   function personKey(value) {
     let name = String(value ?? '').normalize('NFKC').toLowerCase().trim();
     name = name.replace(/\s*\((?:author|writer|artist|illustrator|editor|translator|pencill?er|inker|colorist|colourist|letterer)\)\s*$/u, '').trim();
@@ -104,7 +149,7 @@
     return /^\d+(?:\.\d+)?$/u.test(text) ? String(Number(text)) : presentationTitle(text, 'unit');
   }
   global.LibraryMatchingPolicy = Object.freeze({ presentationTitle, ownershipTitleKeys, fullTitleMatches,
-    relatedPresentationReason, relatedTitleKeys, personKey, authorRelation, authorNames, unitKey, ambiguousWorks });
+    relatedPresentationReason, relatedTitleKeys, revisionTitleParts, revisionWordingConflict, personKey, authorRelation, authorNames, unitKey, ambiguousWorks });
 }(globalThis));
 // END SHARED MATCHING POLICY
 /* Pure browser helpers shared by the page overlay and extension pages. */
@@ -135,11 +180,13 @@
 
   function relationTitleParts(value, kind) {
     let title = String(value ?? '').normalize('NFKC').replace(/\s+/gu, ' ').trim();
+    const revision = global.LibraryMatchingPolicy.revisionTitleParts(title, kind);
+    if (revision.qualifier) title = revision.base;
     const edition = /\s*(?:[,;:\-\u2013\u2014]\s*)?((?:\d+(?:st|nd|rd|th)?|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|revised|updated|expanded|annotated|new|deluxe)(?:\s+(?:revised|updated))?\s+(?:edition|ed\.?))\s*$/iu;
-    let hasEdition = false;
+    let hasEdition = Boolean(revision.qualifier);
     if (kind === 'software') {
       const version = /^(.*?)\s*(?:[,;:\-\u2013\u2014]\s*)?(?:v(?:ersion)?\.?\s*\d+(?:\.\d+){0,3}|(?:19|20)\d{2})\s*$/iu.exec(title);
-      return { primary: normalizeTitle(version?.[1]?.trim() || title), hasVersion: Boolean(version?.[1]?.trim()), subtitle: false, qualifier: false, hasEdition: false };
+      return { primary: normalizeTitle(version?.[1]?.trim() || title), hasVersion: Boolean(revision.qualifier || version?.[1]?.trim()), subtitle: false, qualifier: false, hasEdition: false };
     }
     const stripEdition = () => {
       const found = edition.exec(title);
@@ -189,6 +236,7 @@
     const presentation = global.LibraryMatchingPolicy.relatedPresentationReason(left, right, kind);
     if (presentation) return presentation;
     if (a === b) return 'Related title presentation; identity needs review.';
+    if (global.LibraryMatchingPolicy.revisionWordingConflict(left, right, kind)) return 'Related complete base title with revision or version wording; identity needs review.';
     const access = value => value.replace(/\s+(?:preview|sample|excerpt|read now|demo|trial)$/iu, '').trim();
     if (access(a) === access(b)) return 'Related title, but preview/sample access does not establish the full product.';
     const numbers = value => (value.match(/\d+(?:\.\d+|\/\d+)?/gu) ?? []).join('|');
@@ -253,6 +301,10 @@
       ...(steam !== undefined && steam !== null && String(steam) !== '' ? { steamAppId: String(steam) } : {}),
       ...(validIsbn(isbn) ? { isbn: validIsbn(isbn) } : {})
     };
+  }
+  function matchingIsbns(item) {
+    return [...new Set([item?.externalIds?.isbn, item?.isbn, item?.isbns, item?.evidence?.isbn]
+      .flat().map(validIsbn).filter(Boolean))].slice(0, 50);
   }
 
   function editionBase(value) {
@@ -387,7 +439,7 @@
       if (item.sourceItemId) byId.set(String(item.sourceItemId), item);
       const ids = externalIds(item);
       if (ids.steamAppId) bySteam.set(ids.steamAppId, [...(bySteam.get(ids.steamAppId) ?? []), item]);
-      if (ids.isbn) byIsbn.set(ids.isbn, [...(byIsbn.get(ids.isbn) ?? []), item]);
+      for (const isbn of matchingIsbns(item)) byIsbn.set(isbn, [...(byIsbn.get(isbn) ?? []), item]);
       const key = `${mediaType(item.mediaType ?? item.type)}:${titleKey(item.title)}`;
       if (item.title) byTitle.set(key, [...(byTitle.get(key) ?? []), item]);
       for (const key of global.LibraryMatchingPolicy.ownershipTitleKeys(item.title,mediaType(item.mediaType ?? item.type))) {
@@ -409,12 +461,11 @@
   function identityConflicts(candidate, owned, edition = false) {
     const left = bibliographicFields(candidate); const right = bibliographicFields(owned.evidence ? { ...owned.evidence, title: owned.title } : owned);
     const reasons = [];
-    const offeredIsbn = externalIds(candidate).isbn;
-    const supplied = owned.evidence?.isbn;
-    const ownedIsbns = [externalIds(owned).isbn, ...(Array.isArray(supplied) ? supplied : [supplied])].map(validIsbn).filter(Boolean);
+    const offeredIsbns = matchingIsbns(candidate), ownedIsbns = matchingIsbns(owned);
+    const sharedIsbn = offeredIsbns.some(isbn => ownedIsbns.includes(isbn));
     const authors = global.LibraryMatchingPolicy.authorRelation(left.authors,right.authors);
     if (authors === 'different') reasons.push('Different known authors');
-    if (edition && authors === 'variant' && !(offeredIsbn && ownedIsbns.includes(offeredIsbn))) reasons.push('Author name variation needs review');
+    if (edition && authors === 'variant' && !sharedIsbn) reasons.push('Author name variation needs review');
     for (const field of ['run', 'issue', 'volume', ...(edition ? ['series', 'edition', 'language'] : [])]) {
       const normalize = ['volume', 'issue'].includes(field) ? global.LibraryMatchingPolicy.unitKey : scopeKey;
       if (left[field] && right[field] && normalize(left[field]) !== normalize(right[field])) reasons.push(`Different ${field}`);
@@ -426,9 +477,10 @@
       if (numberKey(offeredUnits[0].number) !== numberKey(ownedUnits[0].number)) reasons.push('Different issue/volume');
     }
     if (edition) {
+      if (global.LibraryMatchingPolicy.revisionWordingConflict(candidate.title, owned.title, mediaType(candidate.mediaType))) reasons.push('Different revision wording');
       const limited = title => /\b(?:preview|sample|excerpt|read\s+now|demo|trial)\b/iu.test(title);
       if (limited(candidate.title) !== limited(owned.title)) reasons.push('Preview/sample and full-product access differ');
-      if (offeredIsbn && ownedIsbns.length && !ownedIsbns.includes(offeredIsbn)) reasons.push('Different validated ISBNs');
+      if (offeredIsbns.length && ownedIsbns.length && !sharedIsbn) reasons.push('Different validated ISBNs');
       if (editionBase(candidate.title) === editionBase(owned.title) && normalizeTitle(candidate.title) !== normalizeTitle(owned.title)
         && (mediaType(candidate.mediaType) !== 'game' || gamePackageIdentity(candidate.title) !== gamePackageIdentity(owned.title))) reasons.push('Different edition/package wording');
     }
@@ -493,10 +545,11 @@
     const steam = steamMatches.find((owned) => !differentGamePackage(item, owned));
     const steamProvesProduct = steam && !hasComponents && !componentProof && !identityConflicts(item, steam, true).length && (media !== 'game' || !gamePackageIdentity(item?.title));
     if (steamProvesProduct) return { state: 'owned', provenance: 'fanatical', item: steam, reason: 'exact Steam App ID' };
-    const isbnMatches = (indexes.byIsbn.get(ids.isbn) ?? []).filter(owned => compatibleMedia(media, owned.mediaType ?? owned.type) && !identityConflicts(item, owned, true).length);
+    const isbnCandidates = [...new Set(matchingIsbns(item).flatMap(isbn => indexes.byIsbn.get(isbn) ?? []))];
+    const isbnMatches = isbnCandidates.filter(owned => compatibleMedia(media, owned.mediaType ?? owned.type) && !identityConflicts(item, owned, true).length);
     const isbn = !policy.ambiguousWorks(isbnMatches, bibliographicFields) && isbnMatches[0];
     if (isbn && compatibleMedia(media, isbn.mediaType ?? isbn.type)) return { state: 'owned', provenance: 'fanatical', item: isbn, reason: 'exact ISBN' };
-    const isbnRelated = (indexes.byIsbn.get(ids.isbn) ?? []).find(owned => compatibleMedia(media, owned.mediaType ?? owned.type) && !identityConflicts(item, owned).length);
+    const isbnRelated = isbnCandidates.find(owned => compatibleMedia(media, owned.mediaType ?? owned.type) && !identityConflicts(item, owned).length);
     if (isbnRelated) return { state: 'possible', provenance: 'fanatical', item: isbnRelated, reason: `Owned "${isbnRelated.title}"; offered "${item.title}". Shared validated ISBN but ${identityConflicts(item, isbnRelated, true).join('; ') || 'edition identity needs review'}.` };
     if (steamDifference) return {...packageRelationship(item, steamDifference, 'Shared Steam App ID identifies the base game only'),candidates:[...new Set([steamDifference,...steamMatches.filter(owned=>!identityConflicts(item,owned).length)])]};
     const titleDifference = titleMatches.find((owned) => differentGamePackage(item, owned));
@@ -582,10 +635,9 @@
     const records = (result?.matches ?? []).filter(record => record.provider !== 'fanatical');
     const strongEdition = record => {
       if (!['book', 'audiobook'].includes(mediaType(product.mediaType)) || record.relationship === 'same-edition') return true;
-      const isbn = externalIds(product).isbn;
-      const isbns = Array.isArray(record.evidence?.isbn) ? record.evidence.isbn : [record.evidence?.isbn];
+      const isbns = matchingIsbns(product);
       const authors = bibliographicFields(product).authors;
-      return Boolean(isbn && isbns.map(validIsbn).includes(isbn)
+      return Boolean(isbns.some(isbn => matchingIsbns(record).includes(isbn))
         || global.LibraryMatchingPolicy.fullTitleMatches(product.title, record.title, mediaType(product.mediaType))
           && global.LibraryMatchingPolicy.authorRelation(authors, bibliographicFields(record.evidence || record).authors) === 'same');
     };
@@ -614,9 +666,9 @@
     const supported = new Set(['game', 'book', 'audiobook',...(softwareSupported?['software']:[])]);
     return (Array.isArray(products) ? products : []).filter((product) => product?.sourceItemId && typeof product?.title === 'string' && supported.has(mediaType(product.mediaType))).map((product) => {
       const data = bibliographicFields(product); delete data.publisher;
-      const isbn = externalIds(product).isbn; const target = offerContents(product);
+      const isbns = matchingIsbns(product), isbn = isbns.length === 1 ? isbns[0] : isbns; const target = offerContents(product);
       return { requestId: String(product.sourceItemId).slice(0, 500), title: product.title.trim().slice(0, 500), mediaType: mediaType(product.mediaType), excludeProviders: ['fanatical'], ...data,
-        ...(isbn ? { identifiers: { isbn } } : {}), ...(target.entries.length ? { contents: target.entries, contentsComplete: target.complete } : {}) };
+        ...(isbns.length ? { identifiers: { isbn } } : {}), ...(target.entries.length ? { contents: target.entries, contentsComplete: target.complete } : {}) };
     }).filter(product => product.title);
   }
 
