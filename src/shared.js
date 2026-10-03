@@ -457,7 +457,8 @@
     const id = String(item?.sourceItemId ?? item?._id ?? '');
     if (id && indexes.byId.has(id)) {
       const owned=indexes.byId.get(id),differences=identityConflicts(item,owned,true);
-      if(!compatibleMedia(item.mediaType??item.type,owned.mediaType??owned.type))differences.push('Different media type');
+      const offeredMedia=mediaType(item.mediaType??item.type),ownedMedia=mediaType(owned.mediaType??owned.type);
+      if(offeredMedia!=='other'&&ownedMedia!=='other'&&offeredMedia!==ownedMedia)differences.push('Different media type');
       if(differentGamePackage(item,owned))differences.push('Different game package');
       return {state:differences.length?'possible':'owned',provenance:'fanatical',item:owned,
         reason:differences.length?'Same Fanatical product ID, but '+differences.join('; ')+'. Review the library item.':'exact Fanatical product ID'};

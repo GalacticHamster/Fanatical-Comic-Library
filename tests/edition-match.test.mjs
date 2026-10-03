@@ -33,6 +33,13 @@ test('exact Fanatical product ownership stays authoritative for a purchased edit
   assert.equal(match.reason, 'exact Fanatical product ID');
 });
 
+test('native product IDs tolerate missing media metadata but expose known incompatible media', () => {
+  assert.equal(F.classify(base,[{...base,mediaType:undefined}]).state,'owned');
+  const mismatch=F.classify({...base,mediaType:'book'},[base]);
+  assert.equal(mismatch.state,'possible');
+  assert.match(mismatch.reason,/Different media type/);
+});
+
 test('shared App ID indexes retain all editions and prefer a matching purchased edition', () => {
   for (const library of [[base, { ...deluxe, sourceItemId: 'owned-deluxe-123456' }], [{ ...deluxe, sourceItemId: 'owned-deluxe-123456' }, base]]) {
     const match = F.classify(deluxe, library);
