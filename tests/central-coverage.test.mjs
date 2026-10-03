@@ -172,6 +172,32 @@ test('central Fanatical copies remain review-only even if an older response incl
   const copied=record({provider:'fanatical',relationship:'same-edition',item:{sourceItemId:'copied-123456'}}),match=F.mergeGalactic({state:'new'},{matches:[copied]},product());assert.equal(match.state,'possible');assert.equal(match.provenance,'fanatical');assert.match(match.reason,/current local purchase snapshot/);assert(F.explanationLines(match).some(line=>/source authority/.test(line)));
   const coverage=F.coverageFor(F.offerContents(product()),[],{coverage:{covered:[{...unit(1),evidence:[copied]}]}});assert.equal(coverage.owned,0);
 });
+
+test('real GL full-title evidence restores comic ownership despite missing imported ISBNs and repeated purchases', async t => {
+  let handle, normalize;
+  try {
+    ({ handleExternalApiRequest: handle } = await import('../../GalacticLibrary/src/lib/external-api.js'));
+    ({ normalizeProviderItem: normalize } = await import('../../GalacticLibrary/src/lib/models.js'));
+  } catch (error) { if (error.code === 'ERR_MODULE_NOT_FOUND') { t.skip('Adjacent Galactic Library checkout unavailable'); return; } throw error; }
+  const stored = ['Harbinger Vol. 1: Omega Rising', 'Harbinger, Vol. 1:Omega Rising', '4001 A.D. TPB', '4001 A.D.: Beyond New Japan'];
+  const copies = stored.map((title, index) => normalize({ provider: 'humble', providerItemId: 'synthetic-' + index, title, mediaType: 'book', ownership: 'owned' }));
+  const db = { providerItems: Object.fromEntries(copies.map(item => [item.id, item])) };
+  for (const [index, title] of ['Harbinger Vol 1 Omega Rising', '4001 A.D.', '4001 A.D. Beyond New Japan'].entries()) {
+    const offered = { sourceItemId: 'offered-' + index, title, mediaType: 'book', authors: ['Writer'], externalIds: { isbn: '9780306406157' } };
+    const reply = handle(db, { type: 'MATCH_ITEMS', apiVersion: 1, items: F.galacticRequestItems([offered]) });
+    assert.equal(reply.ok, true);
+    const result = reply.results[0];
+    assert.equal(F.resolveProduct(offered, [], [], () => result).state, 'owned-elsewhere', title);
+    if (title === '4001 A.D.') {
+      assert.deepEqual(result.matches.map(item => item.title), ['4001 A.D. TPB']);
+      assert.deepEqual(result.possibleMatches.map(item => item.title), ['4001 A.D.: Beyond New Japan']);
+    }
+  }
+  const offered = { sourceItemId: 'offered-conflict', title: 'Harbinger Vol. 1: Omega Rising', mediaType: 'book', externalIds: { isbn: '9780140328721' } };
+  const conflict = normalize({ provider: 'humble', providerItemId: 'conflicting-copy', title: offered.title, mediaType: 'book', ownership: 'owned', metadata: { isbn: '9780306406157' } });
+  const reply = handle({ providerItems: { [conflict.id]: conflict } }, { type: 'MATCH_ITEMS', apiVersion: 1, items: F.galacticRequestItems([offered]) });
+  assert.equal(F.resolveProduct(offered, [], [], () => reply.results[0]).state, 'possible');
+});
 test('unsuccessful, incompatible, duplicated and malformed API results stay incomplete with safe visible reasons',async()=>{
   const request={requestId:'one',title:'Title',mediaType:'game'},good={requestId:'one',matches:[]};
   for(const response of [{ok:false,apiVersion:1,results:[good],error:'SECRET'},{ok:true,apiVersion:2,results:[good]},{ok:true,apiVersion:1,results:[good,good]},{ok:true,apiVersion:1,results:[{...good,matches:[null]}]},{ok:true,apiVersion:1,results:[{...good,matches:[{title:'Title',provider:'Fanatical',ownership:'owned'}]}]},{ok:true,apiVersion:1,results:[]}]){const result=await F.queryGalacticItems([request],async()=>response);assert.equal(result.results.size,0);assert(result.failed.has('one'));assert(result.failures.size>0);assert(!JSON.stringify([...result.failures]).includes('SECRET'));}
