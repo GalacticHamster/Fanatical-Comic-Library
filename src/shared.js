@@ -6,6 +6,8 @@
   const FORMAT_WORDS = /\b(?:pdf|cbz|cbr|epub|mobi)\b/giu;
   const indexCache = new WeakMap();
   const contentsIndexCache = new WeakMap();
+  // A large private GL database can take several seconds to read and match.
+  const GALACTIC_REQUEST_TIMEOUT_MS = 30000;
 
   function normalizeTitle(value) {
     let result = String(value ?? '').normalize('NFKC')
@@ -562,14 +564,14 @@
     if (resolved.lookupIncomplete && resolved.state === 'new') resolved.state = 'unchecked';
     return resolved;
   }
-  async function queryGalacticItems(requests, send, timeoutMs = 3500) {
+  async function queryGalacticItems(requests, send, timeoutMs = GALACTIC_REQUEST_TIMEOUT_MS) {
     const results=new Map(),failed=new Set(),failures=new Set();
     const record=row=>row&&typeof row==='object'&&['steam','gog','epic','amazon-games','audible','kindle','amazon-video','fandango-at-home','kobo','fanatical','humble'].includes(row.provider)&&typeof row.title==='string'&&row.title.trim()&&row.title.length<=500&&['owned','claimed','unknown','subscription','rental','borrowed'].includes(row.ownership)&&(row.relationship===undefined||['same-work','same-edition','contains'].includes(row.relationship));
     const entries=value=>Array.isArray(value)&&value.length<=2000&&value.every(entry=>entry&&typeof entry.series==='string'&&typeof entry.number==='string'&&Array.isArray(entry.evidence??[])&&(entry.evidence??[]).every(record));
     for(const batch of galacticBatches(requests)){
       let timer,reason='Connection unavailable';
       try{
-        const response=await Promise.race([send({type:'MATCH_ITEMS',apiVersion:1,items:batch}),new Promise((_,reject)=>{timer=setTimeout(()=>{reason='Connection timed out';reject(Error('timeout'));},timeoutMs);})]);
+        const response=await Promise.race([send({type:'MATCH_ITEMS',apiVersion:1,items:batch}),new Promise((_,reject)=>{timer=setTimeout(()=>{reason=`Connection timed out after ${timeoutMs/1000} seconds; retry the checks`;reject(Error('timeout'));},timeoutMs);})]);
         if(response?.ok!==true){reason='API response rejected';throw Error(reason);}if(response.apiVersion!==1){reason='Incompatible API version';throw Error(reason);}if(!Array.isArray(response.results)||response.results.length>batch.length){reason='Invalid match response';throw Error(reason);}
         for(const request of batch){
           const rows=response.results.filter(row=>row?.requestId===request.requestId),row=rows[0];
@@ -801,7 +803,7 @@
     return reminders;
   }
 
-  async function companionCall(send,message,timeoutMs=5000){
+  async function companionCall(send,message,timeoutMs=GALACTIC_REQUEST_TIMEOUT_MS){
     let timer;try{const response=await Promise.race([send(message),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Connection timed out.')),timeoutMs);})]);if(response?.ok!==true)throw Error('Galactic Library rejected the request. Check pairing permission.');if(response.apiVersion!==1)throw Error('Incompatible Galactic Library API version.');return response;}catch(error){if(['Connection timed out.','Galactic Library rejected the request. Check pairing permission.','Incompatible Galactic Library API version.'].includes(error.message))throw error;throw Error('Galactic Library connection unavailable.');}finally{clearTimeout(timer);}
   }
   async function galacticCapabilities(send){

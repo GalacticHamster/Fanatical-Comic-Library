@@ -733,7 +733,23 @@
     const legend = document.createElement('div'); legend.className = 'fanatical-library-legend';
     for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partial'], ['possible', 'Possible'], ['unchecked', 'Not checked']]) { const chip = document.createElement('span'); chip.className = `fanatical-library-legend-${state}`; chip.textContent = label; legend.append(chip); }
     element.append(legend);
-    if (state.galacticEnabled) { const galactic = document.createElement('p'); galactic.className = 'fanatical-library-galactic-status'; galactic.textContent = `Galactic Library: ${state.galacticStatus}`; galactic.title = 'Checks catalog and contents evidence with local Galactic Library. Central Fanatical copies are excluded; rescan local orders if the snapshots disagree.'; element.append(galactic); }
+    if (state.galacticEnabled) {
+      const galactic = document.createElement('p'); galactic.className = 'fanatical-library-galactic-status'; galactic.textContent = `Galactic Library: ${state.galacticStatus}`; galactic.title = 'Checks catalog and contents evidence with local Galactic Library. Central Fanatical copies are excluded; rescan local orders if the snapshots disagree.'; element.append(galactic);
+      if (state.failed.size || state.capabilityFailed) {
+        const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'fanatical-library-download fanatical-library-retry-galactic'; retry.textContent = 'Retry Galactic Library checks';
+        retry.addEventListener('click', () => {
+          if (retry.disabled) return;
+          retry.disabled = true;
+          element.setAttribute('aria-busy', 'true');
+          state.keepSummaryDuringRetry = true;
+          if (state.capabilityFailed) state.capabilityId = null;
+          state.revision++; state.summaryDirty = true;
+          // Retain successful results; queryGalactic requests only missing ones.
+          schedule(true);
+        });
+        element.append(retry);
+      }
+    }
     appendNewOnlyFilter(element);
     if (counts.partial) {
       const partial = document.createElement('p'); partial.className = 'fanatical-library-match-note';
@@ -873,7 +889,7 @@
     const revision = state.revision; const pageUrl = location.href;
     const startedAt = performance.now();
     observer?.disconnect();
-    if (!hasStableSummary) showPanel('Fanatical Library: loading ownership status…');
+    if (!hasStableSummary && !(state.keepSummaryDuringRetry && state.url === pageUrl && document.querySelector('.fanatical-library-summary'))) showPanel('Fanatical Library: loading ownership status…');
     try {
       const [parsed, stored] = await Promise.all([loadPublicBundle(current), chrome.storage.local.get({ fanaticalLibraryItems: [], fanaticalHistoricalItems: [], fanaticalProfileLabel: '', fanaticalWishlistItems: [], fanaticalImportSummary: null, galacticLibraryExtensionId: '', fanaticalShowNewItemsOnly: false, fanaticalShowDiagnostics: false,fanaticalSummaryPreferences:{} })]);
       if (revision !== state.revision || pageUrl !== location.href) return;
@@ -933,6 +949,7 @@
     } catch (error) {
       showPanel(`Fanatical Library could not load this bundle: ${String(error?.message ?? 'unknown error')}`, true);
     } finally {
+      state.keepSummaryDuringRetry = false;
       state.rendering = false;
       observer?.observe(document.documentElement, { childList: true, subtree: true });
       if (revision !== state.revision || pageUrl !== location.href) schedule(true);
@@ -967,6 +984,7 @@
     if(changes.fanaticalSummaryPreferences){state.summaryPreferences=F.normalizeSummaryPreferences(changes.fanaticalSummaryPreferences.newValue);document.querySelector('[data-fanatical-library-summary]')?.dispatchEvent(new Event('fanatical-summary-preferences'));}
     if(changes.fanaticalWishlistItems)state.summaryDirty=true;
     if (changes.fanaticalLibraryItems || changes.fanaticalHistoricalItems || changes.fanaticalProfileLabel || changes.galacticLibraryExtensionId) {
+      state.keepSummaryDuringRetry = false;
       state.summaryDirty = true; state.revision++; state.galactic.clear(); state.failed.clear();
     }
     if (changes.fanaticalLibraryItems || changes.fanaticalShowDiagnostics) catalogueState.items = null;

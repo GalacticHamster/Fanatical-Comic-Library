@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {setTimeout as pause} from 'node:timers/promises';
 import {createRelease} from '../scripts/release.mjs';
 const firefox=process.argv.includes('--firefox');
+const slowCentral=process.argv.includes('--slow-central');
 const packaged=process.argv.includes('--release')?await createRelease(undefined,undefined,firefox?'firefox':'chrome'):null;
 const readRuntime=name=>packaged?packaged.files.get(name)?.toString('utf8')??(()=>{throw Error('Absent runtime '+name);})():fs.readFileSync(new URL('../'+name,import.meta.url),'utf8');
 
@@ -40,9 +41,12 @@ values.fanaticalSummaryPreferences=JSON.parse(sessionStorage.getItem('fixture-su
 globalThis.scanFailure = false;
 globalThis.scanScenario = 'new';
 globalThis.centralMode = 'normal';
+globalThis.centralDelayMs = ${slowCentral?4500:0};
+if(${slowCentral})values.fanaticalSummaryPreferences={minimized:true,position:'top-left'};
 globalThis.requests = [];
 globalThis.chrome = {runtime:{id:'a'.repeat(32),sendMessage:async(first,second)=>{
   const message=second||first; requests.push(message);
+  if(message.type==='MATCH_ITEMS'&&centralDelayMs)await new Promise(resolve=>setTimeout(resolve,centralDelayMs));
   if(message.type==='FANATICAL_STORE'){
     const {createSyncStore}=await import('/src/library-data.mjs');
     globalThis.fixtureStore??=createSyncStore(chrome.storage.local);
@@ -294,6 +298,7 @@ try {
 }catch(error){finish({ok:false,error:error.message})}
 `;
 const cards = (kind, items = products) => items.map((product,index) => `<div class="three-column-row"><article class="${kind} faux-block-link">${kind==='PickAndMixCard'&&index===0?'<span class="new-to-bundle-label">New to bundle</span>':''}<div class="cover-container"><img alt="${product.name}"></div><h2 class="card-product-name">${product.name}</h2></article></div>`).join('');
+const slowCentralChecks=common+fs.readFileSync(new URL('./slow-central-checks.js',import.meta.url),'utf8');
 const catalogue = [2, 10, null].map((days, index) => `<li class="HitCardContainer"><article class="HitCard"><a href="https://www.fanatical.com/en/bundle/test-${index}"><img alt="Test ${index}"><h2>Test ${index}</h2></a>${days === null ? '' : `<div class="CountdownTimer__clock">${days} Days Left</div>`}</article></li>`).join('');
 const pendingResults = new Map();
 const server = http.createServer((request, response) => {
@@ -307,6 +312,7 @@ const server = http.createServer((request, response) => {
   if (url === '/mock.js') return send('text/javascript', mock);
   if (url === '/options-check.js') return send('text/javascript', optionsChecks);
   if (url === '/bundle-check.js') return send('text/javascript', bundleChecks);
+  if (url === '/slow-central-check.js') return send('text/javascript', slowCentralChecks);
   if (url === '/catalogue-check.js') return send('text/javascript', catalogueChecks);
   if (url === '/edition-check.js') return send('text/javascript', editionChecks);
   if (url === '/order-check.js') return send('text/javascript', orderChecks);
@@ -323,14 +329,14 @@ const server = http.createServer((request, response) => {
     const isCatalogue = url.endsWith('/books');
     const isEdition = url.endsWith('/test-editions');
     const isContents = url.endsWith('/test-contents');
-    return send('text/html', `<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"><style>.fan-grid-container{display:grid;grid-template-columns:repeat(3,240px);gap:20px}.fanatical-library-pick-mix-reflow{grid-column:1/-1}article{min-height:350px;position:relative}.cover-container{height:310px;overflow:hidden;position:relative}.cover-container img{display:block;width:100%;height:310px}.faux-block-link a,.faux-block-link abbr[title],.faux-block-link button{position:relative;z-index:3}.new-to-bundle-label{position:absolute;top:0;left:0;z-index:3;height:32px}</style></head><body><main>${isCatalogue ? `<ul class="HitCardsRow row">${catalogue}</ul>` : `<section class="tier"><div class="fan-grid-container">${cards(url.includes('pick-and-mix') ? 'PickAndMixCard' : 'bundle-product-card', isContents ? contentsProducts : isEdition ? editionProducts : products)}</div></section>`}</main><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/${isCatalogue ? 'catalogue' : isContents ? 'contents' : isEdition ? 'edition' : 'bundle'}-check.js"></script></body></html>`);
+    return send('text/html', `<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"><style>.fan-grid-container{display:grid;grid-template-columns:repeat(3,240px);gap:20px}.fanatical-library-pick-mix-reflow{grid-column:1/-1}article{min-height:350px;position:relative}.cover-container{height:310px;overflow:hidden;position:relative}.cover-container img{display:block;width:100%;height:310px}.faux-block-link a,.faux-block-link abbr[title],.faux-block-link button{position:relative;z-index:3}.new-to-bundle-label{position:absolute;top:0;left:0;z-index:3;height:32px}</style></head><body><main>${isCatalogue ? `<ul class="HitCardsRow row">${catalogue}</ul>` : `<section class="tier"><div class="fan-grid-container">${cards(url.includes('pick-and-mix') ? 'PickAndMixCard' : 'bundle-product-card', isContents ? contentsProducts : isEdition ? editionProducts : products)}</div></section>`}</main><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/${isCatalogue ? 'catalogue' : isContents ? 'contents' : isEdition ? 'edition' : slowCentral ? 'slow-central' : 'bundle'}-check.js"></script></body></html>`);
   }
   response.writeHead(404).end();
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
   const allRoutes = ['/options', '/en/bundle/test-comics', '/en/pick-and-mix/test-mix', '/en/bundle/books', '/en/bundle/test-editions', '/en/pick-and-mix/test-editions', '/en/orders', '/en/bundle/test-contents', '/en/pick-and-mix/test-contents'];
-  const selectedRoutes=process.argv.slice(2).filter(arg=>!['--release','--firefox'].includes(arg));const routes=selectedRoutes.length?selectedRoutes:allRoutes;
+  const selectedRoutes=process.argv.slice(2).filter(arg=>!['--release','--firefox','--slow-central'].includes(arg));const routes=selectedRoutes.length?selectedRoutes:slowCentral?['/en/bundle/test-comics','/en/pick-and-mix/test-mix']:allRoutes;
   if (routes.some(route => !allRoutes.includes(route))) throw new Error('Unknown browser fixture route');
   for (const [index, route] of routes.entries()) {
     let stopped=Promise.resolve();
