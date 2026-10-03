@@ -4,36 +4,38 @@
   <body>
     <main class="settings">
       <h1>Fanatical Library</h1>
-      <p>Your library stays in this browser. Import directly from your signed-in Fanatical order history or restore a JSON backup.</p>
+      <p>Your library stays in this browser. Import directly from your signed-in Fanatical purchase history or restore a JSON backup.</p>
       <section>
         <h2>Import from Fanatical</h2>
-        <p>Open your Orders page and select <em>Quick scan for new purchases</em>. It checks the order list and retrieves details only for orders not already scanned locally. Use <em>Full scan all purchases</em> only when you need to rebuild the Fanatical library.</p>
-        <button id="open-orders" type="button">Open Fanatical orders importer</button>
+        <p>Sign in to Fanatical in this browser, open the purchase importer, and select <em>Import new purchases</em>. Use <em>Rescan all purchases</em> to rebuild the active account's snapshot from the full purchase history.</p>
+        <details class="settings-help"><summary>How account nicknames work</summary><p>An account nickname is a name you choose for the website account you import, such as personal. It is stored only in this browser; it does not sign you in or detect your login. Only one account snapshot is active for ownership checks. Sign in to the other account on the website, enter its nickname, confirm it, select Replace active account, and use Rescan all purchases to switch. A successful full rescan archives the previous snapshot for backup recovery; archived accounts are not combined with the active library.</p><p><strong>Not yet named</strong> means no account nickname has been established. Confirm a nickname in the importer and run a complete rescan to establish it. The first import automatically requires a full scan.</p></details>
+        <button id="open-orders" type="button">Open Fanatical purchase importer</button>
         <p id="last-import" role="status"></p>
       </section>
       <section>
         <h2>Wishlist and priorities</h2>
-        <p>Add titles here or use Wishlist and purchase planning on a bundle. Priority is your preference from 1 to 100; higher priorities matter more in plans. Wishes are separate from ownership and are included in full backups.</p>
-        <label>Title <input id="wishlist-title" maxlength="500"></label>
-        <label>Media <select id="wishlist-media"><option value="book">Book/comic/manga</option><option value="game">Game</option><option value="audiobook">Audiobook</option><option value="software">Software</option></select></label>
-        <label>Priority (1-100) <input id="wishlist-weight" type="number" min="1" max="100" value="1"></label>
-        <button id="add-wish" type="button">Add to wishlist</button><button id="clear-wishlist" type="button">Clear wishlist</button>
-        <label>Find wishes <input id="wishlist-search" type="search"></label>
-        <p id="wishlist-count"></p><button id="wishlist-previous" type="button">Previous wishes</button><button id="wishlist-next" type="button">Next wishes</button>
-        <ol id="wishlist-list"></ol><p id="wishlist-status" role="status"></p>
+        <p>Add titles here or use Wishlist in a bundle summary. Priority is your preference from 1 to 100; higher priorities matter more in purchase plans. Wishes do not establish ownership.</p><details class="settings-help"><summary>What happens after I add a wish?</summary><p>When you open a supported bundle, the extension compares its items with your saved wishes. Choose the Wishlist purchase goal to see the lowest tier or selection that covers eligible wishes and the priority available at each price. Owned items are excluded; uncertain matches are excluded unless you include them. A wish may have no eligible target in the bundle you opened.</p><p>The extension does not monitor new bundles or send wishlist notifications. Wishlist entries and priorities are local to this extension and are not shared with the other extension or Galactic Library.</p></details>
+        <div class="wishlist-form"><label>Title <input id="wishlist-title" type="text" maxlength="500"></label><label>Media <select id="wishlist-media"><option value="book">Book/comic/manga</option><option value="audiobook">Audiobook</option><option value="game">Game</option><option value="software">Software</option></select></label><label>Priority (1-100) <input id="wishlist-weight" type="number" min="1" max="100" step="1" value="1"></label></div>
+        <div class="actions"><button id="add-wish" type="button">Add to wishlist</button><button id="clear-wishlist" type="button">Clear wishlist</button></div>
+        <label>Find wishes <input id="wishlist-search" type="search" placeholder="Filter by title"></label>
+        <div class="wishlist-navigation"><p id="wishlist-count" role="status"></p><div class="actions"><button id="wishlist-previous" type="button">Previous wishes</button><button id="wishlist-next" type="button">Next wishes</button></div></div>
+        <ol id="wishlist-list"></ol>
+        <div class="actions"><button id="export-wishlist" type="button">Export wishlist</button></div>
+        <label for="wishlist-file">Restore wishlist (replaces this list)</label><input id="wishlist-file" type="file" accept="application/json,.json">
+        <p id="wishlist-status" role="status"></p>
       </section>
       <section>
         <h2>Galactic Library link</h2>
-        <p>Optionally check a current Fanatical bundle against game, book/comic, audiobook and supported software candidates in your other connected libraries. This sends only the bundle identity and contents evidence being checked to your locally installed Galactic Library extension; it never transfers either full library.</p>
-        <p>Fanatical Library extension ID: <code id="fanatical-extension-id">Loading...</code></p>
+        <p>Optionally check bundle items against your linked Galactic Library. Results can include owned items, possible matches with their library titles, and partial matches from reviewed collection contents. Books/comics, audiobooks, games, and supported software are checked separately.</p><p>In Galactic Library, allow this extension's ID shown below. Then paste Galactic Library's extension ID here, save, and test the link. Checks send the bundle title and available identity/contents evidence; they never transfer either full library.</p>
+        <p>Your Fanatical Library extension ID: <code id="fanatical-extension-id">Loading...</code></p>
         <label for="galactic-id">Galactic Library extension ID</label>
-        <input id="galactic-id" autocomplete="off" spellcheck="false">
+        <input id="galactic-id" type="text" autocomplete="off" maxlength="255" spellcheck="false" placeholder="Chrome extension ID or Firefox add-on ID">
         <div class="actions"><button id="save-galactic" type="button">Save link</button><button id="test-galactic" type="button">Test link</button><button id="remove-galactic" type="button">Remove link</button></div>
         <p id="galactic-status" role="status"></p>
       </section>
       <section>
-        <h2>Central entitlement reminders</h2>
-        <p>Load reminders reported by Galactic Library. Purchase or key revelation does not prove destination-platform activation. Missing deadlines remain unknown; reminder details and dismissal are managed centrally.</p>
+        <h2>Key and access reminders</h2>
+        <p>These reminders come from your linked Galactic Library; this extension does not collect Humble-style key-reveal statuses from Fanatical. Select Load reminders to check the central list. Purchase or key revelation does not prove destination-platform activation. Missing deadlines remain unknown; reminder details and dismissal are managed centrally.</p>
         <label>Source <select id="reminder-provider"><option value="fanatical">Fanatical</option><option value="">All providers</option></select></label>
         <button id="load-reminders" type="button">Load reminders</button><button id="review-reminders" type="button">Review in Galactic Library</button>
         <p id="reminder-status" role="status">Reminders have not been checked.</p><button id="reminder-previous" type="button" disabled>Previous reminders</button><button id="reminder-next" type="button" disabled>Next reminders</button><ol id="reminder-list"></ol>
@@ -45,26 +47,27 @@
         <label>Bundle summary position <select id="summary-position"><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option><option value="top-right">Top right</option><option value="top-left">Top left</option></select></label>
         <p id="summary-preferences-status" role="status"></p>
         <label><input id="show-diagnostics" type="checkbox"> Show bundle and catalogue diagnostics</label>
-        <p>Leave this off for a clean bundle summary. Turn it on when troubleshooting loading, matching, or sorting. Diagnostics stay on the page and include only counts, current bundle titles, and match reasons.</p>
+        <p>Leave this off for a cleaner page. Turn it on when troubleshooting loading, matching, or sorting.</p>
       </section>
       <section>
         <h2>Library</h2>
+        <p>Backup restores ownership, purchase origins, profile archives and wishlist. Title catalog exports only titles and catalog identity; it cannot restore purchase evidence. Pairing, display settings, session tokens and scan fingerprints are excluded from backups. Restores reset scan authority for a safe recheck. Clear library removes ownership and scan history, including profile archives; it keeps your wishlist, display preferences and Galactic Library link.</p>
         <p id="library-count">Loading...</p>
         <p id="history-note">No order-history coverage has been checked yet.</p>
         <div class="actions"><button id="export" type="button">Export backup</button><button id="export-catalog" type="button">Export title catalog</button><button id="reset" class="danger" type="button">Clear library</button></div>
-        <p>Backup restores ownership, purchase origins, profile archives and wishlist. Title catalog exports only titles and catalog identity; it cannot restore purchase evidence. Pairing, display settings, session tokens and scan fingerprints are excluded from backups. Restores reset scan authority for a safe recheck. Clear library removes ownership and scan history, including profile archives; it keeps your wishlist, display preferences and Galactic Library link.</p><p id="local-status" role="status"></p>
+        <p id="local-status" role="status"></p>
         <p id="preview-note"></p>
         <ol id="library-preview"></ol>
       </section>
       <section>
         <h2>Restore backup</h2>
-        <p>Choose a Fanatical Library JSON backup exported below. Restoring replaces your local library and, in full backups, your wishlist after confirmation and resets scan history. Your Galactic link and settings are kept. The next quick scan rechecks all completed orders.</p>
+        <p>Choose a backup exported by this Fanatical Library extension. HB and FAN ownership backups are not interchangeable. Restoring replaces your local library and, in full backups, your wishlist after confirmation and resets scan history. Your Galactic link and settings are kept. The next quick scan rechecks all completed orders.</p>
         <input id="import-file" type="file" accept="application/json,.json" aria-label="Import Fanatical Library backup">
         <p id="import-status" role="status"></p>
       </section>
       <section>
         <h2>Privacy</h2>
-        <p>Purchase metadata is stored only in this browser. The importer reads Fanatical's session token only in the Fanatical page context; neither tokens nor raw order responses are stored, exported, or sent to another extension. Quick scans retain only SHA-256 fingerprints of completed-order IDs, never the IDs themselves.</p>
+        <p>Your library, wishlist and preferences stay in this browser. Galactic Library linking exchanges only the match or reminder evidence needed for the action you request; neither full library is transferred.</p><p>Purchase metadata is stored only in this browser. The importer reads Fanatical's session token only in the Fanatical page context; neither tokens nor raw order responses are stored, exported, or sent to another extension. Quick scans retain only SHA-256 fingerprints of completed-order IDs, never the IDs themselves.</p>
       </section>
     </main>
     <script src="shared.js"></script><script type="module" src="options.js"></script>

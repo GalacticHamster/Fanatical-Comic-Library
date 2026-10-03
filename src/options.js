@@ -7,7 +7,14 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
   let libraryBusy = false,wishlist=[],wishlistPage=0;
   function renderWishlist(){
     const filtered=wishlist.filter(item=>item.title.toLowerCase().includes($("#wishlist-search").value.toLowerCase())).sort((a,b)=>b.weight-a.weight||a.title.localeCompare(b.title));wishlistPage=Math.min(wishlistPage,Math.max(0,Math.ceil(filtered.length/50)-1));$("#wishlist-count").textContent=`${filtered.length} wishes; page ${wishlistPage+1} of ${Math.max(1,Math.ceil(filtered.length/50))}.`;$("#wishlist-previous").disabled=wishlistPage===0;$("#wishlist-next").disabled=(wishlistPage+1)*50>=filtered.length;
-    $("#wishlist-list").replaceChildren(...filtered.slice(wishlistPage*50,wishlistPage*50+50).map(item=>{const row=document.createElement("li"),remove=document.createElement("button");row.textContent=`${item.title} (${item.mediaType}); priority ${item.weight} `;remove.type="button";remove.textContent="Remove wish";remove.addEventListener("click",async()=>{try{wishlist=await mutate("wishlist","remove",FanaticalLibrary.wishlistKey(item));renderWishlist();}catch(error){$("#wishlist-status").textContent=error.message;}});row.append(remove);return row;}));
+    $("#wishlist-list").replaceChildren(...filtered.slice(wishlistPage*50,wishlistPage*50+50).map(item=>{
+      const row=document.createElement('li'),title=document.createElement('span'),priority=document.createElement('input'),remove=document.createElement('button');
+      title.className='wish-title';title.textContent=`${item.title} (${item.mediaType})`;
+      priority.type='number';priority.min='1';priority.max='100';priority.step='1';priority.value=String(item.weight);priority.title=`Priority for ${item.title}`;priority.setAttribute('aria-label',priority.title);
+      priority.addEventListener('change',async()=>{try{wishlist=await mutate('wishlist','add',[{...item,weight:Number(priority.value)}]);renderWishlist();$('#wishlist-status').textContent='Wishlist priority saved. Ownership was not changed.';}catch(error){$('#wishlist-status').textContent=error.message;renderWishlist();}});
+      remove.type='button';remove.textContent='Remove';remove.addEventListener('click',async()=>{try{wishlist=await mutate('wishlist','remove',FanaticalLibrary.wishlistKey(item));renderWishlist();}catch(error){$('#wishlist-status').textContent=error.message;}});
+      row.append(title,priority,remove);return row;
+    }));
   }
 
   let reminderGeneration=0,reminderNext=null,reminderHistory=[];
@@ -49,7 +56,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
       ? `Last ${summary.scanMode === 'full' ? 'full' : 'quick'} scan: ${summary.addedProducts} item${summary.addedProducts === 1 ? '' : 's'} added; ${summary.ordersScanned} order${summary.ordersScanned === 1 ? '' : 's'} scanned${summary.ordersSkipped ? ` and ${summary.ordersSkipped} already-scanned order${summary.ordersSkipped === 1 ? '' : 's'} skipped` : ''} on ${new Date(summary.importedAt).toLocaleString()}.`
       : 'No Fanatical import has run yet.';
     const scope=await chrome.storage.local.get({fanaticalProfileLabel:'',fanaticalProfileArchives:[],fanaticalHistoricalItems:[]});
-    $('#library-count').textContent = `Active profile: ${scope.fanaticalProfileLabel||'unassigned'}. ${scope.fanaticalProfileArchives.length} other profile archives (backup only). ${items.length} unique item${items.length === 1 ? '' : 's'} stored locally.`;
+    $('#library-count').textContent = `Active account nickname: ${scope.fanaticalProfileLabel||'Not yet named'}. ${scope.fanaticalProfileArchives.length} other profile archives (backup only). ${items.length} unique item${items.length === 1 ? '' : 's'} stored locally.`;
     const missing=scope.fanaticalHistoricalItems.filter(entry=>entry.profileLabel===scope.fanaticalProfileLabel).length;
     if(missing) $('#library-count').textContent += ' '+missing+' previously recorded products are missing from the current snapshot; these warn as Check ownership and do not prove ownership.';
     $('#history-note').textContent = `${attempt?.status === 'incomplete' ? 'Last scan incomplete: complete order-history coverage could not be confirmed. Previous purchases and the last successful scan were kept. ' : ''}${summary?.historyCoverage ?? 'No order-history coverage has been checked yet.'}`;
@@ -123,8 +130,21 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
 
   for(const selector of ['#summary-minimized','#summary-position'])$(selector).addEventListener('change',async()=>{try{await FanaticalLibrary.storageSet({fanaticalSummaryPreferences:{minimized:$('#summary-minimized').checked,position:$('#summary-position').value}});$('#summary-preferences-status').textContent='Panel preferences saved.';}catch(error){$('#summary-preferences-status').textContent=error.message;}});
   $('#add-wish').addEventListener('click',async()=>{try{wishlist=await mutate('wishlist','add',[{title:$('#wishlist-title').value,mediaType:$('#wishlist-media').value,weight:Number($('#wishlist-weight').value)}]);$('#wishlist-status').textContent='Wish saved. Ownership was not changed.';$('#wishlist-title').value='';renderWishlist();}catch(error){$('#wishlist-status').textContent=error.message;}});
-  $('#clear-wishlist').addEventListener('click',async()=>{if(!confirm('Clear your local wishlist?'))return;try{wishlist=await mutate('wishlist','replace',[]);renderWishlist();}catch(error){$('#wishlist-status').textContent=error.message;}});
+  $('#clear-wishlist').addEventListener('click',async()=>{if(!confirm('Clear your local wishlist? Ownership will not change.'))return;try{wishlist=await mutate('wishlist','replace',[]);renderWishlist();}catch(error){$('#wishlist-status').textContent=error.message;}});
   $('#wishlist-search').addEventListener('input',()=>{wishlistPage=0;renderWishlist();});$('#wishlist-previous').addEventListener('click',()=>{wishlistPage--;renderWishlist();});$('#wishlist-next').addEventListener('click',()=>{wishlistPage++;renderWishlist();});
+
+  $('#export-wishlist').addEventListener('click',async()=>{
+    try{const saved=await chrome.storage.local.get({fanaticalWishlistItems:[]}),list=FanaticalLibrary.normalizeWishlist(saved.fanaticalWishlistItems),link=document.createElement('a');link.href=URL.createObjectURL(new Blob([JSON.stringify({wishlist:list},null,2)],{type:'application/json'}));link.download='fanatical-wishlist.json';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),0);}catch(error){$('#wishlist-status').textContent='Wishlist export failed: '+error.message;}
+  });
+  $('#wishlist-file').addEventListener('change',async()=>{
+    const input=$('#wishlist-file'),file=input.files[0];if(!file)return;
+    try {
+      if(file.size>50*1024*1024)throw Error('Choose a wishlist smaller than 50 MB.');
+      const value=JSON.parse(await file.text()),list=FanaticalLibrary.normalizeWishlist(Array.isArray(value)?value:value.wishlist);
+      if(!confirm(`Replace your wishlist with ${list.length} items? Ownership will not change.`)){$('#wishlist-status').textContent='Wishlist restore cancelled.';return;}
+      wishlist=await mutate('wishlist','replace',list);wishlistPage=0;renderWishlist();$('#wishlist-status').textContent=`Restored ${wishlist.length} wishlist items.`;
+    }catch(error){$('#wishlist-status').textContent='Wishlist restore failed: '+error.message;}finally{input.value='';}
+  });
 
   $('#open-orders').addEventListener('click', () => {
     chrome.tabs.create({ url: 'https://www.fanatical.com/en/orders' });

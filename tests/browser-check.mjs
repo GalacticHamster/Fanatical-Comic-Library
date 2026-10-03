@@ -141,6 +141,10 @@ try {
   $('#load-reminders').click();await wait();assert($('#reminder-list').children.length===50&&$('#reminder-list').textContent.includes('deadline not reported'),'First reminder page or unknown deadline missing');$('#reminder-next').click();await wait();assert($('#reminder-list').children.length===1&&$('#reminder-list').textContent.includes('2026-10-10'),'Reported expiry or second page missing');$('#reminder-previous').click();await wait();assert($('#reminder-list').children.length===50,'Previous reminder page missing');
   $('#show-diagnostics').click();await wait();assert(values.fanaticalShowDiagnostics===true,'Diagnostics setting not saved');
   $('#wishlist-title').value='Manual wish';$('#wishlist-media').value='book';$('#wishlist-weight').value='7';$('#add-wish').click();await wait();assert(values.fanaticalWishlistItems?.[0].weight===7,'Manual wish was not saved');
+  const ownedBeforeWishes=JSON.stringify(values.fanaticalLibraryItems);
+  const priority=$('#wishlist-list input');priority.value='9';priority.dispatchEvent(new Event('change'));await wait();assert(values.fanaticalWishlistItems[0].weight===9,'Saved wish priority was not editable');priority.value='7';priority.dispatchEvent(new Event('change'));await wait();
+  $('#export-wishlist').click();await wait();const wishes=JSON.parse(await exportedBlob.text());assert(wishes.wishlist[0].weight===7&&!wishes.items,'Standalone wishlist export changed format');
+  const wishlistTransfer=new DataTransfer();wishlistTransfer.items.add(new File([JSON.stringify(wishes)],'wishlist.json',{type:'application/json'}));$('#wishlist-file').files=wishlistTransfer.files;$('#wishlist-file').dispatchEvent(new Event('change'));await wait();assert($('#wishlist-status').textContent.startsWith('Restored')&&JSON.stringify(values.fanaticalLibraryItems)===ownedBeforeWishes,'Wishlist restore changed ownership');
   $('#export').click();await wait();
   const backup=JSON.parse(await exportedBlob.text());assert(backup.items.length===1&&!backup.orderFingerprints&&backup.schemaVersion===4&&backup.wishlistItems[0].weight===7,'Backup omitted wishlist or leaked scan authority');
   const upload=async text=>{const transfer=new DataTransfer();transfer.items.add(new File([text],'backup.json',{type:'application/json'}));$('#import-file').files=transfer.files;$('#import-file').dispatchEvent(new Event('change'));for(let attempt=0;attempt<8;attempt++){await wait();if(!$('#import-file').disabled)return;}throw new Error('File import did not finish')};
@@ -198,6 +202,9 @@ try {
   await wait();
   const panel=document.querySelector('#fanatical-library-importer');
   assert(panel,'Orders importer missing');
+  assert(panel.children.length===3&&panel.querySelector('.library-import-profile').children.length===3,'Importer controls are not grouped into three rows');
+  assert(panel.querySelector('.library-import-footer').contains(panel.querySelector('output')),'Importer status is outside the button footer');
+  assert(panel.querySelector('[data-import-mode="new"]').textContent==='Import new purchases'&&panel.querySelector('[data-import-mode="all"]').textContent==='Rescan all purchases','Importer button wording differs');
   const quick=panel.querySelector('[data-import-mode="new"]');const full=panel.querySelector('[data-import-mode="all"]');const status=panel.querySelector('output');
   quick.click();await new Promise(resolve=>setTimeout(resolve,20));
   assert(quick.disabled&&full.disabled,'Scan controls were not disabled while fetching');

@@ -145,9 +145,9 @@ export function createSyncStore(area){
   async function operate(operation,args){
     if(operation==='begin'){
       const [options,tabId]=args;const label=String(options.profileLabel??'').trim();
-      if(!options.confirmed||!label||label.length>100)throw new Error('Enter a profile label and confirm the signed-in Fanatical account.');
+      if(!options.confirmed||!label||label.length>100)throw new Error('Enter an account nickname and confirm the signed-in Fanatical account.');
       const state=await area.get(defaults);const changing=Boolean(state.fanaticalProfileLabel)&&state.fanaticalProfileLabel!==label;
-      if(changing&&(!options.fullScan||!options.switchProfile))throw new Error('Choose Full rescan and explicitly switch profiles.');
+      if(changing&&(!options.fullScan||!options.switchProfile))throw new Error('Choose Rescan all purchases and explicitly select Replace active account.');
       const forceFull=changing||!state.fanaticalProfileLabel;const token=globalThis.crypto.randomUUID();
       await area.set({[key]:{token,tabId,label,changing,fullScan:options.fullScan||forceFull}});
       return {token,forceFull,state:changing?{...defaults}:state};

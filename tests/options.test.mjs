@@ -10,7 +10,7 @@ const item = (title, id = 'product-123456') => ({ source: 'fanatical', sourceIte
 
 async function optionsHarness(initial = {}) {
   const stored = structuredClone(initial); const writes = []; const messages = []; const nodes = new Map();
-  const element = () => ({ textContent: '', value: '', checked: false, disabled: false, files: [], children: [], listeners: {}, addEventListener(type, handler) { this.listeners[type] = handler; }, replaceChildren(...children) { this.children = children; }, append(...children) {this.children.push(...children);}, click() {} });
+  const element = () => ({ textContent: '', value: '', checked: false, disabled: false, files: [], children: [], listeners: {}, addEventListener(type, handler) { this.listeners[type] = handler; }, replaceChildren(...children) { this.children = children; }, append(...children) {this.children.push(...children);}, setAttribute(name,value) {this[name]=value;}, click() {} });
   const get = (selector) => { if (!nodes.has(selector)) nodes.set(selector, element()); return nodes.get(selector); };
   const config = { confirm: true, response: { ok: true, apiVersion: 1, appVersion: '0.1.0' }, failure: false };
   const context = vm.createContext({
@@ -110,7 +110,7 @@ test('save/remove Galactic link and diagnostics switch persist only their intend
 
 
 test('wishlist controls preserve ownership, enforce weights and make every page/search result reachable',async()=>{
-  const ui=await optionsHarness({fanaticalLibraryItems:[item('Owned')],fanaticalWishlistItems:Array.from({length:61},(_,n)=>({title:'Wish '+n,mediaType:'book',weight:1}))});assert.equal(ui.get('#wishlist-list').children.length,50);await ui.click('#wishlist-next');assert.equal(ui.get('#wishlist-list').children.length,11);ui.get('#wishlist-search').value='Wish 60';ui.get('#wishlist-search').listeners.input();assert.equal(ui.get('#wishlist-list').children.length,1);assert(ui.get('#wishlist-list').children[0].textContent.includes('Wish 60'));ui.get('#wishlist-title').value='Preferred';ui.get('#wishlist-media').value='game';ui.get('#wishlist-weight').value='5';await ui.click('#add-wish');assert.equal(ui.stored.fanaticalWishlistItems.length,62);assert.equal(ui.stored.fanaticalLibraryItems[0].title,'Owned');ui.get('#wishlist-weight').value='0';ui.get('#wishlist-title').value='Invalid';await ui.click('#add-wish');assert.equal(ui.stored.fanaticalWishlistItems.length,62);assert.match(ui.get('#wishlist-status').textContent,/weight/);
+  const ui=await optionsHarness({fanaticalLibraryItems:[item('Owned')],fanaticalWishlistItems:Array.from({length:61},(_,n)=>({title:'Wish '+n,mediaType:'book',weight:1}))});assert.equal(ui.get('#wishlist-list').children.length,50);await ui.click('#wishlist-next');assert.equal(ui.get('#wishlist-list').children.length,11);ui.get('#wishlist-search').value='Wish 60';ui.get('#wishlist-search').listeners.input();assert.equal(ui.get('#wishlist-list').children.length,1);assert(ui.get('#wishlist-list').children[0].children[0].textContent.includes('Wish 60'));ui.get('#wishlist-title').value='Preferred';ui.get('#wishlist-media').value='game';ui.get('#wishlist-weight').value='5';await ui.click('#add-wish');assert.equal(ui.stored.fanaticalWishlistItems.length,62);assert.equal(ui.stored.fanaticalLibraryItems[0].title,'Owned');ui.get('#wishlist-weight').value='0';ui.get('#wishlist-title').value='Invalid';await ui.click('#add-wish');assert.equal(ui.stored.fanaticalWishlistItems.length,62);assert.match(ui.get('#wishlist-status').textContent,/weight/);
 });
 
 test('reminder view supports pages, filters, unavailable capability and pairing resets without writing ownership',async()=>{
@@ -121,4 +121,14 @@ test('reminder view supports pages, filters, unavailable capability and pairing 
 test('late reminder responses cannot repopulate a removed Galactic link',async()=>{
   const ui=await optionsHarness({galacticLibraryExtensionId:'b'.repeat(32)});let release;const pending=new Promise(resolve=>release=resolve);ui.config.respond=message=>message.type==='GET_STATUS'?{ok:true,apiVersion:1,capabilities:{entitlementReminders:true}}:pending;
   const load=ui.click('#load-reminders');await new Promise(resolve=>setTimeout(resolve,5));await ui.click('#remove-galactic');release({ok:true,apiVersion:1,total:0,nextOffset:null,reminders:[]});await load;assert.equal(ui.get('#reminder-list').children.length,0);assert.match(ui.get('#reminder-status').textContent,/have not been checked/);assert.equal(ui.get('#load-reminders').disabled,false);
+});
+
+
+test('wishlist priority editing and restore are validated, confirmed and independent of ownership',async()=>{
+  const ui=await optionsHarness({fanaticalLibraryItems:[item('Owned')],fanaticalWishlistItems:[{title:'Keep wish',mediaType:'book',weight:1}]});
+  const before=structuredClone(ui.stored.fanaticalLibraryItems),priority=ui.get('#wishlist-list').children[0].children[1];priority.value='9';await priority.listeners.change();assert.equal(ui.stored.fanaticalWishlistItems[0].weight,9);
+  const input=ui.get('#wishlist-file'),upload=async list=>{input.files=[{size:100,text:async()=>JSON.stringify({wishlist:list})}];await input.listeners.change();};
+  await upload([{title:'Bad wish',mediaType:'book',weight:0}]);assert.equal(ui.stored.fanaticalWishlistItems[0].weight,9);assert.match(ui.get('#wishlist-status').textContent,/failed/);
+  ui.config.confirm=false;await upload([{title:'Replacement',mediaType:'game',weight:2}]);assert.equal(ui.stored.fanaticalWishlistItems[0].title,'Keep wish');
+  ui.config.confirm=true;await upload([{title:'Replacement',mediaType:'game',weight:2}]);assert.equal(ui.stored.fanaticalWishlistItems[0].title,'Replacement');assert.deepEqual(ui.stored.fanaticalLibraryItems,before);
 });
