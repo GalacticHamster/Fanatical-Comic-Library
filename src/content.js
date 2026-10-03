@@ -334,16 +334,20 @@
     panel.id = 'fanatical-library-importer';
     panel.className = 'fanatical-library-importer';
     const heading = document.createElement('strong'); heading.textContent = 'Fanatical Library';
-    const description = document.createElement('span'); description.textContent = 'Import completed Fanatical products from this order history into this browser.';
+    const description = document.createElement('span'); description.textContent = 'Import purchases from the Fanatical account signed in to this browser.';
     const actions = document.createElement('div'); actions.className = 'fanatical-library-import-actions';
-    const quick = document.createElement('button'); quick.type = 'button'; quick.dataset.importMode = 'new'; quick.textContent = 'Quick scan for new purchases';
-    const full = document.createElement('button'); full.type = 'button'; full.dataset.importMode = 'all'; full.textContent = 'Full scan all purchases'; full.title = 'Reprocesses every completed order and rebuilds the local Fanatical library.';
+    const quick = document.createElement('button'); quick.type = 'button'; quick.dataset.importMode = 'new'; quick.textContent = 'Import new purchases';
+    const full = document.createElement('button'); full.type = 'button'; full.dataset.importMode = 'all'; full.textContent = 'Rescan all purchases'; full.title = 'Reprocesses every completed order and rebuilds the local Fanatical library.';
     actions.append(quick, full);
     const status = document.createElement('output'); status.setAttribute('aria-live', 'polite');
-    const profileControls=document.createElement('div');
-    profileControls.innerHTML='<label>Account/profile label <input data-profile-label maxlength="100" placeholder="e.g. personal"></label><br><label><input type="checkbox" data-profile-confirm> Signed-in account matches this label</label><br><label><input type="checkbox" data-profile-switch> Switch active profile on full rescan</label>';
+    const profileControls=document.createElement('div'); profileControls.className='library-import-profile';
+    profileControls.innerHTML='<label>Account nickname <input data-profile-label maxlength="100" placeholder="e.g. personal"></label><label><input type="checkbox" data-profile-confirm> The signed-in account matches this nickname</label><label><input type="checkbox" data-profile-switch> Replace active account on full rescan</label>';
     chrome.storage.local.get({fanaticalProfileLabel:''}).then(saved=>{const input=profileControls.querySelector('[data-profile-label]');if(!input.value)input.value=saved.fanaticalProfileLabel;}).catch(()=>{});
-    panel.append(heading, description, profileControls, actions, status);
+    const intro=document.createElement('div'); intro.className='library-import-description';
+    const help=document.createElement('details');help.innerHTML='<summary>How account nicknames work</summary><p>Choose a local nickname, such as personal. It does not sign you in or detect your account. Confirm the account signed in on this website before importing. Only the active account is checked for ownership. To change accounts, sign in on the website, enter a different nickname, select Replace active account, and rescan all purchases. A successful full rescan archives the previous account for backup recovery.</p>';
+    intro.append(heading,' ',description,help);
+    const footer=document.createElement('div');footer.className='library-import-footer';footer.append(status,actions);
+    panel.append(intro,profileControls,footer);
     document.body.prepend(panel);
     const buttons = [quick, full];
     for (const button of buttons) button.addEventListener('click', async () => {

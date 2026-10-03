@@ -34,8 +34,8 @@ test('library management follows the Fanatical Orders importer flow', () => {
   assert.match(popup, /openOptionsPage/);
   assert.match(options, /https:\/\/www\.fanatical\.com\/en\/orders/);
   assert.match(content, /isOrderHistoryPage/);
-  assert.match(content, /Quick scan for new purchases/);
-  assert.match(content, /Full scan all purchases/);
+  assert.match(content, /Import new purchases/);
+  assert.match(content, /Rescan all purchases/);
 });
 
 test('bundle summary distinguishes partial and possible matches and recommends a tier', () => {
