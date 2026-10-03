@@ -8,8 +8,9 @@
       <section>
         <h2>Import from Fanatical</h2>
         <p>Sign in to Fanatical in this browser, open the purchase importer, and select <em>Import new purchases</em>. Use <em>Rescan all purchases</em> to rebuild the active account's snapshot from the full purchase history.</p>
-        <details class="settings-help"><summary>How account nicknames work</summary><p>An account nickname is a name you choose for the website account you import, such as personal. It is stored only in this browser; it does not sign you in or detect your login. Only one account snapshot is active for ownership checks. Sign in to the other account on the website, enter its nickname, confirm it, select Replace active account, and use Rescan all purchases to switch. A successful full rescan archives the previous snapshot for backup recovery; archived accounts are not combined with the active library.</p><p><strong>Not yet named</strong> means no account nickname has been established. Confirm a nickname in the importer and run a complete rescan to establish it. The first import automatically requires a full scan.</p></details>
+        <details class="settings-help"><summary>How account nicknames work</summary><p>A nickname labels a website account locally; it does not detect your login. Use Saved accounts to switch to an existing snapshot without a full rescan. Rename account changes only its name and preserves scan history. For a new account, sign in on the website, enter a new nickname in the importer, select Save a new account, and rescan all purchases once. Only the active account is matched; other saved accounts are kept separately.</p><p>Not yet named means no account nickname has been established. Confirm a nickname in the importer; the first import automatically requires a full scan.</p></details>
         <button id="open-orders" type="button">Open Fanatical purchase importer</button>
+        <div id="account-profiles"></div>
         <p id="last-import" role="status"></p>
       </section>
       <section>
@@ -51,7 +52,7 @@
       </section>
       <section>
         <h2>Library</h2>
-        <p>Backup restores ownership, purchase origins, profile archives and wishlist. Title catalog exports only titles and catalog identity; it cannot restore purchase evidence. Pairing, display settings, session tokens and scan fingerprints are excluded from backups. Restores reset scan authority for a safe recheck. Clear library removes ownership and scan history, including profile archives; it keeps your wishlist, display preferences and Galactic Library link.</p>
+        <p>Backup restores ownership, purchase origins, profile archives and wishlist. Title catalog exports only titles and catalog identity; it cannot restore purchase evidence. Pairing, display settings, session tokens and scan fingerprints are excluded from backups. Restores reset scan authority for a safe recheck. Clear library removes all saved accounts, ownership and scan history; it keeps your wishlist, display preferences and Galactic Library link.</p>
         <p id="library-count">Loading...</p>
         <p id="history-note">No order-history coverage has been checked yet.</p>
         <div class="actions"><button id="export" type="button">Export backup</button><button id="export-catalog" type="button">Export title catalog</button><button id="reset" class="danger" type="button">Clear library</button></div>
@@ -61,7 +62,7 @@
       </section>
       <section>
         <h2>Restore backup</h2>
-        <p>Choose a backup exported by this Fanatical Library extension. HB and FAN ownership backups are not interchangeable. Restoring replaces your local library and, in full backups, your wishlist after confirmation and resets scan history. Your Galactic link and settings are kept. The next quick scan rechecks all completed orders.</p>
+        <p>Choose a backup exported by this Fanatical Library extension. HB and FAN ownership backups are not interchangeable. Restoring replaces all saved accounts, your local library and, in full backups, your wishlist after confirmation and resets scan history. Your Galactic link and settings are kept. The next quick scan rechecks all completed orders.</p>
         <input id="import-file" type="file" accept="application/json,.json" aria-label="Import Fanatical Library backup">
         <p id="import-status" role="status"></p>
       </section>

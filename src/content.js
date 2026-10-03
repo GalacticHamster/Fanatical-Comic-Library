@@ -341,14 +341,16 @@
     actions.append(quick, full);
     const status = document.createElement('output'); status.setAttribute('aria-live', 'polite');
     const profileControls=document.createElement('div'); profileControls.className='library-import-profile';
-    profileControls.innerHTML='<label>Account nickname <input data-profile-label maxlength="100" placeholder="e.g. personal"></label><label><input type="checkbox" data-profile-confirm> The signed-in account matches this nickname</label><label><input type="checkbox" data-profile-switch> Replace active account on full rescan</label>';
+    profileControls.innerHTML='<label>Account nickname <input data-profile-label maxlength="100" placeholder="e.g. personal"></label><label><input type="checkbox" data-profile-confirm> The signed-in account matches this nickname</label><label><input type="checkbox" data-profile-switch> Save a new account on full rescan</label>';
     chrome.storage.local.get({fanaticalProfileLabel:''}).then(saved=>{const input=profileControls.querySelector('[data-profile-label]');if(!input.value)input.value=saved.fanaticalProfileLabel;}).catch(()=>{});
     const intro=document.createElement('div'); intro.className='library-import-description';
-    const help=document.createElement('details');help.innerHTML='<summary>How account nicknames work</summary><p>Choose a local nickname, such as personal. It does not sign you in or detect your account. Confirm the account signed in on this website before importing. Only the active account is checked for ownership. To change accounts, sign in on the website, enter a different nickname, select Replace active account, and rescan all purchases. A successful full rescan archives the previous account for backup recovery.</p>';
+    const help=document.createElement('details');help.innerHTML='<summary>How account nicknames work</summary><p>Choose a local nickname, such as personal. It does not sign you in or detect your account. Only the active account is checked for ownership. Use Saved accounts below to switch back to a saved snapshot, then Import new purchases to refresh it. Rename account keeps its purchases and scan history. For a new account, sign in on the website, enter a new nickname, select Save a new account, and rescan all purchases once.</p>';
     intro.append(heading,' ',description,help);
     const footer=document.createElement('div');footer.className='library-import-footer';footer.append(status,actions);
     panel.append(intro,profileControls,footer);
     document.body.prepend(panel);
+    LibraryAccountProfiles.mount(intro,{request:async(operation,...args)=>{const result=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation,args});if(!result?.ok)throw Error(result?.error??'Saved accounts are unavailable.');return result.result;},keys:['fanaticalProfileLabel','fanaticalProfileArchives'],onActiveChange:(label,previous)=>{const input=profileControls.querySelector('[data-profile-label]');if(previous===undefined&&input.value)return;const changed=input.value!==label;input.value=label;if(changed){profileControls.querySelector('[data-profile-confirm]').checked=false;if(previous!==undefined)status.textContent='Active account: '+(label||'Not yet named')+'. Import new purchases checks for updates.';}profileControls.querySelector('[data-profile-switch]').checked=false;}});
+    profileControls.querySelector('[data-profile-label]').addEventListener('input',()=>{profileControls.querySelector('[data-profile-confirm]').checked=false;});
     const buttons = [quick, full];
     for (const button of buttons) button.addEventListener('click', async () => {
       const fullScan = button.dataset.importMode === 'all';
@@ -357,7 +359,7 @@
       status.textContent = fullScan ? 'Scanning every completed purchase locally...' : 'Checking for new purchases locally...';
       try {
         const response = await chrome.runtime.sendMessage({ type: 'FANATICAL_IMPORT_PURCHASES', fullScan,profileLabel:profileControls.querySelector('[data-profile-label]').value,confirmed:profileControls.querySelector('[data-profile-confirm]').checked,switchProfile:profileControls.querySelector('[data-profile-switch]').checked });
-        status.textContent = response?.ok ? importerResult(response.summary, fullScan) : (response?.error ?? 'Import failed.');
+        status.textContent = response?.ok ? importerResult(response.summary, fullScan||response.summary.scanMode==='full') : (response?.error ?? 'Import failed.');
       } catch {
         status.textContent = 'Import failed. Refresh this signed-in Fanatical Orders page and try again.';
       } finally {

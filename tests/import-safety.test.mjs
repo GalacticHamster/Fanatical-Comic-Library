@@ -39,6 +39,7 @@ function harness({ list = [summary], details = { [orderId]: detail }, headers = 
   } } };
   const worker = vm.runInNewContext(`${source}\n;({ importPurchases, syncStore });`, { chrome, safeId, validateScanResult, createSyncStore, mergeLibraryItems, importFanaticalOrdersInPage });
   return { stored, before, writes, paths, receipts, get maxActive() { return maxActive; }, scan: (fullScan = true) => worker.importPurchases({ fullScan,profileLabel:'fixture',confirmed:true }),
+    store: (operation,args,url='https://www.fanatical.com/en/orders',id=chrome.runtime.id)=>new Promise(resolve=>listener({type:'FANATICAL_STORE',operation,args},{id,url,tab:{id:1}},resolve)),
     send: (fullScan = true) => new Promise((resolve) => listener({ type: 'FANATICAL_IMPORT_PURCHASES', fullScan,profileLabel:'fixture',confirmed:true }, {id:chrome.runtime.id,url:'https://www.fanatical.com/en/orders',tab:{id:1}}, resolve)) };
 }
 
@@ -440,4 +441,13 @@ test('full and quick imports retain separate same-product purchases and multipli
   const orders=[1,2].map(n=>{const id='repeat-order-'+n,leaf={...detail.items[0].bundles[0].games[0]};return {summary:{...summary,_id:id,items:[{name:'Bundle '+n,bundles:[{games:Array.from({length:n},()=>({name:leaf.name}))}]}]},detail:{...detail,_id:id,date:'2026-09-0'+n+'T00:00:00Z',items:[{...detail.items[0],name:'Bundle '+n,bundles:[{games:Array.from({length:n},()=>leaf)}]}]}};});
   const run=harness({respond:async path=>({status:200,data:path==='/api/user/orders'?orders.map(row=>row.summary):orders.find(row=>row.detail._id===path.split('/').at(-1))?.detail})});await run.scan();let item=run.stored.fanaticalLibraryItems[0];assert.equal(run.stored.fanaticalLibraryItems.length,1);assert.equal(item.purchaseOrigins.length,2);assert.deepEqual(item.purchaseOrigins.map(row=>row.quantity),[1,2]);assert.equal(item.bundle.title,'Bundle 2');
   const third=structuredClone(orders[0]);third.summary._id=third.detail._id='repeat-order-3';third.detail.date='2026-09-03T00:00:00Z';orders.push(third);await run.scan(false);item=run.stored.fanaticalLibraryItems[0];assert.equal(item.purchaseOrigins.length,3);await run.scan(false);assert.equal(run.stored.fanaticalLibraryItems[0].purchaseOrigins.length,3);assert(!JSON.stringify(run.stored).includes('repeat-order'));
+});
+
+
+test('profile operations are limited to own settings and order pages, with explicit account confirmation',async()=>{
+  const run=harness(),before=structuredClone(run.stored),args=[{profileLabel:'fixture',expectedActiveLabel:'fixture',newLabel:'personal',confirmed:true}];
+  for(const url of ['https://www.fanatical.com/en/bundle/test','https://www.fanatical.com.evil.test/en/orders','https://other.example/en/orders'])for(const operation of ['selectProfile','renameProfile']){const reply=await run.store(operation,args,url);assert.equal(reply.ok,false);assert.match(reply.error,/Untrusted/);assert.deepEqual(run.stored,before);}
+  assert.equal((await run.store('renameProfile',args,'https://www.fanatical.com/en/orders','foreign')).ok,false);
+  const noConfirm=await run.store('renameProfile',[{...args[0],confirmed:false}]);assert.equal(noConfirm.ok,false);assert.deepEqual(run.stored,before);
+  assert.equal((await run.store('profiles',[])).ok,true);assert.equal((await run.store('renameProfile',args,'chrome-extension://'+'a'.repeat(32)+'/src/options.html')).ok,true);assert.equal(run.stored.fanaticalProfileLabel,'personal');
 });

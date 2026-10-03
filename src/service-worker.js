@@ -92,7 +92,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if(message?.type==='FANATICAL_STORE'){
-    if(_sender?.id!==chrome.runtime.id||typeof _sender.url!=='string'||!(_sender.url.startsWith(chrome.runtime.getURL(''))||['patch','wishlist'].includes(message.operation)&&_sender.url.startsWith('https://www.fanatical.com/'))||!['restore','clear','patch','unlink','wishlist','backup'].includes(message.operation)){sendResponse({ok:false,error:'Untrusted storage request.'});return false;}
+    const own=_sender?.id===chrome.runtime.id,url=String(_sender?.url??''),extensionPage=own&&url.startsWith(chrome.runtime.getURL(''));
+    const fanaticalPage=own&&url.startsWith('https://www.fanatical.com/'),accountOperation=['profiles','selectProfile','renameProfile'].includes(message.operation);
+    const ordersPage=fanaticalPage&&/^https:\/\/www\.fanatical\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?orders\/?(?:[?#]|$)/iu.test(url);
+    if(!['restore','clear','patch','unlink','wishlist','backup','profiles','selectProfile','renameProfile'].includes(message.operation)||!(extensionPage||fanaticalPage&&['patch','wishlist'].includes(message.operation)||accountOperation&&ordersPage)){sendResponse({ok:false,error:'Untrusted storage request.'});return false;}
     syncStore.execute(message.operation,message.args).then(result=>sendResponse({ok:true,result}),error=>sendResponse({ok:false,error:error.message}));return true;
   }
   if (message?.type === 'FANATICAL_IMPORT_PURCHASES') {

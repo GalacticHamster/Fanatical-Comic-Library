@@ -141,13 +141,48 @@ export function backupRestoreState(items, backup={}) {
 
 export function createSyncStore(area){
   let tail=Promise.resolve();const key='fanaticalSyncControl';
-  const defaults={fanaticalLibraryItems:[],fanaticalScannedOrderFingerprints:[],fanaticalProfileLabel:'',fanaticalProfileArchives:[],fanaticalHistoricalItems:[]};
+  const defaults={fanaticalLibraryItems:[],fanaticalScannedOrderFingerprints:[],fanaticalProfileLabel:'',fanaticalProfileArchives:[],fanaticalHistoricalItems:[],fanaticalImportSummary:null,fanaticalLastScanAttempt:null};
   async function operate(operation,args){
+    function archive(state){
+      const fingerprints=state.fanaticalScannedOrderFingerprints;
+      if(!Array.isArray(fingerprints)||fingerprints.some(value=>typeof value!=='string'||!/^[a-f0-9]{64}$/.test(value)))throw Error('Saved account scan history is invalid.');
+      return {profileLabel:state.fanaticalProfileLabel,items:parseLibraryBackup({schemaVersion:1,items:state.fanaticalLibraryItems}),historicalItems:parseHistoricalItems(state.fanaticalHistoricalItems,state.fanaticalProfileLabel),archivedAt:new Date().toISOString(),localScanState:{fingerprints:[...new Set(fingerprints)],summary:state.fanaticalImportSummary,attempt:state.fanaticalLastScanAttempt}};
+    }
+    if(operation==='profiles'){
+      const state=await area.get(defaults),unique=new Map(state.fanaticalProfileArchives.map(entry=>[entry.profileLabel,entry]));
+      if(state.fanaticalProfileLabel)unique.delete(state.fanaticalProfileLabel);
+      return {activeLabel:state.fanaticalProfileLabel,profiles:[...(state.fanaticalProfileLabel?[{label:state.fanaticalProfileLabel,active:true,itemCount:state.fanaticalLibraryItems.length}]:[]),...[...unique.values()].map(entry=>({label:entry.profileLabel,active:false,itemCount:entry.items.length}))]};
+    }
+    if(operation==='selectProfile'||operation==='renameProfile'){
+      const [options]=args,state=await area.get(defaults),label=String(options.profileLabel??'').trim();
+      if(options.confirmed!==true)throw Error('Confirm the selected account before continuing.');
+      if(options.expectedActiveLabel!==state.fanaticalProfileLabel)throw Error('The active account changed. Review the saved accounts and try again.');
+      const selected=label===state.fanaticalProfileLabel&&label?null:[...state.fanaticalProfileArchives].reverse().find(entry=>entry.profileLabel===label);
+      if(!label||label!==state.fanaticalProfileLabel&&!selected)throw Error('This saved account is unavailable. Refresh the account list.');
+      if(operation==='renameProfile'){
+        const next=String(options.newLabel??'').trim();
+        if(!next||next.length>100)throw Error('Enter an account nickname of 1 to 100 characters.');
+        if(next===label)return true;
+        if(next===state.fanaticalProfileLabel||state.fanaticalProfileArchives.some(entry=>entry.profileLabel===next))throw Error('That account nickname is already in use.');
+        const renameHistory=rows=>(rows??[]).map(entry=>({...entry,profileLabel:next}));
+        const archives=state.fanaticalProfileArchives.map(entry=>entry.profileLabel===label?{...entry,profileLabel:next,historicalItems:renameHistory(entry.historicalItems)}:entry);
+        await area.set({fanaticalProfileArchives:archives,...(label===state.fanaticalProfileLabel?{fanaticalProfileLabel:next,fanaticalHistoricalItems:renameHistory(state.fanaticalHistoricalItems)}:{}),[key]:null});return true;
+      }
+      if(label===state.fanaticalProfileLabel)return true;
+      if(!state.fanaticalProfileLabel&&state.fanaticalLibraryItems.length)throw Error('Confirm a nickname for the current library through the importer before switching saved accounts.');
+      const items=parseLibraryBackup({schemaVersion:1,items:selected.items}),history=parseHistoricalItems(selected.historicalItems??[],label),scan=selected.localScanState;
+      if(scan&&(!Array.isArray(scan.fingerprints)||scan.fingerprints.some(value=>typeof value!=='string'||!/^[a-f0-9]{64}$/.test(value))))throw Error('Saved account scan history is invalid.');
+      const archives=state.fanaticalProfileArchives.filter(entry=>entry.profileLabel!==label&&entry.profileLabel!==state.fanaticalProfileLabel);
+      if(state.fanaticalProfileLabel)archives.push(archive(state));
+      if(archives.length>100)throw Error('Too many saved accounts. Export a backup first.');
+      await area.set({fanaticalLibraryItems:items,fanaticalHistoricalItems:history,fanaticalScannedOrderFingerprints:scan?.fingerprints??[],fanaticalImportSummary:scan?.summary??null,fanaticalLastScanAttempt:scan?.attempt??null,fanaticalProfileLabel:label,fanaticalProfileArchives:archives,[key]:null});return true;
+    }
     if(operation==='begin'){
       const [options,tabId]=args;const label=String(options.profileLabel??'').trim();
       if(!options.confirmed||!label||label.length>100)throw new Error('Enter an account nickname and confirm the signed-in Fanatical account.');
       const state=await area.get(defaults);const changing=Boolean(state.fanaticalProfileLabel)&&state.fanaticalProfileLabel!==label;
-      if(changing&&(!options.fullScan||!options.switchProfile))throw new Error('Choose Rescan all purchases and explicitly select Replace active account.');
+      if(changing&&state.fanaticalProfileArchives.some(entry=>entry.profileLabel===label))throw Error('This account is already saved. Use saved account before importing.');
+      if(changing&&(!options.fullScan||!options.switchProfile))throw new Error('Choose Rescan all purchases and explicitly select Save a new account.');
       const forceFull=changing||!state.fanaticalProfileLabel;const token=globalThis.crypto.randomUUID();
       await area.set({[key]:{token,tabId,label,changing,fullScan:options.fullScan||forceFull}});
       return {token,forceFull,state:changing?{...defaults}:state};
@@ -161,7 +196,7 @@ export function createSyncStore(area){
       const incoming=parseLibraryBackup({schemaVersion:1,items:updates.fanaticalLibraryItems});
       const now=new Date().toISOString(),sameProfile=state.fanaticalProfileLabel===control.label;
       const history=new Map((sameProfile?parseHistoricalItems(state.fanaticalHistoricalItems,control.label):[]).map(entry=>[entry.item.sourceItemId,entry]));
-      if(control.changing){archives.push({profileLabel:state.fanaticalProfileLabel,items:parseLibraryBackup({schemaVersion:1,items:state.fanaticalLibraryItems}),historicalItems:parseHistoricalItems(state.fanaticalHistoricalItems,state.fanaticalProfileLabel),archivedAt:now});if(archives.length>100)throw new Error('Too many archived profiles; export a backup first.');}
+      if(control.changing){const prior=archive(state);for(let n=archives.length-1;n>=0;n--)if(archives[n].profileLabel===prior.profileLabel||archives[n].profileLabel===control.label)archives.splice(n,1);archives.push(prior);if(archives.length>100)throw new Error('Too many archived profiles; export a backup first.');}
       const observed=new Set(incoming.map(item=>item.sourceItemId));
       // Only a successful complete scan of the same confirmed profile infers
       // absence. Quick scans, failures, and switches cannot retire its items.

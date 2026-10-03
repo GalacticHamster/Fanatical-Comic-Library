@@ -71,7 +71,8 @@ try{
         const links=[];if(number<last&&!(broken&&number===2))links.push('</api/user/orders?page='+(number+1)+'>; rel="next"');if(number===1)links.push('</api/user/orders?page='+last+'>; rel="last"');if(links.length)headers.push({name:'Link',value:links.join(', ')});
       }else if(url.origin==='https://www.fanatical.com'&&/^\/api\/user\/orders\/synthetic-order-\d+$/.test(url.pathname)){
         assert.equal(request.method,'GET');paths.push(url.pathname);active++;maxActive=Math.max(maxActive,active);await pause(3);code=200;body=JSON.stringify(detail(Number(url.pathname.split('-').at(-1))));
-        try{await driver.send('Fetch.fulfillRequest',{requestId,responseCode:code,responseHeaders:headers,body:Buffer.from(body).toString('base64')},page);}finally{active--;}return;
+        // End server work when handing off the response; DevTools acknowledgement can arrive after the next fetch starts.
+        active--;await driver.send('Fetch.fulfillRequest',{requestId,responseCode:code,responseHeaders:headers,body:Buffer.from(body).toString('base64')},page);return;
       }
       await driver.send('Fetch.fulfillRequest',{requestId,responseCode:code,responseHeaders:headers,body:Buffer.from(body).toString('base64')},page);
     })().catch(error=>errors.push(error));
@@ -87,6 +88,18 @@ try{
   assert.equal(saved.fanaticalImportSummary.ordersScanned,1);assert.equal(saved.fanaticalImportSummary.ordersSkipped,200);assert.equal(saved.fanaticalImportSummary.coverage.pagesFetched,11);assert.equal(saved.fanaticalLibraryItems[0].purchaseOrigins.length,201);assert.equal(paths.filter(path=>path.includes('synthetic-order')).length,1);console.log('PASS installed Chrome: quick import traverses all 11 pages but retrieves only one new order and preserves prior origins');
   const before=JSON.stringify({items:saved.fanaticalLibraryItems,summary:saved.fanaticalImportSummary,fingerprints:saved.fanaticalScannedOrderFingerprints});broken=true;await evaluate("document.querySelector('[data-import-mode=new]').click();true",page);await wait("!document.querySelector('[data-import-mode=new]').disabled",page);saved=await evaluate('chrome.storage.local.get(null)',options);
   assert.equal(JSON.stringify({items:saved.fanaticalLibraryItems,summary:saved.fanaticalImportSummary,fingerprints:saved.fanaticalScannedOrderFingerprints}),before);assert.equal(saved.fanaticalLastScanAttempt.status,'incomplete');assert.equal(errors.length,0,String(errors[0]));console.log('PASS installed Chrome: broken pagination retains purchases and successful summary, displaying incomplete coverage');
+  broken=false;
+  const savedFingerprints=[...saved.fanaticalScannedOrderFingerprints];
+  await evaluate("document.querySelector('[data-profile-label]').value='other';document.querySelector('[data-profile-confirm]').checked=true;document.querySelector('[data-profile-switch]').checked=true;document.querySelector('[data-import-mode=all]').click();true",page);await wait("!document.querySelector('[data-import-mode=all]').disabled",page);
+  saved=await evaluate('chrome.storage.local.get(null)',options);assert.equal(saved.fanaticalProfileLabel,'other');assert.deepEqual(saved.fanaticalProfileArchives[0].localScanState.fingerprints,savedFingerprints);
+  await wait("document.querySelector('#account-profiles [data-account-list]')?.options.length===2",options);
+  await evaluate("(()=>{const host=document.querySelector('#account-profiles'),picker=host.querySelector('[data-account-list]');picker.value='synthetic';picker.dispatchEvent(new Event('change'));host.querySelector('[data-account-confirm]').checked=true;host.querySelector('[data-account-use]').click();return true;})()",options);
+  await wait("document.querySelector('#account-profiles summary').textContent.includes('active: synthetic')",options);await wait("document.querySelector('[data-profile-label]').value==='synthetic'",page);
+  total=202;paths.length=0;await evaluate("document.querySelector('[data-profile-confirm]').checked=true;document.querySelector('[data-import-mode=new]').click();true",page);await wait("!document.querySelector('[data-import-mode=new]').disabled",page);saved=await evaluate('chrome.storage.local.get(null)',options);
+  assert.equal(saved.fanaticalImportSummary.scanMode,'quick');assert.equal(saved.fanaticalImportSummary.ordersScanned,1);assert.equal(saved.fanaticalImportSummary.ordersSkipped,201);assert.equal(paths.filter(path=>path.includes('synthetic-order')).length,1);console.log('PASS installed Chrome: saved account switch restores private scan history and quick import fetches only its one new order');
+  await evaluate("(()=>{const host=document.querySelector('#account-profiles');host.querySelector('[data-account-name]').value='personal';host.querySelector('[data-account-rename]').click();return true;})()",options);await wait("document.querySelector('#account-profiles summary').textContent.includes('active: personal')",options);
+  saved=await evaluate('chrome.storage.local.get(null)',options);assert.equal(saved.fanaticalScannedOrderFingerprints.length,202);assert.equal(saved.fanaticalLibraryItems[0].purchaseOrigins.length,202);console.log('PASS installed Chrome: account rename preserves all purchase origins and incremental scan history');
+
 }finally{
   if(child){child.kill();await Promise.race([exited,pause(3000)]);}
   const target=resolve(temporary),base=resolve(tmpdir());if(!target.startsWith(base+sep)||!target.slice(base.length+1).startsWith('fanatical-runtime-test-'))throw Error('Unsafe runtime test cleanup.');await rm(target,{recursive:true,force:true,maxRetries:5,retryDelay:200});

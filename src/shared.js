@@ -905,3 +905,43 @@
   async function storageSet(updates){const response=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'patch',args:[updates]});if(!response?.ok)throw new Error(response?.error??'Settings storage is unavailable.');}
   global.FanaticalLibrary = { normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
 }(globalThis));
+
+/* Identical account picker in both companions; all changes use the serialized writer. */
+(function(global){
+  function mount(host,{request,keys,onActiveChange=()=>{}}){
+    if(!host?.ownerDocument)return {refresh:async()=>{}};
+    const details=document.createElement('details');details.className='account-manager';
+    details.innerHTML='<summary>Saved accounts</summary><p>Use a saved account to restore its library and scan history. Sign in to that website account separately; this selector does not change your login. Only the active account is used for ownership checks.</p><label>Saved account <select data-account-list></select></label><label><input type="checkbox" data-account-confirm> The website is signed in to the selected account</label><div class="account-actions"><button type="button" data-account-use>Use saved account</button></div><label>New nickname for selected account <input data-account-name maxlength="100" placeholder="e.g. personal"></label><div class="account-actions"><button type="button" data-account-rename>Rename account</button></div><p>Renaming changes only this local name. For a new website account, enter a new nickname in the purchase importer and use Rescan all purchases with Save a new account selected.</p><p data-account-status role="status" aria-live="polite"></p>';
+    host.append(details);
+    const list=details.querySelector('[data-account-list]'),confirmed=details.querySelector('[data-account-confirm]'),name=details.querySelector('[data-account-name]'),use=details.querySelector('[data-account-use]'),rename=details.querySelector('[data-account-rename]'),status=details.querySelector('[data-account-status]');
+    let data={activeLabel:'',profiles:[]},active,revision=0,busy=false;
+    const controls=()=>{list.disabled=confirmed.disabled=name.disabled=busy||!data.profiles.length;use.disabled=busy||!list.value||list.value===data.activeLabel;rename.disabled=busy||!list.value;};
+    async function refresh(){
+      const generation=++revision;
+      try{
+        const next=await request('profiles');if(generation!==revision)return;
+        const previous=active,selected=list.value;data=next;active=next.activeLabel;
+        list.replaceChildren(...next.profiles.map(profile=>{const option=document.createElement('option');option.value=profile.label;option.textContent=profile.label+(profile.active?' (active)':'')+' - '+profile.itemCount+' items';return option;}));
+        list.value=previous===active&&next.profiles.some(profile=>profile.label===selected)?selected:active||next.profiles[0]?.label||'';
+        if(previous!==active||name.value===''){name.value=list.value;confirmed.checked=false;}
+        details.querySelector('summary').textContent='Saved accounts ('+next.profiles.length+')'+(active?' - active: '+active:' - not yet named');
+        controls();if(previous!==active)onActiveChange(active,previous);
+      }catch(error){if(generation===revision)status.textContent='Could not load saved accounts: '+error.message;}
+    }
+    list.addEventListener('change',()=>{confirmed.checked=false;name.value=list.value;controls();});
+    use.addEventListener('click',async()=>{
+      if(!confirmed.checked){status.textContent='Confirm the website is signed in to the selected account first.';return;}
+      const label=list.value;busy=true;controls();
+      try{await request('selectProfile',{profileLabel:label,expectedActiveLabel:data.activeLabel,confirmed:true});await refresh();confirmed.checked=false;status.textContent='Using '+label+'. Its saved library is active; Import new purchases checks for changes without a mandatory full rescan.';}
+      catch(error){status.textContent=error.message;await refresh();}finally{busy=false;controls();}
+    });
+    rename.addEventListener('click',async()=>{
+      const label=list.value,next=name.value.trim();busy=true;controls();
+      try{await request('renameProfile',{profileLabel:label,newLabel:next,expectedActiveLabel:data.activeLabel,confirmed:true});await refresh();list.value=next;name.value=next;confirmed.checked=false;status.textContent='Renamed '+label+' to '+next+'. Purchases and scan history were kept; no scan was started.';}
+      catch(error){status.textContent=error.message;await refresh();}finally{busy=false;controls();}
+    });
+    chrome.storage.onChanged?.addListener((changes,area)=>{if(area==='local'&&keys.some(key=>changes[key]))refresh();});
+    refresh();return {refresh};
+  }
+  global.LibraryAccountProfiles={mount};
+}(globalThis));

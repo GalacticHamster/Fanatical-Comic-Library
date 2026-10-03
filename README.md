@@ -73,7 +73,7 @@ fanaticalImportSummary: {
 
 fanaticalWishlistItems: Array<{title, mediaType, weight: 1..100, identity fields?}>
 fanaticalProfileLabel: string
-fanaticalProfileArchives: Array<{profileLabel, items, historicalItems}> // backup only
+fanaticalProfileArchives: Array<{profileLabel, items, historicalItems, localScanState?}> // inactive, selectable snapshots
 fanaticalHistoricalItems: Array<{profileLabel, item, missingSince}> // review only
 fanaticalSyncControl: {revision, lease} // queued worker coordination
 
@@ -203,8 +203,7 @@ evidence came from ranges, totals, a next-page chain, or just a bare array.
 A valid empty array is distinguished from an unreadable response. If the list
 omits previously scanned orders (including an unexpectedly empty list), the
 scan refuses to declare complete coverage. This conservative guard also means
-switching Fanatical accounts requires a confirmed profile label and a deliberate
-full-rescan switch. Previous profiles are archived and never contribute active ownership. No raw order IDs or response bodies leave the
+switching to a saved Fanatical account requires website-account confirmation and restores only that snapshot. New accounts require an initial full rescan. Inactive snapshots never contribute active ownership. No raw order IDs or response bodies leave the
 page context.
 
 ## Automated checks
@@ -290,8 +289,15 @@ Wishlist priorities range from 1 to 100 and affect planning without establishing
 
 ## Imports and settings
 
-The purchase importer groups its description, three account controls, and status/actions into separate rows. Account nickname is a local name, not a detected login. Confirm the signed-in website account before importing. A successful full rescan can switch the active snapshot and archive the previous account for backup recovery; ownership matching does not combine archived accounts. Expand the account help for details.
+The purchase importer groups its description, three account controls, and status/actions into separate rows. Account nickname is a local name, not a detected login. Confirm the signed-in website account before importing. Expand **Saved accounts** in Settings or the purchase importer to select an existing snapshot. Confirm the website is signed into that account, then choose **Use saved account**. Its library and account-specific scan history become active without a mandatory full rescan. **Rename account** changes only the nickname and keeps purchase/scan evidence. To add a new account, sign in on the website, enter a new nickname, select **Save a new account on full rescan**, and use **Rescan all purchases** once. Ownership matching uses only the active snapshot; the other saved accounts remain separate.
 
 Both companions offer a searchable, paged wishlist with editable priorities and separate wishlist export/restore. Wishes influence planning on bundles you open; there is no background bundle discovery or wishlist notification. Each companion keeps its own wishes. Both offer ownership backups and a title catalog export containing identity metadata only. Ownership backup formats remain provider-specific: FAN full backups include wishes and reset scan authority on restore; HB preserves wishes during ownership restore and exports them separately. Clearing the library preserves wishes, display preferences and pairing.
 
 HB's optional manual title replacement and reviewed collection mappings live under Advanced in Settings, with a shipped JSON example and review instructions. HB collects local Humble key reminders and can manually share them with GL; FAN reads the linked GL reminder list. Privacy explanations reflect each provider's actual storage behavior.
+
+
+## Saved accounts and scan history
+
+Saved accounts are usable profiles, with a selector and rename control in both Settings and the purchase importer. Selecting restores that account's library, historical review evidence and incremental scan state. Website sign-in is still manual. Every scan requires confirmation of the signed-in account; the extension cannot infer it from a nickname. Pending scans and reminder-sharing snapshots are invalidated when account identity changes, so older requests cannot overwrite the active account. Duplicate nicknames are rejected. Renaming does not fetch purchases, clear scan history, or change the website account. Display preferences, pairing and wishlist remain extension-wide.
+
+FAN keeps each account's order fingerprints and import/failure summary locally when switching. Those fingerprints remain excluded from exported backups and are never trusted on backup restore. Older FAN archives and restored backups retain their items but recheck completed orders on the next incremental import because no trustworthy skip history exists. HB restores its existing purchase/reminder scan history; older records may still need the normal media backfill. Full rescan remains available for reconciliation, but switching to an existing saved account does not require it.

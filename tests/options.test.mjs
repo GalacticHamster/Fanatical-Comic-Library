@@ -20,7 +20,7 @@ async function optionsHarness(initial = {}) {
       async set(value) { writes.push(structuredClone(value)); Object.assign(stored, structuredClone(value)); },
       async remove(keys) { for (const key of Array.isArray(keys) ? keys : [keys]) delete stored[key]; }
     } }, tabs: { create() {} } },
-    confirm: () => config.confirm, FanaticalLibrary: globalThis.FanaticalLibrary,
+    confirm: () => config.confirm, LibraryAccountProfiles:globalThis.LibraryAccountProfiles, FanaticalLibrary: globalThis.FanaticalLibrary,
     backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitleCatalog, Blob, URL, setTimeout, clearTimeout
   });
   const store=createSyncStore(context.chrome.storage.local);const oldSend=context.chrome.runtime.sendMessage;

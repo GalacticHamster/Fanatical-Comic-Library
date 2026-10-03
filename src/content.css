@@ -77,3 +77,10 @@
 .library-import-footer output { flex:1 1 18rem; min-width:0; overflow-wrap:anywhere; }
 .library-import-footer > div { flex:0 0 auto; justify-content:flex-end; margin-left:auto; }
 @media (max-width:800px) { .library-import-profile { grid-template-columns:1fr; gap:.6rem; } .library-import-footer { flex-wrap:wrap; } .library-import-footer > div { flex-wrap:wrap; } }
+
+.account-manager { margin:.75rem 0; }
+.account-manager summary { cursor:pointer; font-weight:600; }
+.account-manager label { display:block; margin:.5rem 0; }
+.account-manager select, .account-manager input:not([type="checkbox"]) { max-width:100%; padding:.35rem; }
+.account-manager .account-actions { display:flex; gap:.5rem; flex-wrap:wrap; }
+.account-manager [data-account-status] { display:block; margin-top:.5rem; overflow-wrap:anywhere; }
