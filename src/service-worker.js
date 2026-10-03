@@ -17,15 +17,16 @@ async function activeFanaticalTab() {
   return tab;
 }
 
-async function importPurchases({ fullScan = false, profileLabel='', confirmed=false, switchProfile=false, tab:requestedTab } = {}) {
+async function importPurchases({ fullScan = false, profileLabel='', confirmed=false, switchProfile=false, progressId='', tab:requestedTab } = {}) {
   const tab=requestedTab??await activeFanaticalTab();
   const scan=await syncStore.execute('begin',[{fullScan,profileLabel,confirmed,switchProfile},tab.id]);
   fullScan=fullScan||scan.forceFull;const stored=scan.state;
   try {
   const knownOrderFingerprints = Array.isArray(stored[STORAGE_ORDER_FINGERPRINTS]) ? stored[STORAGE_ORDER_FINGERPRINTS] : [];
+  const scanHistoryMissing = !fullScan && knownOrderFingerprints.length === 0 && (stored[STORAGE_ITEMS]?.length ?? 0) > 0;
   const result = await chrome.scripting.executeScript({
     target: { tabId: tab.id }, world: 'MAIN', func: importFanaticalOrdersInPage,
-    args: [{ fullScan, knownOrderFingerprints }]
+    args: [{ fullScan, knownOrderFingerprints, scanHistoryMissing, progressId:/^[a-f0-9]{32}$/u.test(progressId)?progressId:'' }]
   });
   if (!Array.isArray(result) || result.length !== 1) throw new Error('Fanatical scan did not return a complete result. Your library was not changed.');
   const projected = validateScanResult(result[0]?.result, { fullScan, knownOrderFingerprints });
@@ -37,6 +38,7 @@ async function importPurchases({ fullScan = false, profileLabel='', confirmed=fa
   const summary = {
     importedAt,
     scanMode: fullScan ? 'full' : 'quick',
+    scanHistoryMissing,
     ordersScanned: projected.ordersScanned,
     ordersAvailable: projected.ordersAvailable,
     ordersSkipped: Math.max(0, projected.ordersAvailable - projected.ordersScanned),
@@ -101,7 +103,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'FANATICAL_IMPORT_PURCHASES') {
     if(_sender?.id!==chrome.runtime.id||!/^https:\/\/www\.fanatical\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?orders\/?(?:[?#]|$)/iu.test(_sender?.url??'')||!_sender.tab?.id){sendResponse({ok:false,error:'Import from the signed-in Fanatical orders page.'});return false;}
     if (purchaseScan) { sendResponse({ ok: false, error: 'A Fanatical purchase scan is already running. Wait for it to finish.' }); return true; }
-    purchaseScan = importPurchases({ fullScan: message.fullScan === true,profileLabel:message.profileLabel,confirmed:message.confirmed===true,switchProfile:message.switchProfile===true,tab:_sender.tab }).then((summary) => sendResponse({ ok: true, summary })).catch(async (error) => {
+    purchaseScan = importPurchases({ fullScan: message.fullScan === true,profileLabel:message.profileLabel,confirmed:message.confirmed===true,switchProfile:message.switchProfile===true,progressId:message.progressId,tab:_sender.tab }).then((summary) => sendResponse({ ok: true, summary })).catch(async (error) => {
       // Persist only an explicit coverage failure flag, never page/transport errors.
       try { if(error.scanToken)await syncStore.execute('failure',[error.scanToken,null,error.scanTabId]); } catch { /* Keep the on-page warning even when storage is unavailable. */ }
       sendResponse({ ok: false, error: `Scan incomplete; previous purchases and successful scan history were kept. ${String(error?.message ?? 'Please try again.').slice(0, 500)}` });

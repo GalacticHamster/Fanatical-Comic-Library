@@ -896,6 +896,38 @@
     return hours ? Number(hours[1]) / 24 : null;
   }
 
+  function purchaseImportScope(summary) {
+    const purchases = count => `${count} purchase${count === 1 ? '' : 's'}`;
+    if (summary.scanMode === 'full') return `Rescanned ${purchases(summary.ordersScanned)}; current snapshot rebuilt`;
+    const parts = [summary.ordersScanned === 0 ? 'No new purchases'
+      : summary.scanHistoryMissing ? `Rechecked ${purchases(summary.ordersScanned)} because saved scan history was unavailable`
+      : `Checked ${summary.ordersScanned} new purchase${summary.ordersScanned === 1 ? '' : 's'}`];
+    if (summary.ordersScanned === 0) parts.push('no purchase details to check');
+    if (summary.ordersSkipped) parts.push(`skipped ${summary.ordersSkipped} unchanged purchase${summary.ordersSkipped === 1 ? '' : 's'}`);
+    return parts.join('; ');
+  }
+
+  function purchaseImportProgress(progress) {
+    if (!progress || typeof progress !== 'object') return null;
+    const count = (value, max = 100000) => Number.isSafeInteger(value) && value >= 0 && value <= max;
+    if (progress.phase === 'list') return count(progress.page,1000) && progress.page > 0 ? `Loading your purchase list: page ${progress.page}\u2026` : null;
+    if (progress.phase === 'retry') return [2,3].includes(progress.attempt) ? `Retrying a purchase request (attempt ${progress.attempt} of 3)\u2026` : null;
+    if (!['plan','details'].includes(progress.phase) || !count(progress.total) || !count(progress.skipped)
+      || typeof progress.fullScan !== 'boolean' || typeof progress.scanHistoryMissing !== 'boolean') return null;
+    const purchases = `${progress.total} purchase${progress.total === 1 ? '' : 's'}`;
+    if (progress.phase === 'plan') {
+      if (progress.fullScan) return `Rescanning all ${purchases}\u2026`;
+      if (!progress.total) return purchaseImportScope({ordersScanned:0,ordersSkipped:progress.skipped}) + '\u2026';
+      const action = progress.scanHistoryMissing ? `Rechecking ${purchases} because saved scan history is unavailable`
+        : `Found ${progress.total} new purchase${progress.total === 1 ? '' : 's'}`;
+      return action + (progress.skipped ? `; skipped ${progress.skipped} unchanged purchase${progress.skipped === 1 ? '' : 's'}` : '') + '\u2026';
+    }
+    if (!count(progress.completed) || progress.completed < 1 || progress.completed > progress.total) return null;
+    const action = progress.fullScan ? 'Rescanning all purchases'
+      : progress.scanHistoryMissing ? 'Rechecking purchase history (saved scan history unavailable)' : 'Importing new purchases';
+    return `${action}: purchase ${progress.completed} of ${progress.total}\u2026`;
+  }
+
   function normalizeSummaryPreferences(value={},strict=false) {
     const positions=['bottom-right','bottom-left','top-right','top-left'];
     if(strict&&(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(key=>!['minimized','position'].includes(key))||Object.hasOwn(value,'minimized')&&typeof value.minimized!=='boolean'||Object.hasOwn(value,'position')&&!positions.includes(value.position)))throw new Error('Invalid bundle summary preferences.');
@@ -903,7 +935,7 @@
   }
 
   async function storageSet(updates){const response=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'patch',args:[updates]});if(!response?.ok)throw new Error(response?.error??'Settings storage is unavailable.');}
-  global.FanaticalLibrary = { normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
+  global.FanaticalLibrary = { purchaseImportScope, purchaseImportProgress, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
 }(globalThis));
 
 /* Identical account picker in both companions; all changes use the serialized writer. */

@@ -323,8 +323,8 @@
   }
 
   function importerResult(summary, fullScan) {
-    const result = fullScan ? `Full scan checked ${summary.ordersScanned} order${summary.ordersScanned === 1 ? '' : 's'} and rebuilt ${summary.ownedLeafProducts} product${summary.ownedLeafProducts === 1 ? '' : 's'}.`
-      : `Quick scan checked ${summary.ordersScanned} new order${summary.ordersScanned === 1 ? '' : 's'}, skipped ${summary.ordersSkipped}, and added ${summary.addedProducts} product${summary.addedProducts === 1 ? '' : 's'}.`;
+    const scope = F.purchaseImportScope({...summary,scanMode:fullScan?'full':'quick'});
+    const result = `${scope}; imported ${summary.addedProducts} new item${summary.addedProducts === 1 ? '' : 's'}; ${summary.ownedLeafProducts} total items.`;
     return `${result} ${summary.historyCoverage ?? ''}`.trim();
   }
 
@@ -337,6 +337,7 @@
     const description = document.createElement('span'); description.textContent = 'Import purchases from the Fanatical account signed in to this browser.';
     const actions = document.createElement('div'); actions.className = 'fanatical-library-import-actions';
     const quick = document.createElement('button'); quick.type = 'button'; quick.dataset.importMode = 'new'; quick.textContent = 'Import new purchases';
+    quick.title = 'Checks for new purchases and skips previously imported purchases with saved scan history.';
     const full = document.createElement('button'); full.type = 'button'; full.dataset.importMode = 'all'; full.textContent = 'Rescan all purchases'; full.title = 'Reprocesses every completed order and rebuilds the local Fanatical library.';
     actions.append(quick, full);
     const status = document.createElement('output'); status.setAttribute('aria-live', 'polite');
@@ -356,13 +357,21 @@
       const fullScan = button.dataset.importMode === 'all';
       if (fullScan && !confirm('Full scan every completed Fanatical purchase? This can take longer.')) return;
       buttons.forEach((control) => { control.disabled = true; });
-      status.textContent = fullScan ? 'Scanning every completed purchase locally...' : 'Checking for new purchases locally...';
+      status.textContent = 'Loading your purchase list\u2026';
+      const progressId = [...crypto.getRandomValues(new Uint8Array(16))].map(value=>value.toString(16).padStart(2,'0')).join('');
+      const onProgress = event => {
+        if (event.source !== window || event.origin !== location.origin || event.data?.type !== 'FANATICAL_IMPORT_PROGRESS' || event.data.progressId !== progressId) return;
+        const message = F.purchaseImportProgress(event.data.progress);
+        if (message) status.textContent = message;
+      };
+      window.addEventListener('message',onProgress);
       try {
-        const response = await chrome.runtime.sendMessage({ type: 'FANATICAL_IMPORT_PURCHASES', fullScan,profileLabel:profileControls.querySelector('[data-profile-label]').value,confirmed:profileControls.querySelector('[data-profile-confirm]').checked,switchProfile:profileControls.querySelector('[data-profile-switch]').checked });
+        const response = await chrome.runtime.sendMessage({ type: 'FANATICAL_IMPORT_PURCHASES', fullScan,progressId,profileLabel:profileControls.querySelector('[data-profile-label]').value,confirmed:profileControls.querySelector('[data-profile-confirm]').checked,switchProfile:profileControls.querySelector('[data-profile-switch]').checked });
         status.textContent = response?.ok ? importerResult(response.summary, fullScan||response.summary.scanMode==='full') : (response?.error ?? 'Import failed.');
       } catch {
         status.textContent = 'Import failed. Refresh this signed-in Fanatical Orders page and try again.';
       } finally {
+        window.removeEventListener('message',onProgress);
         buttons.forEach((control) => { control.disabled = false; });
       }
     });

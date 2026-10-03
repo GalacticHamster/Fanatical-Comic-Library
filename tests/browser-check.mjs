@@ -38,6 +38,7 @@ if(location.pathname.includes('test-contents')) values.fanaticalWishlistItems=JS
 if(location.pathname==='/options') values.fanaticalLastScanAttempt={status:'incomplete'};
 values.fanaticalSummaryPreferences=JSON.parse(sessionStorage.getItem('fixture-summary')||'null')||{};
 globalThis.scanFailure = false;
+globalThis.scanScenario = 'new';
 globalThis.centralMode = 'normal';
 globalThis.requests = [];
 globalThis.chrome = {runtime:{id:'a'.repeat(32),sendMessage:async(first,second)=>{
@@ -51,8 +52,13 @@ globalThis.chrome = {runtime:{id:'a'.repeat(32),sendMessage:async(first,second)=
   if(message.type==='GET_REMINDERS')return {ok:true,apiVersion:1,total:51,nextOffset:message.offset===0?50:null,reminders:Array.from({length:51},(_,n)=>({reminderRef:'opaque-reminder-'+n,itemRef:'opaque-item-'+n,title:'Reminder '+n,provider:'fanatical',mediaType:'game',kind:n===50?'key-expiry':'activation',dueAt:n===50?'2026-10-10T12:00:00Z':null,severity:n===50?'due-soon':'information'})).slice(message.offset,message.offset+message.limit)};
   if(message.type==='PING')return {ok:true,apiVersion:1,appVersion:'0.1.0'};
   if(message.type==='FANATICAL_IMPORT_PURCHASES'){
+    const scope={fullScan:message.fullScan,scanHistoryMissing:scanScenario==='restore',total:scanScenario==='empty'?0:1,skipped:scanScenario==='empty'?26:0};
+    window.postMessage({type:'FANATICAL_IMPORT_PROGRESS',progressId:message.progressId,progress:{phase:'plan',...scope}},location.origin);
+    window.postMessage({type:'FANATICAL_IMPORT_PROGRESS',progressId:'wrong-scan',progress:{phase:'plan',...scope,total:999}},location.origin);
+    window.postMessage({type:'FANATICAL_IMPORT_PROGRESS',progressId:message.progressId,progress:{phase:'plan',...scope,total:-1}},location.origin);
     await new Promise(resolve=>setTimeout(resolve,100));
-    return scanFailure?{ok:false,error:'Scan incomplete; previous purchases and successful scan history were kept.'}:{ok:true,summary:{ordersScanned:1,ordersSkipped:0,addedProducts:1,ownedLeafProducts:1,historyCoverage:'No pagination metadata: silent server truncation cannot be independently ruled out.'}};
+    setTimeout(()=>window.postMessage({type:'FANATICAL_IMPORT_PROGRESS',progressId:message.progressId,progress:{phase:'list',page:999}},location.origin),20);
+    return scanFailure?{ok:false,error:'Scan incomplete; previous purchases and successful scan history were kept.'}:{ok:true,summary:{scanMode:message.fullScan?'full':'quick',scanHistoryMissing:scope.scanHistoryMissing,ordersScanned:scope.total,ordersSkipped:scope.skipped,addedProducts:scanScenario==='new'?1:0,ownedLeafProducts:1,historyCoverage:'No pagination metadata: silent server truncation cannot be independently ruled out.'}};
   }
   if(message.type==='MATCH_ITEMS'&&centralMode==='fanatical')return {ok:true,apiVersion:1,results:message.items.map(item=>({requestId:item.requestId,matches:item.title==='External comic'?[{provider:'fanatical',title:item.title,ownership:'owned',relationship:'same-edition'}]:[]}))};
   if(message.type==='MATCH_ITEMS'&&centralMode==='reject')return {ok:false,apiVersion:1};
@@ -211,14 +217,21 @@ try {
   panel.querySelector('[data-profile-confirm]').checked=true;panel.querySelector('[data-profile-label]').dispatchEvent(new Event('input'));assert(!panel.querySelector('[data-profile-confirm]').checked,'Nickname edit retained stale account confirmation');
   quick.click();await new Promise(resolve=>setTimeout(resolve,20));
   assert(quick.disabled&&full.disabled,'Scan controls were not disabled while fetching');
-  await wait();assert(status.textContent.includes('Quick scan checked 1 new order'),'Quick scan result missing');
+  assert(status.textContent.startsWith('Found 1 new purchase'),'Valid progress was missing or replaced by an invalid/different-scan message');
+  await wait();assert(status.textContent.startsWith('Checked 1 new purchase; imported 1 new item'),'Quick scan result missing');
   assert(status.textContent.includes('silent server truncation'),'Unknown coverage was not exposed');
   assert(!quick.disabled&&!full.disabled,'Scan controls did not recover');
+  await new Promise(resolve=>setTimeout(resolve,40));assert(status.textContent.startsWith('Checked 1 new purchase'),'Late progress replaced the completed result');
+  scanScenario='empty';quick.click();await wait();
+  assert(status.textContent.startsWith('No new purchases; no purchase details to check; skipped 26 unchanged purchases'),'Unchanged library did not distinguish no new purchases');
+  scanScenario='restore';quick.click();await wait();
+  assert(status.textContent.startsWith('Rechecked 1 purchase because saved scan history was unavailable'),'Restored purchases were incorrectly reported as new');
+  scanScenario='new';
   scanFailure=true;full.click();await wait();
   assert(status.textContent.includes('Scan incomplete')&&status.textContent.includes('previous purchases'),'Failed coverage warning missing');
   assert(!quick.disabled&&!full.disabled,'Failed scan left controls disabled');
   scanFailure=false;full.click();await wait();
-  assert(status.textContent.includes('Full scan checked 1 order'),'Successful rescan did not replace error');
+  assert(status.textContent.startsWith('Rescanned 1 purchase; current snapshot rebuilt'),'Successful rescan did not replace error');
   finish({ok:true,scenario:'Orders importer coverage, failed scan and control recovery'});
 }catch(error){finish({ok:false,error:error.message})}
 `;

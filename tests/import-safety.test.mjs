@@ -38,10 +38,30 @@ function harness({ list = [summary], details = { [orderId]: detail }, headers = 
     const result = await mainWorld(...args); receipts.push(structuredClone(result)); return [{ result }];
   } } };
   const worker = vm.runInNewContext(`${source}\n;({ importPurchases, syncStore });`, { chrome, safeId, validateScanResult, createSyncStore, mergeLibraryItems, importFanaticalOrdersInPage });
-  return { stored, before, writes, paths, receipts, get maxActive() { return maxActive; }, scan: (fullScan = true) => worker.importPurchases({ fullScan,profileLabel:'fixture',confirmed:true }),
+  return { stored, before, writes, paths, receipts, get maxActive() { return maxActive; }, scan: (fullScan = true,progressId='') => worker.importPurchases({ fullScan,progressId,profileLabel:'fixture',confirmed:true }),
     store: (operation,args,url='https://www.fanatical.com/en/orders',id=chrome.runtime.id)=>new Promise(resolve=>listener({type:'FANATICAL_STORE',operation,args},{id,url,tab:{id:1}},resolve)),
     send: (fullScan = true) => new Promise((resolve) => listener({ type: 'FANATICAL_IMPORT_PURCHASES', fullScan,profileLabel:'fixture',confirmed:true }, {id:chrome.runtime.id,url:'https://www.fanatical.com/en/orders',tab:{id:1}}, resolve)) };
 }
+
+test('serialized importer emits only aggregate progress and explains missing saved scan history', async () => {
+  const messages=[],progressId='a'.repeat(32);
+  const pageOverrides={window:{postMessage:(data,origin)=>messages.push({data:structuredClone(data),origin})}};
+  const run=harness({pageOverrides});
+  const result=await run.scan(false,progressId);
+  assert.equal(result.scanHistoryMissing,true);
+  assert.deepEqual(messages.map(message=>message.data.progress.phase),['list','plan','details']);
+  assert.equal(messages[1].data.progress.scanHistoryMissing,true);
+  assert.equal(messages[2].data.progress.completed,1);
+  assert.ok(messages.every(message=>message.origin==='https://www.fanatical.com'&&message.data.progressId===progressId));
+  const text=JSON.stringify(messages);
+  for(const value of ['SECRET-TOKEN',orderId,'New purchase','product-123456'])assert.equal(text.includes(value),false);
+  messages.length=0;
+  const known=harness({pageOverrides,known:[fingerprint(orderId)]});
+  assert.equal((await known.scan(false,progressId)).scanHistoryMissing,false);
+  assert.equal(messages.at(-1).data.progress.total,0);
+  assert.equal(messages.at(-1).data.progress.skipped,1);
+  assert.equal(messages.some(message=>message.data.progress.phase==='details'),false);
+});
 
 test('HTTP-success malformed order lists never alter purchases, summary or fingerprints', async () => {
   for (const list of [null, {}, { orders: [] }, { error: 'SECRET' }, 'unreadable', [null], [{ _id: orderId }], [{ status: 'COMPLETE' }], [{ _id: 123456, status: 'COMPLETE' }], [summary, summary]]) {

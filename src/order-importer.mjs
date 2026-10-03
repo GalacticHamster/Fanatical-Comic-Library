@@ -1,5 +1,11 @@
 /* Self-contained: Chrome serializes this exact function into the Fanatical page. */
-export async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerprints = [], operation = 'import', orderSummaries = [], orderDetails = [] } = {}) {
+export async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerprints = [], scanHistoryMissing = false, progressId = '', operation = 'import', orderSummaries = [], orderDetails = [] } = {}) {
+  // Progress is informational only. Send aggregate counts, never account data,
+  // order identifiers, titles, authentication tokens or redemption values.
+  const reportProgress = (progress) => {
+    if (!/^[a-f0-9]{32}$/u.test(progressId) || typeof window === 'undefined') return;
+    try { window.postMessage({type:'FANATICAL_IMPORT_PROGRESS',progressId,progress}, 'https://www.fanatical.com'); } catch { /* Progress must not affect scan results. */ }
+  };
   const safeTextInPage = (value, max = 500) => typeof value === 'string' ? value.trim().slice(0, max) : '';
   const safeIdInPage = (value) => /^[a-zA-Z0-9_-]{6,128}$/u.test(String(value ?? '')) ? String(value) : '';
   const safeDateInPage = (value) => typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? value : null;
@@ -124,6 +130,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
       if (attempt === maxAttempts - 1) throw incomplete('An order request failed after three attempts. Please try again later.');
       const delay = retryDelay(response?.headers?.get('retry-after'), attempt);
       retries++;
+      reportProgress({phase:'retry',attempt:attempt+2});
       if ([429, 503].includes(response?.status)) cooldownUntil = Math.max(cooldownUntil, Date.now() + delay);
       await pause(delay);
     }
@@ -187,6 +194,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     if (visitedPages.has(path)) throw incomplete('Pagination repeated a page.');
     if (visitedPages.size >= maxPages) throw incomplete('The 1,000-page safety limit was reached.');
     visitedPages.add(path);
+    reportProgress({phase:'list',page:visitedPages.size});
     const { data, headers } = await request(path);
     // Envelopes/query conventions are not guessed from a fabricated contract.
     if (!Array.isArray(data)) throw unreadable();
@@ -272,6 +280,9 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     throw new Error('Fanatical order history omits previously scanned orders, so complete coverage could not be confirmed. Your library and scan history were not changed.');
   }
   const toInspect = fullScan ? completeWithFingerprints : completeWithFingerprints.filter(({ fingerprint }) => !known.has(fingerprint));
+  const scope = {fullScan,scanHistoryMissing,total:toInspect.length,skipped:complete.length-toInspect.length};
+  reportProgress({phase:'plan',...scope});
+  let completedDetails = 0;
   const details = await boundedMap(toInspect, async ({ order: listedOrder, fingerprint }) => {
     const { data: order } = await request(`/api/user/orders/${encodeURIComponent(listedOrder._id)}`);
     const projectedItems = [];
@@ -291,6 +302,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
         }
       }
     }
+    reportProgress({phase:'details',...scope,completed:++completedDetails});
     return projectedItems;
   });
   const items = combineProducts(details.flat());
@@ -307,4 +319,3 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     items
   };
 }
-

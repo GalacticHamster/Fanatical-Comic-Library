@@ -11,10 +11,17 @@ identity and reviewed contents evidence for games, books/comics, audiobooks and 
 2. Enable **Developer mode**.
 3. Choose **Load unpacked** and select this project directory.
 4. Open the extension popup and choose **Manage library**. In Extension
-   options, select **Open Fanatical orders importer**, then use **Quick scan
-   for new purchases** on that signed-in Orders page. Use **Full scan all
+   options, select **Open Fanatical orders importer**, then use **Import new
+   purchases** on that signed-in Orders page. Use **Rescan all
    purchases** to deliberately rebuild the local library from every completed
    order.
+
+Importer messages distinguish **No new purchases**, new purchases, unchanged
+purchases skipped, and full rescans. Live progress shows purchase-list pages,
+purchase-detail checks and request retries. A restored backup or older saved
+account without trusted scan history says it is rechecking purchase history;
+those purchases are not reported as newly bought. FAN checks purchase records,
+not redemption-key status. HB's key-status refresh wording appears only in HB.
 
 Options now include confirmed JSON backup restore, a naturally ordered
 50-item library preview, Galactic Library Save/Test/Remove controls, and an
