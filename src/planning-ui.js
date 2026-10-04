@@ -2,7 +2,7 @@
   'use strict';const F=global.FanaticalLibrary;
   const node=(tag,text='')=>{const element=document.createElement(tag);element.textContent=text;return element;};
   function createPurchasePlanning(parsed,matches,state){
-    const root=node('details');root.className='fanatical-library-planning';root.open=state.planOpen;root.addEventListener('toggle',()=>{state.planOpen=root.open;});root.append(node('summary','Wishlist and purchase planning'));
+    const root=node('details');root.className='fanatical-library-planning library-ui-planning';root.open=state.planOpen;root.addEventListener('toggle',()=>{state.planOpen=root.open;});root.append(node('summary','Wishlist and purchase planning'));
     const goal=node('select');goal.setAttribute('aria-label','Purchase planning goal');for(const [value,text]of [['products','Confirmed-new products'],['units','Additional full issues/volumes'],['wishlist','Wishlist items']]){const option=node('option',text);option.value=value;goal.append(option);}goal.value=state.planGoal;
     const label=node('label'),uncertain=node('input');uncertain.type='checkbox';uncertain.checked=state.planUncertain;label.append(uncertain,document.createTextNode(' Include Possible items'));
     const note=node('p','Plans do not change ownership or select anything in the store. Unknown units never count as newly covered. A unit goal can use verified additional contents of a partial offer.'),output=node('div');output.setAttribute('role','status');

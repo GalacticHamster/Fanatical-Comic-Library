@@ -606,7 +606,7 @@ function restoreSummaryState(panel, state) {
     if(state.url===location.href&&previous?.querySelector('.fanatical-library-advanced'))state.panelView=captureSummaryState(previous);
     else if(state.url!==location.href)state.panelView=null;
     document.querySelector('[data-fanatical-library-summary]')?.remove();
-    const element = document.createElement('aside'); element.dataset.fanaticalLibrarySummary = 'true'; element.className = failed ? 'fanatical-library-progress fanatical-library-progress-error' : 'fanatical-library-summary'; element.setAttribute('aria-label', 'Bundle ownership'); document.body.append(element); return element;
+    const element = document.createElement('aside'); element.id = 'fanatical-library-summary'; element.dataset.fanaticalLibrarySummary = 'true'; element.className = failed ? 'fanatical-library-progress fanatical-library-progress-error' : 'fanatical-library-summary'; element.setAttribute('aria-label', 'Bundle ownership'); document.body.append(element); return element;
   }
 
   function showPanel(message, failed = false) {
@@ -763,7 +763,7 @@ function restoreSummaryState(panel, state) {
     appendReadingSummary(advanced, matches);
     const purchase = (Array.isArray(localItems) ? localItems : []).flatMap(item=>item.purchaseOrigins?.length?item.purchaseOrigins:[item]).filter(item=>item?.bundle?.sourceItemId===parsed.sourceItemId).sort((a,b)=>(Date.parse(b.purchaseDate)||0)-(Date.parse(a.purchaseDate)||0))[0];
     if (purchase?.purchaseDate) {
-      const notice = document.createElement('p'); notice.className = 'fanatical-library-purchased';
+      const notice = document.createElement('p'); notice.className = 'fanatical-library-purchased library-ui-status-owned';
       const date = new Date(purchase.purchaseDate);
       notice.textContent = `Already purchased: ${Number.isNaN(date.valueOf()) ? purchase.purchaseDate : date.toLocaleDateString()}`;
       element.append(notice);
@@ -772,7 +772,7 @@ function restoreSummaryState(panel, state) {
     for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partial'], ['possible', 'Possible'], ['unchecked', 'Check incomplete']]) { const chip = document.createElement('span'); chip.className = `fanatical-library-legend-${state}`; chip.textContent = label; legend.append(chip); }
     element.append(legend);
     if (state.galacticEnabled) {
-      const galactic = document.createElement('p'); galactic.className = 'fanatical-library-galactic-status'; galactic.textContent = state.failed.size || state.capabilityFailed ? 'Galactic Library: check incomplete. Local results are retained.' : state.galactic.size?'Galactic Library: checked linked libraries.':'Galactic Library: linked; no central checks completed on this page.'; galactic.title = 'Checks catalog and contents evidence with local Galactic Library. Central Fanatical copies are excluded; rescan local orders if the snapshots disagree.'; element.append(galactic);
+      const galactic = document.createElement('p'); galactic.className = 'fanatical-library-galactic-status '+(state.failed.size || state.capabilityFailed?'library-ui-warning':'library-ui-muted'); galactic.textContent = state.failed.size || state.capabilityFailed ? 'Galactic Library: check incomplete. Local results are retained.' : state.galactic.size?'Galactic Library: checked linked libraries.':'Galactic Library: linked; no central checks completed on this page.'; galactic.title = 'Checks catalog and contents evidence with local Galactic Library. Central Fanatical copies are excluded; rescan local orders if the snapshots disagree.'; element.append(galactic);
       if (state.failed.size || state.capabilityFailed) {
         const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'fanatical-library-download fanatical-library-retry-galactic'; retry.textContent = 'Retry Galactic Library checks';
         retry.addEventListener('click', () => {
@@ -788,7 +788,7 @@ function restoreSummaryState(panel, state) {
         element.append(retry);
       }
     }
-    if (!state.galacticEnabled) { const status=document.createElement('p'); status.textContent='Galactic Library: not linked — local library only.'; element.append(status); }
+    if (!state.galacticEnabled) { const status=document.createElement('p'); status.className='library-ui-muted';status.textContent='Galactic Library: not linked — local library only.'; element.append(status); }
     appendWishlistNotice(element, parsed);
     appendNewOnlyFilter(element);
     let tierDownload = null;
@@ -872,7 +872,7 @@ function restoreSummaryState(panel, state) {
       const details=document.createElement('details');details.className='fanatical-library-reading';details.dataset.section='series';
       const heading=document.createElement('summary');heading.textContent='Series coverage and gaps';details.append(heading);
       const note=document.createElement('p');note.textContent='Compared numeric range within a known series/run/language; this is not a publisher reading order. Annuals and specials are listed only when explicit, without filling numbered gaps.';details.append(note);
-      if(state.readingLimits?.unknownScope){const note=document.createElement('p');note.textContent=`Needs review: ${state.readingLimits.unknownScope} offered units lack confirmed scope; no gaps inferred for them.`;details.append(note);}
+      if(state.readingLimits?.unknownScope){const note=document.createElement('p');note.className='library-ui-warning';note.textContent=`Needs review: ${state.readingLimits.unknownScope} offered units lack confirmed scope; no gaps inferred for them.`;details.append(note);}
       if(state.readingLimits?.limited){const note=document.createElement('p');note.textContent='Comparison bounded to 100 series, 2,000 units per series and 20,000 units total. Unchecked ranges need review.';details.append(note);}
       for(const row of rows){
         const section=document.createElement('details');section.dataset.section='series-'+row.label;
@@ -880,17 +880,17 @@ function restoreSummaryState(panel, state) {
         const confirmed=new Set(row.coverage.covered.map(F.contentKey)),possible=new Set(row.coverage.possibleCovered.map(F.contentKey));
         const ordered=[...row.entries].sort((a,b)=>Number(F.numberKey(a.number))-Number(F.numberKey(b.number))||titleCollator.compare(a.number,b.number));
         for(const [label,entries]of [['Compared range',ordered],['Offered here',ordered.filter(entry=>row.offeredKeys.has(F.contentKey(entry)))],['Owned elsewhere',row.coverage.covered.filter(entry=>entry.evidence?.some(record=>record.provider!=='fanatical'))],['Missing in compared range',ordered.filter(entry=>!confirmed.has(F.contentKey(entry))&&!possible.has(F.contentKey(entry))&&!row.lookupIncomplete)]])if(entries.length){const note=document.createElement('p');note.textContent=`${label}: ${conciseUnitNumbers(entries)}`;section.append(note);}
-        if(row.lookupIncomplete||possible.size){const note=document.createElement('p');note.textContent='Needs review: unconfirmed coverage or incomplete checks cannot establish gaps.';section.append(note);}
+        if(row.lookupIncomplete||possible.size){const note=document.createElement('p');note.className='library-ui-warning';note.textContent='Needs review: unconfirmed coverage or incomplete checks cannot establish gaps.';section.append(note);}
         if(row.bounded){const note=document.createElement('p');note.textContent='Large spans show only the bounded explicit units; missing numbers outside the compared range are unknown.';section.append(note);}
-        appendPagedUnits(section,ordered,entry=>{const id=F.contentKey(entry),status=confirmed.has(id)?'Covered':possible.has(id)?'Needs review':row.lookupIncomplete?'Check incomplete':'Not confirmed covered';const item=document.createElement('li');item.textContent=`${entry.unitType} ${entry.number}: ${status}${row.offeredKeys.has(id)?' · offered here':' · not offered here'}`;return item;},section.dataset.section+'-units');details.append(section);
+        appendPagedUnits(section,ordered,entry=>{const id=F.contentKey(entry),status=confirmed.has(id)?'Covered':possible.has(id)?'Needs review':row.lookupIncomplete?'Check incomplete':'Not confirmed covered';const item=document.createElement('li');item.dataset.coverage=confirmed.has(id)?'covered':possible.has(id)||row.lookupIncomplete?'uncertain':'gap';item.textContent=`${entry.unitType} ${entry.number}: ${status}${row.offeredKeys.has(id)?' · offered here':' · not offered here'}`;return item;},section.dataset.section+'-units');details.append(section);
       }
       summary.append(details);
     }
     if(!state.galacticEnabled)return;
     const details=document.createElement('details');details.className='fanatical-library-reminders';details.dataset.section='galactic';
     const heading=document.createElement('summary');heading.textContent='Galactic Library details';details.append(heading);
-    const status=document.createElement('p');status.textContent=state.galacticStatus;details.append(status);
-    const hint=document.createElement('p');hint.textContent='Retry checks missing or failed results. Refresh fetches fresh central evidence, including successful checks. Local evidence is retained.';details.append(hint);
+    const status=document.createElement('p');status.className=state.failed.size || state.capabilityFailed?'library-ui-warning':'library-ui-muted';status.textContent=state.galacticStatus;details.append(status);
+    const hint=document.createElement('p');hint.className='library-ui-muted';hint.textContent='Retry checks missing or failed results. Refresh fetches fresh central evidence, including successful checks. Local evidence is retained.';details.append(hint);
     const refresh=document.createElement('button');refresh.type='button';refresh.textContent='Refresh central evidence';refresh.className='fanatical-library-download';refresh.addEventListener('click',refreshCentralEvidence);details.append(refresh);
     if(state.failed.size||state.capabilityFailed){const retry=document.createElement('button');retry.type='button';retry.textContent='Retry Galactic Library checks';retry.addEventListener('click',()=>document.querySelector('.fanatical-library-retry-galactic')?.click());details.append(retry);}
     const review=document.createElement('button');review.type='button';review.textContent='Review in Galactic Library';review.className='fanatical-library-download';const output=document.createElement('p');output.setAttribute('role','status');review.addEventListener('click',()=>openCentralReview(review,output));details.append(review,output);
@@ -907,12 +907,13 @@ function restoreSummaryState(panel, state) {
     const hasStableSummary = !state.summaryDirty && state.url === location.href && Boolean(document.querySelector('[data-fanatical-library-summary]'));
     state.rendering = true;
     const revision = state.revision; const pageUrl = location.href;
+    const uiRevision = state.uiRevision ?? 0;
     const startedAt = performance.now();
     observer?.disconnect();
     if (!hasStableSummary && !(state.keepSummaryDuringRetry && state.url === pageUrl && document.querySelector('.fanatical-library-summary'))) showPanel('Fanatical Library: loading ownership status…');
     try {
       const [parsed, stored] = await Promise.all([loadPublicBundle(current), chrome.storage.local.get({ fanaticalLibraryItems: [], fanaticalHistoricalItems: [], fanaticalProfileLabel: '', fanaticalWishlistItems: [], fanaticalImportSummary: null, galacticLibraryExtensionId: '', fanaticalShowNewItemsOnly: false, fanaticalShowDiagnostics: false,fanaticalSummaryPreferences:{} })]);
-      if (revision !== state.revision || pageUrl !== location.href) return;
+      if (revision !== state.revision || uiRevision !== (state.uiRevision ?? 0) || pageUrl !== location.href) return;
       state.history = stored.fanaticalProfileLabel ? stored.fanaticalHistoricalItems
         .filter(entry => entry.profileLabel === stored.fanaticalProfileLabel).map(entry => entry.item) : [];
       state.summaryPreferences=F.normalizeSummaryPreferences(stored.fanaticalSummaryPreferences);
@@ -926,7 +927,7 @@ function restoreSummaryState(panel, state) {
       const allProducts = F.flattenProducts(parsed.products);
       const reading = F.readingTargets(parsed.products);
       await queryGalactic([...allProducts.filter(product => F.classify(product, stored.fanaticalLibraryItems).state !== 'owned'), ...reading.queries.map(query => query.item)], stored.galacticLibraryExtensionId);
-      if (revision !== state.revision || pageUrl !== location.href) return;
+      if (revision !== state.revision || uiRevision !== (state.uiRevision ?? 0) || pageUrl !== location.href) return;
       const ownedOffers = parsed.products.filter(product => F.classify(product, stored.fanaticalLibraryItems).state === 'owned');
       const localUnits = F.localContents([...stored.fanaticalLibraryItems, ...ownedOffers]);
       const matches = parsed.products.map((product) => status(product, stored.fanaticalLibraryItems, localUnits));
@@ -945,7 +946,13 @@ function restoreSummaryState(panel, state) {
       if (parsed.kind === 'pick-mix') {
         if (!state.showNewOnly) sortPickMixCards();
       } else sortStandardBundleCards();
-      if (!hasStableSummary) renderSummary(parsed, matches, stored.fanaticalLibraryItems);
+      // A stable shell is safe to keep visible during the await, but its
+      // applicability belongs to the completed analysis, not the old render.
+      const summaryFingerprint = JSON.stringify([parsed, matches, stored.fanaticalLibraryItems, state.wishlist, state.reading, state.readingLimits, state.galacticStatus, diagnosticsEnabled]);
+      if (state.summaryDirty || summaryFingerprint !== state.summaryFingerprint || !document.querySelector('[data-fanatical-library-summary]')) {
+        renderSummary(parsed, matches, stored.fanaticalLibraryItems);
+        state.summaryFingerprint = summaryFingerprint;
+      }
       state.summaryDirty = false;
       applyNewOnlyFilter();
       const summary = document.querySelector('[data-fanatical-library-summary]');
@@ -969,10 +976,14 @@ function restoreSummaryState(panel, state) {
     } catch (error) {
       showPanel(`Fanatical Library could not load this bundle: ${String(error?.message ?? 'unknown error')}`, true);
     } finally {
-      state.keepSummaryDuringRetry = false;
+      const rerender = state.pendingRender || revision !== state.revision || uiRevision !== (state.uiRevision ?? 0) || pageUrl !== location.href;
+      if (!rerender) state.keepSummaryDuringRetry = false;
       state.rendering = false;
       observer?.observe(document.documentElement, { childList: true, subtree: true });
-      if (revision !== state.revision || pageUrl !== location.href) schedule(true);
+      if (rerender) {
+        state.pendingRender = false;
+        schedule(true);
+      }
     }
   }
 
@@ -995,15 +1006,19 @@ function restoreSummaryState(panel, state) {
     document.querySelector('#fanatical-library-catalogue-controls')?.remove();
     document.querySelector('#fanatical-library-catalogue-diagnostics')?.remove();
     if (!force && state.parsed && state.url === location.href && !cardsNeedAnnotation()) return;
+    // Do not lose a storage/UI update when its timer fires during an await.
+    if (state.rendering) { state.pendingRender = true; return; }
     clearTimeout(state.timer); state.timer = setTimeout(render, 120);
   };
   observer = new MutationObserver(() => schedule());
   observer.observe(document.documentElement, { childList: true, subtree: true });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
-    if(changes.fanaticalSummaryPreferences){state.summaryPreferences=F.normalizeSummaryPreferences(changes.fanaticalSummaryPreferences.newValue);document.querySelector('[data-fanatical-library-summary]')?.dispatchEvent(new Event('fanatical-summary-preferences'));}
-    if(changes.fanaticalWishlistItems){state.summaryDirty=true;state.keepSummaryDuringRetry=true;}
-    if(changes.fanaticalShowDiagnostics){state.summaryDirty=true;state.keepSummaryDuringRetry=true;}
+    if(changes.fanaticalSummaryPreferences){state.uiRevision=(state.uiRevision??0)+1;state.summaryPreferences=F.normalizeSummaryPreferences(changes.fanaticalSummaryPreferences.newValue);document.querySelector('[data-fanatical-library-summary]')?.dispatchEvent(new Event('fanatical-summary-preferences'));}
+    // UI dependencies invalidate the summary snapshot, not valid in-flight
+    // central ownership results for the same account and GL connection.
+    if(changes.fanaticalWishlistItems){state.summaryDirty=true;state.keepSummaryDuringRetry=true;state.uiRevision=(state.uiRevision??0)+1;}
+    if(changes.fanaticalShowDiagnostics){state.summaryDirty=true;state.keepSummaryDuringRetry=true;state.uiRevision=(state.uiRevision??0)+1;}
     if (changes.fanaticalLibraryItems || changes.fanaticalHistoricalItems || changes.fanaticalProfileLabel || changes.galacticLibraryExtensionId) {
       state.keepSummaryDuringRetry = false;
       state.summaryDirty = true; state.revision++; state.galactic.clear(); state.failed.clear();

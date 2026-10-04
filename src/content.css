@@ -23,7 +23,7 @@
 .fanatical-library-summary.fanatical-library-summary-minimized { width:auto; padding:.45rem .65rem; }
 .fanatical-library-summary-minimized > :not(.fanatical-library-summary-controls) { display:none !important; }
 .fanatical-library-summary-minimized > .fanatical-library-summary-controls { margin:0; }
-.fanatical-library-summary strong { display:block; }.fanatical-library-legend { display:flex; gap:.35rem; flex-wrap:wrap; margin-top:.55rem; font-size:.72rem; }.fanatical-library-legend span { padding:.15rem .35rem; border-radius:999px; color:#fff; font-weight:700; }.fanatical-library-legend-owned { background:#0a7a42; }.fanatical-library-legend-owned-elsewhere { background:#0f766e; }.fanatical-library-legend-new { background:#1769aa; }.fanatical-library-legend-partial { background:#7c3fb0; }.fanatical-library-legend-possible { background:#b06d00; }.fanatical-library-galactic-status { margin:.45rem 0; color:#f4cc73; font-size:.8rem; }.fanatical-library-purchased { margin:.45rem 0; padding:.4rem .5rem; border-radius:.3rem; background:#0a7a42; color:#fff; font-weight:700; }.fanatical-library-tier-list { margin:.5rem 0 0; padding-left:1.25rem; font-size:.8rem; }.fanatical-library-download { margin-top:.55rem; padding:.35rem .45rem; border:1px solid #777; border-radius:.25rem; background:transparent; color:inherit; font:inherit; font-size:.75rem; cursor:pointer; }.fanatical-library-bundle-filter { display:block; margin-top:.55rem; cursor:pointer; font-size:.8rem; }.fanatical-library-bundle-filter input { vertical-align:middle; }.fanatical-library-bundle-filtered { display:none !important; }.fanatical-library-title-list { margin-top:.6rem; font-size:.8rem; }.fanatical-library-title-list summary { cursor:pointer; font-weight:700; }.fanatical-library-title-list ol { max-height:12rem; margin:.35rem 0 0; padding-left:1.25rem; overflow:auto; }
+.fanatical-library-summary strong { display:block; }.fanatical-library-legend { display:flex; gap:.35rem; flex-wrap:wrap; margin-top:.55rem; font-size:.72rem; }.fanatical-library-legend span { padding:.15rem .35rem; border-radius:999px; color:#fff; font-weight:700; }.fanatical-library-legend-owned { background:#0a7a42; }.fanatical-library-legend-owned-elsewhere { background:#0f766e; }.fanatical-library-legend-new { background:#1769aa; }.fanatical-library-legend-partial { background:#7c3fb0; }.fanatical-library-legend-possible { background:#b06d00; }.fanatical-library-galactic-status { margin:.45rem 0; font-size:.8rem; }.fanatical-library-purchased { margin:.45rem 0; padding:.4rem .5rem; border-radius:.3rem; background:#0a7a42; color:#fff; font-weight:700; }.fanatical-library-tier-list { margin:.5rem 0 0; padding-left:1.25rem; font-size:.8rem; }.fanatical-library-download { margin-top:.55rem; padding:.35rem .45rem; border:1px solid #777; border-radius:.25rem; background:transparent; color:inherit; font:inherit; font-size:.75rem; cursor:pointer; }.fanatical-library-bundle-filter { display:block; margin-top:.55rem; cursor:pointer; font-size:.8rem; }.fanatical-library-bundle-filter input { vertical-align:middle; }.fanatical-library-bundle-filtered { display:none !important; }.fanatical-library-title-list { margin-top:.6rem; font-size:.8rem; }.fanatical-library-title-list summary { cursor:pointer; font-weight:700; }.fanatical-library-title-list ol { max-height:12rem; margin:.35rem 0 0; padding-left:1.25rem; overflow:auto; }
 .fanatical-library-sorted-empty-row { display:none !important; }
 .fanatical-library-card-title-with-match { -webkit-line-clamp:5; }
 .fanatical-library-unchecked-badge { background:#555; }
@@ -51,7 +51,7 @@
 .fanatical-library-pick-mix-reflow { display:grid; width:100%; align-items:start; justify-content:start; }.fanatical-library-pick-mix-reflow > .three-column-row { width:100% !important; max-width:none !important; min-width:0; }
 .fanatical-library-importer { display:flex; flex-wrap:wrap; align-items:center; gap:.65rem; box-sizing:border-box; width:min(72rem, calc(100% - 2rem)); margin:1rem auto; padding:.85rem 1rem; border:1px solid #16814b; border-radius:.5rem; background:#f3fff7; color:#12261a; font:500 .9rem/1.35 Arial,sans-serif; }.fanatical-library-importer strong { color:#075c30; }.fanatical-library-importer button { padding:.45rem .7rem; border:0; border-radius:.25rem; background:#0a7a42; color:#fff; font:inherit; font-weight:700; cursor:pointer; }.fanatical-library-importer button:disabled { cursor:progress; opacity:.7; }.fanatical-library-importer output { flex-basis:100%; font-size:.82rem; }.fanatical-library-import-actions { display:flex; flex-wrap:wrap; gap:.45rem; margin-left:auto; }.fanatical-library-import-actions button[data-import-mode="all"] { background:#275f88; }
 
-.fanatical-library-planning {margin:.6rem 0;border-top:1px solid #596474;padding-top:.4rem}.fanatical-library-planning select,.fanatical-library-planning input[type="number"]{margin:.2rem;max-width:16rem}.fanatical-library-planning label{display:block}.fanatical-library-planning ul{max-height:16rem;overflow:auto}.fanatical-library-planning button{margin:.2rem}.fanatical-library-planning input[type="number"]{width:3rem}
+.fanatical-library-planning {margin:.6rem 0;border-top:0;padding-top:0}.fanatical-library-planning select,.fanatical-library-planning input[type="number"]{margin:.2rem;max-width:16rem}.fanatical-library-planning label{display:block}.fanatical-library-planning ul{max-height:16rem;overflow:auto}.fanatical-library-planning button{margin:.2rem}.fanatical-library-planning input[type="number"]{width:3rem}
 
 .fanatical-library-summary { box-sizing:border-box; width:384px; max-width:calc(100vw - 32px); max-height:calc(100vh - 32px); overflow:auto; padding:12px 16px; font:600 14px/1.45 Arial,sans-serif; }
 .fanatical-library-summary-controls { gap:8px; flex-wrap:wrap; align-items:center; }
@@ -103,3 +103,53 @@
 
 .fanatical-library-reading-sequence { max-height:none; overflow:visible; }
 .fanatical-library-unit-pages { display:flex; align-items:center; gap:.4rem; flex-wrap:wrap; }
+
+
+/* Canonical companion panel components. Keep this block identical in both
+   companions apart from their scoped roots and class prefixes. Storefront
+   font/reset rules must not control extension readability. */
+:is(#fanatical-library-summary, #fanatical-library-evidence) { background:#171717!important; color:#f2f2f2!important; font:400 14px/21px Arial,sans-serif!important; padding:12px 16px; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) :is(p,div,span,small,strong,label,details,summary,ul,ol,li) { font-family:Arial,sans-serif!important; font-size:14px!important; line-height:21px!important; letter-spacing:normal!important; text-transform:none!important; text-shadow:none!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) :is(p,div,span,small,label,details,ul,ol,li) { font-weight:400!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) :is(p,div,span,small,label,details,summary,ul,ol,li) { color:#f2f2f2!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) p { margin:8px 0!important; padding:0!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) strong, :is(#fanatical-library-summary, #fanatical-library-evidence) summary { font-weight:700!important; color:#f2f2f2!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) > strong:not([class]), :is(#fanatical-library-summary, #fanatical-library-evidence) h2 { font:700 16px/24px Arial,sans-serif!important; color:#f2f2f2!important; margin:0 0 4px!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) details { margin:8px 0!important; padding:0!important; border:0!important; background:transparent!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) details > summary { margin:0!important; padding:0!important; border:0!important; background:transparent!important; display:list-item!important; list-style:disclosure-closed inside!important; cursor:pointer; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) details[open] > summary { list-style-type:disclosure-open!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) summary::before, :is(#fanatical-library-summary, #fanatical-library-evidence) summary::after { content:none!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) summary::marker { content:normal!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) summary::-webkit-details-marker { display:inline!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) ul, :is(#fanatical-library-summary, #fanatical-library-evidence) ol { margin:8px 0!important; padding:0 0 0 20px!important; list-style-position:outside!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) ul { list-style-type:disc!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) ol { list-style-type:decimal!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) li { display:list-item!important; margin:4px 0!important; padding:0!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) label { margin:8px 0!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) :is(button,select,input) { box-sizing:border-box!important; font:400 14px/21px Arial,sans-serif!important; letter-spacing:normal!important; text-transform:none!important; color:#f2f2f2!important; background:#333!important; border:1px solid #aaa!important; border-radius:4px!important; padding:4px 8px!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) button { cursor:pointer!important; margin:4px 4px 4px 0!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) button:disabled { cursor:default!important; opacity:.65; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) select { max-width:100%!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) input[type="number"] { width:64px!important; margin:0 4px!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) input[type="checkbox"] { appearance:auto!important; width:14px!important; height:14px!important; padding:0!important; margin:0 6px 0 0!important; vertical-align:middle!important; accent-color:#1769aa; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) :is(button,select,input,summary):focus-visible { outline:2px solid #fff!important; outline-offset:2px!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) [hidden] { display:none!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) .library-ui-muted { color:#c5cbd3!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) .library-ui-warning { color:#f4cc73!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) .fanatical-library-legend { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) .fanatical-library-legend span { font:700 12px/18px Arial,sans-serif!important; color:#fff!important; padding:2px 6px; border-radius:999px; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) .fanatical-library-legend-possible { background:#8e5700; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) .fanatical-library-summary-controls { display:flex; justify-content:flex-end; align-items:center; gap:8px; margin:0 0 8px; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) .fanatical-library-summary-controls :is(button,select) { font:400 12px/18px Arial,sans-serif!important; padding:4px 6px!important; margin:0!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) .fanatical-library-related-titles { color:#f4cc73!important; font:400 12px/18px Arial,sans-serif!important; }
+
+:is(#fanatical-library-summary, #fanatical-library-evidence) :is(p,small,label,summary,li,ul,ol) { background:transparent!important; }
+
+:is(#fanatical-library-summary, #fanatical-library-evidence) [data-coverage="covered"] { color:#9ce4b7!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) [data-coverage="uncertain"] { color:#f4cc73!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) .library-ui-status-owned, :is(#fanatical-library-summary, #fanatical-library-evidence) .library-ui-status-partial { padding:6px 8px!important; border-radius:4px; color:#fff!important; font-weight:700!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) .library-ui-status-owned { background:#0a7a42!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) .library-ui-status-partial { background:#7c3fb0!important; }
+
+:is(#fanatical-library-summary, #fanatical-library-evidence) .library-ui-planning select { width:100%!important; margin:4px 0!important; }
+:is(#fanatical-library-summary, #fanatical-library-evidence) .library-ui-planning > label { display:block; }

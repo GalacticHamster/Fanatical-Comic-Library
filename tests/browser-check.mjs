@@ -10,8 +10,11 @@ import {setTimeout as pause} from 'node:timers/promises';
 import {createRelease} from '../scripts/release.mjs';
 const firefox=process.argv.includes('--firefox');
 const slowCentral=process.argv.includes('--slow-central');
+const lifecycle=process.argv.includes('--lifecycle');
 const packaged=process.argv.includes('--release')?await createRelease(undefined,undefined,firefox?'firefox':'chrome'):null;
-const readRuntime=name=>packaged?packaged.files.get(name)?.toString('utf8')??(()=>{throw Error('Absent runtime '+name);})():fs.readFileSync(new URL('../'+name,import.meta.url),'utf8');
+const readRuntime=name=>process.env.FAN_TEST_CONTENT_REF&&name==='src/content.js'
+  ?execFileSync('git',['show',process.env.FAN_TEST_CONTENT_REF+':'+name],{cwd:root,windowsHide:true,encoding:'utf8',maxBuffer:4*1024*1024})
+  :packaged?packaged.files.get(name)?.toString('utf8')??(()=>{throw Error('Absent runtime '+name);})():fs.readFileSync(new URL('../'+name,import.meta.url),'utf8');
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 let browserPath=process.env.CHROME_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe';
@@ -29,7 +32,8 @@ const editionBundle = { _id: 'edition-bundle-123456', name: 'Test editions', slu
 const contentsUnit = number => ({ series: 'Saga', run: '2020', language: 'en', unitType: 'issue', number: String(number), completeness: 'full' });
 const contentsProducts = [[1, 2, 3], [2, 3, 4], [6], [8]].map((numbers, index) => ({ _id: `contents-product-${index}`, name: numbers.length === 1 ? `Saga #${numbers[0]}` : `Saga Collection ${index + 1}`, type: 'book', run: '2020', language: 'en', contents: numbers.map(contentsUnit), contentsComplete: true }));
 const contentsBundle = { _id: 'contents-bundle-123456', name: 'Saga bundle', bundles: [{ price: { USD: 100 }, games: contentsProducts.slice(0, 1) }, { price: { USD: 1000 }, games: contentsProducts.slice(1) }], products: contentsProducts, tiers: [{ quantity: 2, price: { USD: 100 } }] };
-const advancedChecks=fs.readFileSync(new URL('./advanced-parity-checks.js',import.meta.url),'utf8');
+const presentationChecks=fs.readFileSync(new URL('./presentation-parity-checks.js',import.meta.url),'utf8');
+const advancedChecks=presentationChecks+fs.readFileSync(new URL('./advanced-parity-checks.js',import.meta.url),'utf8');
 const mock = `
 globalThis.addEventListener('error', event => {fetch('/result?route='+encodeURIComponent(location.pathname),{method:'POST',body:JSON.stringify({ok:false,error:event.message})})});
 const listeners = [];
@@ -335,6 +339,8 @@ const server = http.createServer((request, response) => {
     request.on('end', () => { response.writeHead(204).end(); pendingResults.get(route)?.(JSON.parse(body)); }); return;
   }
   const send = (type, contents) => { response.writeHead(200, { 'content-type': `${type}; charset=utf-8` }); response.end(contents); };
+  if (url === '/lifecycle-fixture.js') return send('text/javascript',fs.readFileSync(new URL('./lifecycle-fixture.js',import.meta.url),'utf8'));
+  if (url === '/lifecycle-check.js') return send('text/javascript',common+presentationChecks+fs.readFileSync(new URL('./lifecycle-checks.js',import.meta.url),'utf8'));
   if (url === '/mock.js') return send('text/javascript', mock);
   if (url === '/options-check.js') return send('text/javascript', optionsChecks);
   if (url === '/bundle-check.js') return send('text/javascript', bundleChecks);
@@ -357,14 +363,14 @@ const server = http.createServer((request, response) => {
     const isCatalogue = url.endsWith('/books');
     const isEdition = url.endsWith('/test-editions');
     const isContents = url.endsWith('/test-contents');
-    return send('text/html', `<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"><style>.fan-grid-container{display:grid;grid-template-columns:repeat(3,240px);gap:20px}.fanatical-library-pick-mix-reflow{grid-column:1/-1}article{min-height:350px;position:relative}.cover-container{height:310px;overflow:hidden;position:relative}.cover-container img{display:block;width:100%;height:310px}.faux-block-link a,.faux-block-link abbr[title],.faux-block-link button{position:relative;z-index:3}.new-to-bundle-label{position:absolute;top:0;left:0;z-index:3;height:32px}</style></head><body><main>${isCatalogue ? `<ul class="HitCardsRow row">${catalogue}</ul>` : `<section class="tier"><div class="fan-grid-container">${cards(url.includes('pick-and-mix') ? 'PickAndMixCard' : 'bundle-product-card', isContents ? contentsProducts : isEdition ? editionProducts : products)}</div></section>`}</main><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/${isCatalogue ? 'catalogue' : isContents ? 'contents' : isEdition ? 'edition' : slowCentral ? 'slow-central' : 'bundle'}-check.js"></script></body></html>`);
+    return send('text/html', `<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"><style>.fan-grid-container{display:grid;grid-template-columns:repeat(3,240px);gap:20px}.fanatical-library-pick-mix-reflow{grid-column:1/-1}article{min-height:350px;position:relative}.cover-container{height:310px;overflow:hidden;position:relative}.cover-container img{display:block;width:100%;height:310px}.faux-block-link a,.faux-block-link abbr[title],.faux-block-link button{position:relative;z-index:3}.new-to-bundle-label{position:absolute;top:0;left:0;z-index:3;height:32px}</style></head><body><main>${isCatalogue ? `<ul class="HitCardsRow row">${catalogue}</ul>` : `<section class="tier"><div class="fan-grid-container">${cards(url.includes('pick-and-mix') ? 'PickAndMixCard' : 'bundle-product-card', isContents ? contentsProducts : isEdition ? editionProducts : products)}</div></section>`}</main><script src="/mock.js"></script>${lifecycle?'<script src="/lifecycle-fixture.js"></script>':''}<script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/${lifecycle ? 'lifecycle' : isCatalogue ? 'catalogue' : isContents ? 'contents' : isEdition ? 'edition' : slowCentral ? 'slow-central' : 'bundle'}-check.js"></script></body></html>`);
   }
   response.writeHead(404).end();
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
   const allRoutes = ['/options', '/en/bundle/test-comics', '/en/pick-and-mix/test-mix', '/en/bundle/books', '/en/bundle/test-editions', '/en/pick-and-mix/test-editions', '/en/orders', '/en/bundle/test-contents', '/en/pick-and-mix/test-contents','/en/bundle/test-empty'];
-  const selectedRoutes=process.argv.slice(2).filter(arg=>!['--release','--firefox','--slow-central'].includes(arg));const routes=selectedRoutes.length?selectedRoutes:slowCentral?['/en/bundle/test-comics','/en/pick-and-mix/test-mix']:allRoutes;
+  const selectedRoutes=process.argv.slice(2).filter(arg=>!['--release','--firefox','--slow-central','--lifecycle'].includes(arg));const routes=selectedRoutes.length?selectedRoutes:lifecycle?['/en/bundle/test-contents','/en/bundle/test-editions']:slowCentral?['/en/bundle/test-comics','/en/pick-and-mix/test-mix']:allRoutes;
   if (routes.some(route => !allRoutes.includes(route))) throw new Error('Unknown browser fixture route');
   for (const [index, route] of routes.entries()) {
     let stopped=Promise.resolve();
