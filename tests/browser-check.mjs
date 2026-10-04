@@ -118,7 +118,10 @@ try {
   assert(document.querySelector('.fanatical-library-summary-minimized'),'Summary did not minimize');
   document.querySelector('.fanatical-library-summary-expand').click();
   assert(!document.querySelector('.fanatical-library-summary-minimized'),'Summary did not expand');
-  if(!location.pathname.includes('pick-and-mix')) assert(document.querySelector('.fanatical-library-buy-recommendation')?.textContent.endsWith('$1.00'),'Higher owned-only tier replaced the cheapest complete-new tier');
+  assert(!document.querySelector('.fanatical-library-buy-recommendation'),'Simple contains no purchase recommendation');
+  assert(document.querySelector('.fanatical-library-advanced').contains(document.querySelector('.fanatical-library-planning')),'Planning belongs in Advanced');
+  assert(!document.querySelector('.fanatical-library-advanced').open,'Advanced defaults closed');
+  assert(![...document.querySelectorAll('.fanatical-library-title-list > ol > li')].some(row=>row.querySelector('.fanatical-library-inspect')),'Straightforward rows omit Why');
   await chrome.storage.local.set({fanaticalShowDiagnostics:true});await wait();
   assert(diagnostics()?.textContent.includes('4 products parsed; 4 distinct cards found'),'Missing bundle counts');
   assert(diagnostics().textContent.includes('exact Galactic Library match'),'Missing external match reason');
@@ -135,7 +138,7 @@ try {
   await chrome.storage.local.remove('galacticLibraryExtensionId');await wait();
   assert(!document.querySelector('.fanatical-library-owned-elsewhere-badge'),'Removing Galactic link retained external ownership');
   assert(document.querySelectorAll('.fanatical-library-new-badge').length===3,'External card did not return to local matching');
-  if(!location.pathname.includes('pick-and-mix')) assert(document.querySelector('.fanatical-library-buy-recommendation')?.textContent.endsWith('$10.00'),'Recommendation did not increase when the higher tier gained a confirmed-new item');
+  if(!location.pathname.includes('pick-and-mix')) assert(document.querySelector('.fanatical-library-tier-list').textContent.includes('new /'),'Simple still reports tier value after ownership changes');
   await chrome.storage.local.set({fanaticalShowDiagnostics:false});await wait();
   assert(!diagnostics(),'Diagnostics did not turn off');
   await chrome.storage.local.set({fanaticalProfileLabel:'personal',fanaticalHistoricalItems:[{profileLabel:'personal',missingSince:'2026-10-02T12:00:00Z',item:{source:'fanatical',sourceItemId:'history-123456',title:'External comic',mediaType:'book',bundle:{title:'Earlier Fanatical bundle'}}}]});await wait();
@@ -206,11 +209,11 @@ try {
   assert(document.querySelector('.fanatical-library-partial-badge')?.textContent==='Partial (1/2)','Ultimate package was not verified Partial');
   assertBadgesVisible();
   const notes=[...document.querySelectorAll('.fanatical-library-card-edition-note')];
-  assert(notes.length===2&&notes.every(note=>note.textContent.includes('Related library item: Space Adventure')),'Owned title missing from card captions');
-  assert(notes.some(note=>note.textContent.includes('Different edition/package'))&&notes.some(note=>note.textContent.includes('Partial package (1/2 components)')),'Package differences missing from captions');
+  assert(notes.length===2&&notes.every(note=>note.textContent.includes('Space Adventure')),'Owned title missing from card captions');
+  assert(document.querySelector('.fanatical-library-partial-badge').textContent.includes('1/2'),'Partial fraction remains visible');
   const rows=[...document.querySelectorAll('.fanatical-library-title-list > ol > li')];
-  assert(rows.length===2&&rows.every(row=>row.textContent.includes('Related library item: Space Adventure')),'Review summary did not show owned title');
-  const more=[...document.querySelectorAll('.fanatical-library-title-list li details')].find(node=>node.textContent.includes('Space Adventure Gold Edition'));assert(more&&more.textContent.includes('fanatical')&&more.textContent.includes('local purchase'),'Additional local Possible candidates were not expandable with ownership context');assert(rows.every(row=>row.querySelector('button')?.textContent==='Explain'),'Summary evidence action is inconsistent');
+  assert(rows.length===2&&rows.every(row=>row.textContent.includes('Space Adventure')),'Review summary did not show owned title');
+  assert(rows.every(row=>row.querySelector('button')?.textContent==='Why?'),'Possible rows have a concise Why action');
   assert(!document.querySelector('.fanatical-library-buy-recommendation'),'Review-only items counted as confirmed-new');
   const filter=document.querySelector('.fanatical-library-bundle-filter input');filter.click();await wait();
   assert([...document.querySelectorAll('article')].every(card=>card.getBoundingClientRect().height>0),'Possible/Partial packages were hidden');

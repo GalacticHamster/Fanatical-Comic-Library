@@ -38,10 +38,11 @@ test('library management follows the Fanatical Orders importer flow', () => {
   assert.match(content, /Rescan all purchases/);
 });
 
-test('bundle summary distinguishes partial and possible matches and recommends a tier', () => {
+test('bundle summary distinguishes partial and possible without recommending a purchase in Simple', () => {
   assert.match(content, /counts\.partial/);
-  assert.match(content, /only partly owned/);
-  assert.match(content, /Lowest tier containing all confirmed-new items/);
+  assert.match(content, /Possible \$\{counts\.possible\}/);
+  assert.match(content, /Hide owned items/);
+  assert.equal(content.includes('Lowest tier containing all confirmed-new items'), false);
   assert.match(content, /fanaticalShowNewItemsOnly/);
 });
 

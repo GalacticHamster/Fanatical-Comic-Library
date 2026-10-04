@@ -589,7 +589,7 @@
 
   function panel(failed = false) {
     document.querySelector('[data-fanatical-library-summary]')?.remove();
-    const element = document.createElement('aside'); element.dataset.fanaticalLibrarySummary = 'true'; element.className = failed ? 'fanatical-library-progress fanatical-library-progress-error' : 'fanatical-library-summary'; element.setAttribute('role', 'status'); document.body.append(element); return element;
+    const element = document.createElement('aside'); element.dataset.fanaticalLibrarySummary = 'true'; element.className = failed ? 'fanatical-library-progress fanatical-library-progress-error' : 'fanatical-library-summary'; element.setAttribute('aria-label', 'Bundle ownership'); document.body.append(element); return element;
   }
 
   function showPanel(message, failed = false) {
@@ -598,10 +598,11 @@
 
   function appendRelatedTitles(host, match) {
     if(!['possible','partial'].includes(match?.state))return;
-    const records=[match.item,match.localMatch?.item,...(match.historicalItems??[]),...(match.candidates??[]),...(match.localMatch?.candidates??[]),...(match.externalResult?.possibleMatches??[]),...(match.externalResult?.partialMatches??[]),...(match.coverage?.covered??[]).flatMap(entry=>entry.evidence??[])].filter(Boolean);
-    const titles=[...new Set(records.filter(record=>(record.item??record).title).map(record=>{const item=record.item??record,evidence=record.evidence??item;return [item.title,record.provider??'fanatical',item.historical?'previously recorded; access unconfirmed':record.provider?record.ownership??'ownership unconfirmed':'local purchase',evidence.edition,evidence.isbn?.length?'ISBN '+[evidence.isbn].flat().join(', '):''].filter(Boolean).join(' - ');}))];if(!titles.length)return;
-    const note=document.createElement('small');note.className='fanatical-library-related-titles';if(host.classList.contains('fanatical-library-card-title')){note.classList.add('fanatical-library-card-edition-note');}note.textContent=(match.ownershipReview?'Check ownership: ':'Related library item: ')+titles[0];if(host.classList.contains('fanatical-library-card-title')){const relation=match.state==='partial'?(match.offered?.mediaType==='game'?'Partial package ('+match.owned+'/'+match.total+' components)':'Partial contents ('+match.owned+'/'+match.total+' full units)'):match.offered?.mediaType==='game'?'Different edition/package; extras not verified':'Identity needs review';note.textContent+=' - '+relation;}note.title=titles.join('; ');host.append(note);
-    if(titles.length>1&&host.tagName==='LI'){const details=document.createElement('details'),heading=document.createElement('summary');heading.textContent='Other related items ('+(titles.length-1)+')';details.append(heading);const list=document.createElement('ul');for(const title of titles.slice(1)){const row=document.createElement('li');row.textContent=title;list.append(row);}details.append(list);host.append(details);}
+    const titles=F.presentation.row(match.offered||{},match).relatedTitles;
+    if(!titles.length)return;
+    const note=document.createElement('small');note.className='fanatical-library-related-titles';
+    if(host.classList.contains('fanatical-library-card-title'))note.classList.add('fanatical-library-card-edition-note');
+    note.textContent=(match.ownershipReview?'Ownership needs review: ':'Possible match: ')+titles[0];host.append(note);
   }
 
   function appendSummaryControls(summary) {
@@ -654,7 +655,7 @@
       F.storageSet({ fanaticalShowNewItemsOnly: state.showNewOnly }).catch(() => {});
       applyNewOnlyFilter();
     });
-    label.append(checkbox, ' Show new items only');
+    label.append(checkbox, ' Hide owned items');
     label.title = 'Hides confirmed-owned items. Possible and partially owned items stay visible for review.';
     summary.append(label);
   }
@@ -667,15 +668,17 @@
     const close = document.createElement('button'); close.type = 'button'; close.textContent = 'Close'; close.autofocus = true;
     close.addEventListener('click', () => dialog.close());
     dialog.addEventListener('close', () => { dialog.remove(); if (trigger?.isConnected) trigger.focus(); });
+    const plain=document.createElement('p'); plain.className='fanatical-library-explanation'; plain.textContent=F.presentation.explanation(match.offered||{},match); dialog.append(heading,close,plain);
+    const technical=document.createElement('details'); const technicalTitle=document.createElement('summary'); technicalTitle.textContent='Technical details'; technical.append(technicalTitle);
     const list = document.createElement('ul');
     for (const text of F.explanationLines(match, state.lastImport)) { const row = document.createElement('li'); row.textContent = text; list.append(row); }
-    dialog.append(heading, close, list);
+    technical.append(list); dialog.append(technical);
     const review = document.createElement('button'); review.type = 'button'; review.textContent = 'Review in Galactic Library';
     const output = document.createElement('p'); output.setAttribute('role', 'status');
     review.addEventListener('click', () => openCentralReview(review, output));
     const refresh = document.createElement('button'); refresh.type = 'button'; refresh.textContent = 'Refresh central evidence';
     refresh.addEventListener('click', () => { state.galactic.clear(); state.failed.clear(); state.revision++; state.summaryDirty = true; dialog.close(); schedule(true); });
-    dialog.append(review, refresh, output); document.body.append(dialog); dialog.showModal();
+    if(match.externalResult||match.lookupIncomplete||match.contentsLookupIncomplete||match.state==='owned-elsewhere')technical.append(review,refresh,output); document.body.append(dialog); dialog.showModal();
   }
 
   async function openCentralReview(button, output) {
@@ -704,6 +707,22 @@
     const blob = new Blob([lines.join('\n')], { type: 'text/plain' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `${parsed.title.replace(/[^a-z0-9]+/giu, '-').replace(/^-|-$/gu, '').toLowerCase() || 'fanatical-bundle'}-tier-list.txt`; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 0);
   }
 
+
+  function wishFor(product) { return state.wishlist.find(w=>w.sourceItemId===product.sourceItemId||F.classify(product,[w]).state==='owned'); }
+  function appendWishlistControl(row, product) {
+    const label=document.createElement('label'); label.className='fanatical-library-wishlist-control'; const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.checked=Boolean(wishFor(product));checkbox.setAttribute('aria-label','Wishlist '+product.title);
+    const status=document.createElement('small');status.setAttribute('role','status');
+    checkbox.addEventListener('change',async()=>{checkbox.disabled=true;try{const wish=wishFor(product);state.wishlist=await F.updateWishlist(checkbox.checked?'add':'remove',checkbox.checked?[wish||{...product,weight:1}]:F.wishlistKey(wish));state.summaryDirty=true;schedule(true);}catch(error){checkbox.checked=!checkbox.checked;status.textContent=error.message;}finally{checkbox.disabled=false;}});
+    label.append(checkbox,' Wishlist');row.append(' ',label,status);
+  }
+  function appendWishlistNotice(summary, parsed) {
+    document.querySelectorAll('.fanatical-library-wish-marker').forEach(node=>node.remove());
+    const rows=parsed.products.map(item=>({item,relation:wishFor(item)?'match':state.wishlist.some(w=>F.classify(item,[w]).state==='possible')?'related':''})).filter(row=>row.relation);
+    if(!rows.length)return;
+    const details=document.createElement('details');details.className='fanatical-library-wishlist-notice';const heading=document.createElement('summary');heading.textContent=`Wishlist: ${rows.filter(row=>row.relation==='match').length} matches · ${rows.filter(row=>row.relation==='related').length} related`;details.append(heading);
+    const list=document.createElement('ul');for(const row of rows){const li=document.createElement('li');li.textContent=`${row.item.title} — ${row.relation==='match'?'Wishlist match':'Related wishlist item'}`;list.append(li);const host=cardFor(row.item)?.querySelector('.cover-container');if(host){const marker=document.createElement('span');marker.className='fanatical-library-wish-marker';marker.textContent=row.relation==='match'?'♥ Wishlist':'♡ Related wish';host.append(marker);}}details.append(list);summary.append(details);
+  }
+
   function renderSummary(parsed, matches, localItems) {
     const counts = { owned: 0, elsewhere: 0, partial: 0, possible: 0, new: 0, unchecked: 0 };
     for (const match of matches) {
@@ -717,17 +736,14 @@
     const detail = parsed.kind === 'pick-mix' ? ` Available unowned: ${matches.filter((match, i) => match.state === 'new' && parsed.products[i].availability.regionAvailable && !parsed.products[i].availability.soldOut).length}. Selected (page UI): ${selectedCount(parsed.products)}.` : '';
     const rates = parsed.kind === 'pick-mix' ? parsed.tiers.map((tier) => Number.isFinite(tier.price?.USD) ? `${tier.quantity}: $${(tier.price.USD / 100 / tier.quantity).toFixed(2)}/item` : '').filter(Boolean).join(' · ') : '';
     const element = panel();
-    const heading = document.createElement('strong'); heading.textContent = `Your Fanatical items: ${counts.owned} owned${counts.elsewhere ? ` · ${counts.elsewhere} elsewhere` : ''} · ${counts.new} new${counts.possible ? ` · ${counts.possible} possible` : ''}`; element.append(heading);
-    heading.textContent = `Your Fanatical items: ${counts.owned} owned${counts.elsewhere ? ` \u00b7 ${counts.elsewhere} elsewhere` : ''} \u00b7 ${counts.new} new${counts.partial ? ` \u00b7 ${counts.partial} partial` : ''}${counts.possible ? ` \u00b7 ${counts.possible} possible` : ''}`;
-    if (counts.unchecked) heading.textContent += ` · ${counts.unchecked} check incomplete`;
-    if (counts.unchecked) {
-      const explanation = document.createElement('p');
-      explanation.textContent = 'Check incomplete: no local match found, but Galactic Library could not finish checking. These items may already be owned. Retry Galactic Library checks to resolve them.';
-      element.append(explanation);
-    }
-    appendContentsSummary(element, parsed, matches);
-    element.append(F.createPurchasePlanning(parsed,matches,state));
-    appendReadingSummary(element, matches);
+    const title=document.createElement('strong'); title.textContent='Bundle ownership'; element.append(title);
+    const heading=document.createElement('strong'); heading.className='fanatical-library-summary-counts';
+    heading.textContent=`Owned ${counts.owned} · Owned elsewhere ${counts.elsewhere} · New ${counts.new} · Partial ${counts.partial} · Possible ${counts.possible}${counts.unchecked?` · Check incomplete ${counts.unchecked}`:''}`; element.append(heading);
+    const advanced=document.createElement('details'); advanced.className='fanatical-library-advanced'; advanced.dataset.section='advanced';
+    const advancedHeading=document.createElement('summary'); advancedHeading.textContent='Advanced'; advanced.append(advancedHeading);
+    appendContentsSummary(advanced, parsed, matches);
+    advanced.append(F.createPurchasePlanning(parsed,matches,state));
+    appendReadingSummary(advanced, matches);
     const purchase = (Array.isArray(localItems) ? localItems : []).flatMap(item=>item.purchaseOrigins?.length?item.purchaseOrigins:[item]).filter(item=>item?.bundle?.sourceItemId===parsed.sourceItemId).sort((a,b)=>(Date.parse(b.purchaseDate)||0)-(Date.parse(a.purchaseDate)||0))[0];
     if (purchase?.purchaseDate) {
       const notice = document.createElement('p'); notice.className = 'fanatical-library-purchased';
@@ -739,7 +755,7 @@
     for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partial'], ['possible', 'Possible'], ['unchecked', 'Check incomplete']]) { const chip = document.createElement('span'); chip.className = `fanatical-library-legend-${state}`; chip.textContent = label; legend.append(chip); }
     element.append(legend);
     if (state.galacticEnabled) {
-      const galactic = document.createElement('p'); galactic.className = 'fanatical-library-galactic-status'; galactic.textContent = `Galactic Library: ${state.galacticStatus}`; galactic.title = 'Checks catalog and contents evidence with local Galactic Library. Central Fanatical copies are excluded; rescan local orders if the snapshots disagree.'; element.append(galactic);
+      const galactic = document.createElement('p'); galactic.className = 'fanatical-library-galactic-status'; galactic.textContent = state.failed.size || state.capabilityFailed ? 'Galactic Library: check incomplete. Local results are retained.' : 'Galactic Library: checked linked libraries.'; galactic.title = 'Checks catalog and contents evidence with local Galactic Library. Central Fanatical copies are excluded; rescan local orders if the snapshots disagree.'; element.append(galactic);
       if (state.failed.size || state.capabilityFailed) {
         const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'fanatical-library-download fanatical-library-retry-galactic'; retry.textContent = 'Retry Galactic Library checks';
         retry.addEventListener('click', () => {
@@ -755,33 +771,19 @@
         element.append(retry);
       }
     }
+    if (!state.galacticEnabled) { const status=document.createElement('p'); status.textContent='Galactic Library: not linked — local library only.'; element.append(status); }
+    appendWishlistNotice(element, parsed);
     appendNewOnlyFilter(element);
-    if (counts.partial) {
-      const partial = document.createElement('p'); partial.className = 'fanatical-library-match-note';
-      partial.textContent = `${counts.partial} grouped item${counts.partial === 1 ? ' is' : 's are'} only partly owned - not counted as owned or new.`;
-      element.append(partial);
-    }
-    if (counts.possible) {
-      const possible = document.createElement('p'); possible.className = 'fanatical-library-match-note';
-      possible.textContent = `${counts.possible} possible match${counts.possible === 1 ? '' : 'es'} - not counted as owned.`;
-      element.append(possible);
-    }
     let tierDownload = null;
     if (parsed.kind === 'standard' && parsed.groups.length) {
-      const { tiers, recommendedPrice } = F.standardTierCoverage(parsed, matches);
+      const { tiers } = F.standardTierCoverage(parsed, matches);
       const list = document.createElement('ul'); list.className = 'fanatical-library-tier-list';
       tiers.forEach(({ price, total, confirmedNew }, index) => {
-        const priceText = price !== null ? `$${(price / 100).toFixed(2)} tier` : `Tier ${index + 1}`; const perNew = confirmedNew && price !== null ? ` · $${(price / 100 / confirmedNew).toFixed(2)} per confirmed-new item` : '';
-        const line = document.createElement('li'); line.textContent = `${priceText}: ${confirmedNew} confirmed new / ${total} items${perNew}`; list.append(line);
+        const priceText = price !== null ? `$${(price / 100).toFixed(2)} tier` : `Tier ${index + 1}`; const perNew = confirmedNew && price !== null ? ` · $${(price / 100 / confirmedNew).toFixed(2)}/new` : '';
+        const line = document.createElement('li'); line.textContent = `${priceText}: ${confirmedNew} new / ${total}${perNew}`; list.append(line);
       });
       element.append(list);
-      if (recommendedPrice !== null) {
-        const recommendation = document.createElement('p'); recommendation.className = 'fanatical-library-buy-recommendation';
-        recommendation.textContent = `Lowest tier containing all confirmed-new items: $${(recommendedPrice / 100).toFixed(2)}`;
-        recommendation.title = 'Possible and partially owned items are excluded from this recommendation.';
-        element.append(recommendation);
-      }
-      tierDownload = document.createElement('button'); tierDownload.type = 'button'; tierDownload.className = 'fanatical-library-download'; tierDownload.textContent = 'Download complete tier list'; tierDownload.addEventListener('click', () => downloadTierList(parsed, matches));
+      tierDownload = document.createElement('button'); tierDownload.type = 'button'; tierDownload.className = 'fanatical-library-download'; tierDownload.textContent = 'Download complete item list'; tierDownload.addEventListener('click', () => downloadTierList(parsed, matches));
     }
     if (parsed.kind === 'pick-mix' && parsed.tiers.length) {
       const availableProducts = parsed.products.filter((product) => product.availability.regionAvailable && !product.availability.soldOut);
@@ -796,7 +798,7 @@
         tierList.append(row);
       }
       element.append(tierList);
-      tierDownload = document.createElement('button'); tierDownload.type = 'button'; tierDownload.className = 'fanatical-library-download'; tierDownload.textContent = 'Download complete tier list'; tierDownload.addEventListener('click', () => downloadTierList(parsed, matches));
+      tierDownload = document.createElement('button'); tierDownload.type = 'button'; tierDownload.className = 'fanatical-library-download'; tierDownload.textContent = 'Download complete item list'; tierDownload.addEventListener('click', () => downloadTierList(parsed, matches));
     }
     if (detail || rates) { const extra = document.createElement('div'); extra.textContent = `${detail}${rates ? ` USD: ${rates}.` : ''}`; element.append(extra); }
     for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partial'], ['possible', 'Possible matches'], ['unchecked', 'Check incomplete']]) {
@@ -805,12 +807,15 @@
       const detailList = document.createElement('details'); detailList.className = 'fanatical-library-title-list'; const title = document.createElement('summary'); title.textContent = `${label} (${entries.length})`; detailList.append(title); const list = document.createElement('ol'); alphabetize(entries).forEach((product) => {
         const match = matches[parsed.products.findIndex((candidate) => candidate.sourceItemId === product.sourceItemId)];
         const row = document.createElement('li');
-        const inspect = document.createElement('button'); inspect.type = 'button'; inspect.className = 'fanatical-library-inspect'; inspect.textContent = 'Explain';inspect.setAttribute('aria-label','Explain '+product.title);
-        inspect.addEventListener('click', () => showEvidence(match, inspect)); row.append(document.createTextNode(product.title+' '),inspect);
+        const view=F.presentation.row(product, match);
+        row.append(document.createTextNode(product.title+(view.providers.length?' — '+view.providers.join(', '):'')+(view.fraction?' — '+view.fraction:'')));
+        if (view.why) { const inspect=document.createElement('button'); inspect.type='button'; inspect.className='fanatical-library-inspect'; inspect.textContent='Why?'; inspect.setAttribute('aria-label','Why '+product.title); inspect.addEventListener('click',()=>showEvidence(match,inspect)); row.append(' ',inspect); }
         appendRelatedTitles(row,match);
+        appendWishlistControl(row,product);
         list.append(row);
       }); detailList.append(list); element.append(detailList);
     }
+    if (advanced.children.length>1) element.append(advanced);
     if (tierDownload) element.append(tierDownload);
     appendSummaryControls(element);
   }
@@ -849,7 +854,7 @@
     const rows = state.reading || [];
     if (rows.length || state.readingLimits?.unknownScope) {
       const details = document.createElement('details'); details.className = 'fanatical-library-reading';
-      const heading = document.createElement('summary'); heading.textContent = 'Series coverage and reading gaps'; details.append(heading);
+      const heading = document.createElement('summary'); heading.textContent = 'Series coverage and gaps'; details.append(heading);
       const note = document.createElement('p'); note.textContent = 'Numeric order within known series/run/language. Gaps cover the compared span, not a complete bibliography or publisher reading order.'; details.append(note);
       if (state.readingLimits?.unknownScope) { const text = document.createElement('p'); text.textContent = `${state.readingLimits.unknownScope} offered units lack confirmed scope; no reading gaps inferred for them.`; details.append(text); }
       if (state.readingLimits?.limited) { const text = document.createElement('p'); text.textContent = 'Large spans were bounded; only the displayed targets were compared.'; details.append(text); }
@@ -939,7 +944,7 @@
         const detected = new Set(parsed.products.map((product) => cardFor(product)).filter(Boolean));
         const counts = new Map();
         for (const match of matches) counts.set(match.state, (counts.get(match.state) || 0) + 1);
-        updateDiagnostics(summary, [
+        updateDiagnostics(summary.querySelector('.fanatical-library-advanced'), [
           `Bundle: ${parsed.kind}; ${parsed.products.length} products parsed; ${detected.size} distinct cards found.`,
           `Local library records compared: ${stored.fanaticalLibraryItems.length}.`,
           `Matches: ${[...counts].map(([kind, total]) => `${kind} ${total}`).join('; ')}.`,
