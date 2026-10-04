@@ -203,6 +203,7 @@
         state.url = '';
         document.body.classList.remove('fanatical-library-show-new-only');
       }
+      state.panelView=null;
       document.querySelector('[data-fanatical-library-summary]')?.remove();
       if (!catalogueState.items || !catalogueState.filters) {
         const stored = await chrome.storage.local.get({ fanaticalLibraryItems: [], fanaticalCatalogueFilters: {}, fanaticalShowDiagnostics: false,fanaticalWishlistItems:[] });
@@ -587,7 +588,23 @@
     return visibleCards === 0;
   }
 
+
+function captureSummaryState(panel) {
+  if(!panel)return null;
+  const active=panel.contains(document.activeElement)?document.activeElement:null;
+  return {open:[...panel.querySelectorAll('details')].filter(node=>node.open).map(node=>node.dataset.section||node.id||node.className||node.querySelector('summary')?.textContent),scroll:panel.scrollTop,focus:active?.getAttribute('aria-label')||active?.id};
+}
+function restoreSummaryState(panel, state) {
+  if(!state)return;
+  for(const node of panel.querySelectorAll('details'))node.open=state.open.includes(node.dataset.section||node.id||node.className||node.querySelector('summary')?.textContent);
+  panel.scrollTop=state.scroll;
+  if(state.focus)[...panel.querySelectorAll('button,input,select')].find(node=>node.getAttribute('aria-label')===state.focus||node.id===state.focus)?.focus({preventScroll:true});
+}
+
   function panel(failed = false) {
+    const previous=document.querySelector('.fanatical-library-summary');
+    if(state.url===location.href&&previous?.querySelector('.fanatical-library-advanced'))state.panelView=captureSummaryState(previous);
+    else if(state.url!==location.href)state.panelView=null;
     document.querySelector('[data-fanatical-library-summary]')?.remove();
     const element = document.createElement('aside'); element.dataset.fanaticalLibrarySummary = 'true'; element.className = failed ? 'fanatical-library-progress fanatical-library-progress-error' : 'fanatical-library-summary'; element.setAttribute('aria-label', 'Bundle ownership'); document.body.append(element); return element;
   }
@@ -708,7 +725,7 @@
   }
 
 
-  function wishFor(product) { return state.wishlist.find(w=>w.sourceItemId===product.sourceItemId||F.classify(product,[w]).state==='owned'); }
+  function wishFor(product) { return state.wishlist.find(w=>F.wishlistRelation(w,product)==='match'); }
   function appendWishlistControl(row, product) {
     const label=document.createElement('label'); label.className='fanatical-library-wishlist-control'; const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.checked=Boolean(wishFor(product));checkbox.setAttribute('aria-label','Wishlist '+product.title);
     const status=document.createElement('small');status.setAttribute('role','status');
@@ -717,7 +734,7 @@
   }
   function appendWishlistNotice(summary, parsed) {
     document.querySelectorAll('.fanatical-library-wish-marker').forEach(node=>node.remove());
-    const rows=parsed.products.map(item=>({item,relation:wishFor(item)?'match':state.wishlist.some(w=>F.classify(item,[w]).state==='possible')?'related':''})).filter(row=>row.relation);
+    const rows=parsed.products.map(item=>({item,relation:wishFor(item)?'match':state.wishlist.some(w=>F.wishlistRelation(w,item)==='related')?'related':''})).filter(row=>row.relation);
     if(!rows.length)return;
     const details=document.createElement('details');details.className='fanatical-library-wishlist-notice';const heading=document.createElement('summary');heading.textContent=`Wishlist: ${rows.filter(row=>row.relation==='match').length} matches · ${rows.filter(row=>row.relation==='related').length} related`;details.append(heading);
     const list=document.createElement('ul');for(const row of rows){const li=document.createElement('li');li.textContent=`${row.item.title} — ${row.relation==='match'?'Wishlist match':'Related wishlist item'}`;list.append(li);const host=cardFor(row.item)?.querySelector('.cover-container');if(host){const marker=document.createElement('span');marker.className='fanatical-library-wish-marker';marker.textContent=row.relation==='match'?'♥ Wishlist':'♡ Related wish';host.append(marker);}}details.append(list);summary.append(details);
@@ -804,7 +821,7 @@
     for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partial'], ['possible', 'Possible matches'], ['unchecked', 'Check incomplete']]) {
       const entries = parsed.products.filter((_product, index) => (state === 'owned-elsewhere' ? matches[index].state === 'owned-elsewhere' : matches[index].state === state));
       if (!entries.length) continue;
-      const detailList = document.createElement('details'); detailList.className = 'fanatical-library-title-list'; const title = document.createElement('summary'); title.textContent = `${label} (${entries.length})`; detailList.append(title); const list = document.createElement('ol'); alphabetize(entries).forEach((product) => {
+      const detailList = document.createElement('details'); detailList.className = 'fanatical-library-title-list'; detailList.dataset.section=state; const title = document.createElement('summary'); title.textContent = `${label} (${entries.length})`; detailList.append(title); const list = document.createElement('ol'); alphabetize(entries).forEach((product) => {
         const match = matches[parsed.products.findIndex((candidate) => candidate.sourceItemId === product.sourceItemId)];
         const row = document.createElement('li');
         const view=F.presentation.row(product, match);
@@ -818,6 +835,7 @@
     if (advanced.children.length>1) element.append(advanced);
     if (tierDownload) element.append(tierDownload);
     appendSummaryControls(element);
+    restoreSummaryState(element,state.panelView);
   }
 
   function appendContentsSummary(summary, parsed, matches) {
@@ -992,7 +1010,7 @@
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     if(changes.fanaticalSummaryPreferences){state.summaryPreferences=F.normalizeSummaryPreferences(changes.fanaticalSummaryPreferences.newValue);document.querySelector('[data-fanatical-library-summary]')?.dispatchEvent(new Event('fanatical-summary-preferences'));}
-    if(changes.fanaticalWishlistItems)state.summaryDirty=true;
+    if(changes.fanaticalWishlistItems){state.summaryDirty=true;state.keepSummaryDuringRetry=true;}
     if (changes.fanaticalLibraryItems || changes.fanaticalHistoricalItems || changes.fanaticalProfileLabel || changes.galacticLibraryExtensionId) {
       state.keepSummaryDuringRetry = false;
       state.summaryDirty = true; state.revision++; state.galactic.clear(); state.failed.clear();
