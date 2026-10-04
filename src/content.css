@@ -100,3 +100,6 @@
 .fanatical-library-summary .fanatical-library-buy-recommendation { background:transparent; font-weight:400; }
 
 .fanatical-library-legend-unchecked { background:#666; }
+
+.fanatical-library-reading-sequence { max-height:none; overflow:visible; }
+.fanatical-library-unit-pages { display:flex; align-items:center; gap:.4rem; flex-wrap:wrap; }

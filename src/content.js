@@ -386,7 +386,7 @@
     const response = await chrome.runtime.sendMessage({ type: 'FANATICAL_GET_PUBLIC_BUNDLE', path: current.endpoint });
     if (!response?.ok) throw new Error(response?.error ?? 'Fanatical bundle data is unavailable.');
     const parsed = parse(response.bundle, current.kind);
-    if (pageUrl === location.href) { state.parsed = parsed; state.url = pageUrl; state.capabilityId=null;state.galactic.clear(); state.requests.clear(); state.failed.clear(); }
+    if (pageUrl === location.href) { state.panelView=null;state.planOpen=false;state.wishOpen=false;state.offerWishPage=0; state.parsed = parsed; state.url = pageUrl; state.capabilityId=null;state.galactic.clear(); state.requests.clear(); state.failed.clear(); }
     return parsed;
   }
 
@@ -694,7 +694,7 @@ function restoreSummaryState(panel, state) {
     const output = document.createElement('p'); output.setAttribute('role', 'status');
     review.addEventListener('click', () => openCentralReview(review, output));
     const refresh = document.createElement('button'); refresh.type = 'button'; refresh.textContent = 'Refresh central evidence';
-    refresh.addEventListener('click', () => { state.galactic.clear(); state.failed.clear(); state.revision++; state.summaryDirty = true; dialog.close(); schedule(true); });
+    refresh.addEventListener('click', () => { dialog.close(); refreshCentralEvidence(); });
     if(match.externalResult||match.lookupIncomplete||match.contentsLookupIncomplete||match.state==='owned-elsewhere')technical.append(review,refresh,output); document.body.append(dialog); dialog.showModal();
   }
 
@@ -725,11 +725,11 @@ function restoreSummaryState(panel, state) {
   }
 
 
-  function wishFor(product) { return state.wishlist.find(w=>F.wishlistRelation(w,product)==='match'); }
+  function wishFor(product) { return state.wishlist.filter(w=>F.wishlistRelation(w,product)==='match').sort((a,b)=>b.weight-a.weight)[0]; }
   function appendWishlistControl(row, product) {
     const label=document.createElement('label'); label.className='fanatical-library-wishlist-control'; const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.checked=Boolean(wishFor(product));checkbox.setAttribute('aria-label','Wishlist '+product.title);
     const status=document.createElement('small');status.setAttribute('role','status');
-    checkbox.addEventListener('change',async()=>{checkbox.disabled=true;try{const wish=wishFor(product);state.wishlist=await F.updateWishlist(checkbox.checked?'add':'remove',checkbox.checked?[wish||{...product,weight:1}]:F.wishlistKey(wish));state.summaryDirty=true;schedule(true);}catch(error){checkbox.checked=!checkbox.checked;status.textContent=error.message;}finally{checkbox.disabled=false;}});
+    checkbox.addEventListener('change',async()=>{checkbox.disabled=true;try{const wish=wishFor(product);if(checkbox.checked)state.wishlist=await F.updateWishlist('add',[wish||{...product,weight:1}]);else for(const entry of state.wishlist.filter(w=>F.wishlistRelation(w,product)==='match'))state.wishlist=await F.updateWishlist('remove',F.wishlistKey(entry));state.summaryDirty=true;schedule(true);}catch(error){checkbox.checked=!checkbox.checked;status.textContent=error.message;}finally{checkbox.disabled=false;}});
     label.append(checkbox,' Wishlist');row.append(' ',label,status);
   }
   function appendWishlistNotice(summary, parsed) {
@@ -759,7 +759,7 @@ function restoreSummaryState(panel, state) {
     const advanced=document.createElement('details'); advanced.className='fanatical-library-advanced'; advanced.dataset.section='advanced';
     const advancedHeading=document.createElement('summary'); advancedHeading.textContent='Advanced'; advanced.append(advancedHeading);
     appendContentsSummary(advanced, parsed, matches);
-    advanced.append(F.createPurchasePlanning(parsed,matches,state));
+    if(parsed.products.length)advanced.append(F.createPurchasePlanning(parsed,matches,state));
     appendReadingSummary(advanced, matches);
     const purchase = (Array.isArray(localItems) ? localItems : []).flatMap(item=>item.purchaseOrigins?.length?item.purchaseOrigins:[item]).filter(item=>item?.bundle?.sourceItemId===parsed.sourceItemId).sort((a,b)=>(Date.parse(b.purchaseDate)||0)-(Date.parse(a.purchaseDate)||0))[0];
     if (purchase?.purchaseDate) {
@@ -772,7 +772,7 @@ function restoreSummaryState(panel, state) {
     for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partial'], ['possible', 'Possible'], ['unchecked', 'Check incomplete']]) { const chip = document.createElement('span'); chip.className = `fanatical-library-legend-${state}`; chip.textContent = label; legend.append(chip); }
     element.append(legend);
     if (state.galacticEnabled) {
-      const galactic = document.createElement('p'); galactic.className = 'fanatical-library-galactic-status'; galactic.textContent = state.failed.size || state.capabilityFailed ? 'Galactic Library: check incomplete. Local results are retained.' : 'Galactic Library: checked linked libraries.'; galactic.title = 'Checks catalog and contents evidence with local Galactic Library. Central Fanatical copies are excluded; rescan local orders if the snapshots disagree.'; element.append(galactic);
+      const galactic = document.createElement('p'); galactic.className = 'fanatical-library-galactic-status'; galactic.textContent = state.failed.size || state.capabilityFailed ? 'Galactic Library: check incomplete. Local results are retained.' : state.galactic.size?'Galactic Library: checked linked libraries.':'Galactic Library: linked; no central checks completed on this page.'; galactic.title = 'Checks catalog and contents evidence with local Galactic Library. Central Fanatical copies are excluded; rescan local orders if the snapshots disagree.'; element.append(galactic);
       if (state.failed.size || state.capabilityFailed) {
         const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'fanatical-library-download fanatical-library-retry-galactic'; retry.textContent = 'Retry Galactic Library checks';
         retry.addEventListener('click', () => {
@@ -832,7 +832,7 @@ function restoreSummaryState(panel, state) {
         list.append(row);
       }); detailList.append(list); element.append(detailList);
     }
-    if (advanced.children.length>1) element.append(advanced);
+    if (advanced.children.length>1||diagnosticsEnabled) element.append(advanced);
     if (tierDownload) element.append(tierDownload);
     appendSummaryControls(element);
     restoreSummaryState(element,state.panelView);
@@ -841,9 +841,9 @@ function restoreSummaryState(panel, state) {
   function appendContentsSummary(summary, parsed, matches) {
     const content = F.bundleContents(parsed, matches);
     if (!content.additional.length && !content.covered.length && !content.uncertain.length) return;
-    const details = document.createElement('details'); details.className = 'fanatical-library-contents';
+    const details = document.createElement('details'); details.className = 'fanatical-library-contents'; details.dataset.section='contents';
     const heading = document.createElement('summary');
-    heading.textContent = `${parsed.kind === 'pick-mix' ? 'Available pool' : 'Bundle'} contents: ${content.additional.length} additional · ${content.covered.length} covered · ${content.uncertain.length} uncertain`;
+    heading.textContent = `Bundle contents and overlap${parsed.kind==='pick-mix'?' (available pool)':''} — ${content.additional.length} additional · ${content.covered.length} covered · ${content.uncertain.length} uncertain`;
     details.append(heading);
     const note = document.createElement('p'); note.textContent = 'Distinct full issues/volumes across checked libraries; overlapping offers count once. Additional means not found, within known run/language scope.'; details.append(note);
     if (content.noContentsProducts) { const row = document.createElement('p'); row.textContent = `${content.noContentsProducts} offers have no enumerable contents; they are outside these unit counts.`; details.append(row); }
@@ -860,54 +860,46 @@ function restoreSummaryState(panel, state) {
     }
     for (const [label, entries] of [['Additional', content.additional], ['Already covered', content.covered], ['Uncertain', content.uncertain]]) {
       if (!entries.length) continue;
-      const list = document.createElement('ul');
-      for (const entry of entries.slice(0, 100)) { const row = document.createElement('li'); row.textContent = `${label}: ${F.unitLabel(entry)}`; list.append(row); }
-      if (entries.length > 100) { const row = document.createElement('li'); row.textContent = `${entries.length - 100} more ${label.toLowerCase()} units`; list.append(row); }
-      details.append(list);
+      const section=appendPagedUnits(details,entries,entry=>{const row=document.createElement('li');row.textContent=F.unitLabel(entry);return row;},'contents-'+label);
+      section.querySelector('summary').textContent=`${label} (${entries.length})`;
     }
     summary.append(details);
   }
 
   function appendReadingSummary(summary, matches) {
-    const rows = state.reading || [];
-    if (rows.length || state.readingLimits?.unknownScope) {
-      const details = document.createElement('details'); details.className = 'fanatical-library-reading';
-      const heading = document.createElement('summary'); heading.textContent = 'Series coverage and gaps'; details.append(heading);
-      const note = document.createElement('p'); note.textContent = 'Numeric order within known series/run/language. Gaps cover the compared span, not a complete bibliography or publisher reading order.'; details.append(note);
-      if (state.readingLimits?.unknownScope) { const text = document.createElement('p'); text.textContent = `${state.readingLimits.unknownScope} offered units lack confirmed scope; no reading gaps inferred for them.`; details.append(text); }
-      if (state.readingLimits?.limited) { const text = document.createElement('p'); text.textContent = 'Large spans were bounded; only the displayed targets were compared.'; details.append(text); }
-      for (const row of rows) {
-        const title = document.createElement('strong'); title.textContent = `${row.label}: ${row.coverage.owned}/${row.coverage.total} full units confirmed covered`; details.append(title);
-        if (row.lookupIncomplete) { const text = document.createElement('p'); text.textContent = 'Central coverage unavailable; gaps cannot be confirmed from this comparison.'; details.append(text); }
-        const confirmed = new Set(row.coverage.covered.map(F.contentKey)); const possible = new Set(row.coverage.possibleCovered.map(F.contentKey));
-        const list = document.createElement('ol');
-        const ordered = [...row.entries].sort((left, right) => {
-          const a = Number(left.number); const b = Number(right.number);
-          return Number.isFinite(a) && Number.isFinite(b) ? a - b : titleCollator.compare(left.number, right.number);
-        });
-        for (const entry of ordered.slice(0, 100)) {
-          const id = F.contentKey(entry); const status = confirmed.has(id) ? 'Covered' : possible.has(id) ? 'Possible coverage' : row.lookupIncomplete ? 'Check incomplete' : 'Not confirmed covered';
-          const item = document.createElement('li'); item.textContent = `${entry.unitType} ${entry.number}: ${status}${row.offeredKeys.has(id) ? ' · offered here' : ' · not offered here'}`; list.append(item);
-        }
-        if (ordered.length > 100) { const item = document.createElement('li'); item.textContent = `${ordered.length - 100} more compared units`; list.append(item); }
-        details.append(list);
+    const rows=state.reading||[];
+    if(rows.length||state.readingLimits?.unknownScope){
+      const details=document.createElement('details');details.className='fanatical-library-reading';details.dataset.section='series';
+      const heading=document.createElement('summary');heading.textContent='Series coverage and gaps';details.append(heading);
+      const note=document.createElement('p');note.textContent='Compared numeric range within a known series/run/language; this is not a publisher reading order. Annuals and specials are listed only when explicit, without filling numbered gaps.';details.append(note);
+      if(state.readingLimits?.unknownScope){const note=document.createElement('p');note.textContent=`Needs review: ${state.readingLimits.unknownScope} offered units lack confirmed scope; no gaps inferred for them.`;details.append(note);}
+      if(state.readingLimits?.limited){const note=document.createElement('p');note.textContent='Comparison bounded to 100 series, 2,000 units per series and 20,000 units total. Unchecked ranges need review.';details.append(note);}
+      for(const row of rows){
+        const section=document.createElement('details');section.dataset.section='series-'+row.label;
+        const heading=document.createElement('summary');heading.textContent=`${row.label}: ${row.coverage.owned}/${row.coverage.total} full units confirmed covered`;section.append(heading);
+        const confirmed=new Set(row.coverage.covered.map(F.contentKey)),possible=new Set(row.coverage.possibleCovered.map(F.contentKey));
+        const ordered=[...row.entries].sort((a,b)=>Number(F.numberKey(a.number))-Number(F.numberKey(b.number))||titleCollator.compare(a.number,b.number));
+        for(const [label,entries]of [['Compared range',ordered],['Offered here',ordered.filter(entry=>row.offeredKeys.has(F.contentKey(entry)))],['Owned elsewhere',row.coverage.covered.filter(entry=>entry.evidence?.some(record=>record.provider!=='fanatical'))],['Missing in compared range',ordered.filter(entry=>!confirmed.has(F.contentKey(entry))&&!possible.has(F.contentKey(entry))&&!row.lookupIncomplete)]])if(entries.length){const note=document.createElement('p');note.textContent=`${label}: ${conciseUnitNumbers(entries)}`;section.append(note);}
+        if(row.lookupIncomplete||possible.size){const note=document.createElement('p');note.textContent='Needs review: unconfirmed coverage or incomplete checks cannot establish gaps.';section.append(note);}
+        if(row.bounded){const note=document.createElement('p');note.textContent='Large spans show only the bounded explicit units; missing numbers outside the compared range are unknown.';section.append(note);}
+        appendPagedUnits(section,ordered,entry=>{const id=F.contentKey(entry),status=confirmed.has(id)?'Covered':possible.has(id)?'Needs review':row.lookupIncomplete?'Check incomplete':'Not confirmed covered';const item=document.createElement('li');item.textContent=`${entry.unitType} ${entry.number}: ${status}${row.offeredKeys.has(id)?' · offered here':' · not offered here'}`;return item;},section.dataset.section+'-units');details.append(section);
       }
       summary.append(details);
     }
-    const reminders = F.centralReminders([...matches, ...rows]);
-    if (reminders.length || state.failed.size) {
-      const details = document.createElement('details'); details.className = 'fanatical-library-reminders';
-      const heading = document.createElement('summary'); heading.textContent = `Central evidence reminders (${reminders.length + (state.failed.size ? 1 : 0)})`; details.append(heading);
-      const list = document.createElement('ul');
-      if (state.failed.size) { const row = document.createElement('li'); row.textContent = 'Some central lookups failed. Refresh this comparison before deciding that an item is absent.'; list.append(row); }
-      for (const reminder of reminders.slice(0, 100)) { const row = document.createElement('li'); row.textContent = `${reminder.title} · ${reminder.provider}: ${reminder.text}`; list.append(row); }
-      if (reminders.length > 100) { const row = document.createElement('li'); row.textContent = `${reminders.length - 100} more evidence reminders; open the item inspectors to review them.`; list.append(row); }
-      const refresh = document.createElement('button'); refresh.type = 'button'; refresh.textContent = 'Refresh central evidence'; refresh.className = 'fanatical-library-download';
-      refresh.addEventListener('click', () => { state.galactic.clear(); state.failed.clear(); state.revision++; state.summaryDirty = true; schedule(true); });
-      const review = document.createElement('button'); review.type = 'button'; review.textContent = 'Review in Galactic Library'; review.className = 'fanatical-library-download';
-      const output = document.createElement('p'); output.setAttribute('role', 'status'); review.addEventListener('click', () => openCentralReview(review, output));
-      details.append(list, refresh, review, output); summary.append(details);
-    }
+    if(!state.galacticEnabled)return;
+    const details=document.createElement('details');details.className='fanatical-library-reminders';details.dataset.section='galactic';
+    const heading=document.createElement('summary');heading.textContent='Galactic Library details';details.append(heading);
+    const status=document.createElement('p');status.textContent=state.galacticStatus;details.append(status);
+    const hint=document.createElement('p');hint.textContent='Retry checks missing or failed results. Refresh fetches fresh central evidence, including successful checks. Local evidence is retained.';details.append(hint);
+    const refresh=document.createElement('button');refresh.type='button';refresh.textContent='Refresh central evidence';refresh.className='fanatical-library-download';refresh.addEventListener('click',refreshCentralEvidence);details.append(refresh);
+    if(state.failed.size||state.capabilityFailed){const retry=document.createElement('button');retry.type='button';retry.textContent='Retry Galactic Library checks';retry.addEventListener('click',()=>document.querySelector('.fanatical-library-retry-galactic')?.click());details.append(retry);}
+    const review=document.createElement('button');review.type='button';review.textContent='Review in Galactic Library';review.className='fanatical-library-download';const output=document.createElement('p');output.setAttribute('role','status');review.addEventListener('click',()=>openCentralReview(review,output));details.append(review,output);
+    const reminders=F.centralReminders([...matches,...rows]);
+    if(reminders.length){const section=appendPagedUnits(details,reminders,reminder=>{const row=document.createElement('li');row.textContent=`${reminder.title} · ${F.presentation.providerName(reminder.provider)}: ${reminder.text}`;return row;},'central-reminders');section.querySelector('summary').textContent=`Evidence reminders (${reminders.length})`;}
+    summary.append(details);
+  }
+  function refreshCentralEvidence() {
+    state.galactic.clear();state.failed.clear();state.capabilityId=null;state.keepSummaryDuringRetry=true;state.revision++;state.summaryDirty=true;schedule(true);
   }
 
   async function render() {
@@ -1011,6 +1003,7 @@ function restoreSummaryState(panel, state) {
     if (area !== 'local') return;
     if(changes.fanaticalSummaryPreferences){state.summaryPreferences=F.normalizeSummaryPreferences(changes.fanaticalSummaryPreferences.newValue);document.querySelector('[data-fanatical-library-summary]')?.dispatchEvent(new Event('fanatical-summary-preferences'));}
     if(changes.fanaticalWishlistItems){state.summaryDirty=true;state.keepSummaryDuringRetry=true;}
+    if(changes.fanaticalShowDiagnostics){state.summaryDirty=true;state.keepSummaryDuringRetry=true;}
     if (changes.fanaticalLibraryItems || changes.fanaticalHistoricalItems || changes.fanaticalProfileLabel || changes.galacticLibraryExtensionId) {
       state.keepSummaryDuringRetry = false;
       state.summaryDirty = true; state.revision++; state.galactic.clear(); state.failed.clear();
@@ -1025,3 +1018,22 @@ function restoreSummaryState(panel, state) {
   });
   schedule();
 }());
+
+function appendPagedUnits(host, entries, renderRow, sectionKey) {
+  const section=document.createElement('details');section.dataset.section=sectionKey;
+  const heading=document.createElement('summary');heading.textContent=`Unit details (${entries.length})`;section.append(heading);
+  let page=0,mounted=false;
+  const list=document.createElement('ol');list.className='fanatical-library-reading-sequence';
+  const controls=document.createElement('div');controls.className='fanatical-library-unit-pages';
+  const previous=document.createElement('button'),next=document.createElement('button'),status=document.createElement('span');
+  previous.type=next.type='button';previous.textContent='Previous units';next.textContent='Next units';status.setAttribute('role','status');
+  const paint=()=>{list.replaceChildren();list.start=page*50+1;for(const entry of entries.slice(page*50,(page+1)*50))list.append(renderRow(entry));previous.disabled=page===0;next.disabled=(page+1)*50>=entries.length;status.textContent=` ${page*50+1}–${Math.min((page+1)*50,entries.length)} of ${entries.length} `;};
+  previous.addEventListener('click',()=>{page--;paint();});next.addEventListener('click',()=>{page++;paint();});controls.append(previous,status,next);
+  section.addEventListener('toggle',()=>{if(!section.open||mounted)return;mounted=true;section.append(list);if(entries.length>50)section.append(controls);paint();});
+  host.append(section);return section;
+}
+function conciseUnitNumbers(entries) {
+  const rows=[...new Set(entries.map(entry=>entry.number))].sort((a,b)=>{const number=value=>Number(globalThis.LibraryMatchingPolicy.unitKey(value));return number(a)-number(b)||String(a).localeCompare(String(b),undefined,{numeric:true});});
+  const ranges=[];for(let i=0;i<rows.length;i++){const first=rows[i];let last=first;while(i+1<rows.length&&Number.isInteger(Number(last))&&Number(rows[i+1])===Number(last)+1)last=rows[++i];ranges.push(first===last?String(first):`${first}–${last}`);}
+  return ranges.slice(0,12).join(', ')+(ranges.length>12?` … (${rows.length} units)`:'');
+}

@@ -29,10 +29,12 @@ const editionBundle = { _id: 'edition-bundle-123456', name: 'Test editions', slu
 const contentsUnit = number => ({ series: 'Saga', run: '2020', language: 'en', unitType: 'issue', number: String(number), completeness: 'full' });
 const contentsProducts = [[1, 2, 3], [2, 3, 4], [6], [8]].map((numbers, index) => ({ _id: `contents-product-${index}`, name: numbers.length === 1 ? `Saga #${numbers[0]}` : `Saga Collection ${index + 1}`, type: 'book', run: '2020', language: 'en', contents: numbers.map(contentsUnit), contentsComplete: true }));
 const contentsBundle = { _id: 'contents-bundle-123456', name: 'Saga bundle', bundles: [{ price: { USD: 100 }, games: contentsProducts.slice(0, 1) }, { price: { USD: 1000 }, games: contentsProducts.slice(1) }], products: contentsProducts, tiers: [{ quantity: 2, price: { USD: 100 } }] };
+const advancedChecks=fs.readFileSync(new URL('./advanced-parity-checks.js',import.meta.url),'utf8');
 const mock = `
 globalThis.addEventListener('error', event => {fetch('/result?route='+encodeURIComponent(location.pathname),{method:'POST',body:JSON.stringify({ok:false,error:event.message})})});
 const listeners = [];
 globalThis.values = { fanaticalLibraryItems: [{source:'fanatical',sourceItemId:'product-123450',title:'Comic #10',mediaType:'book',bundle:{sourceItemId:'bundle-123456',title:'Test comics',slug:'test-comics'},purchaseDate:null}],galacticLibraryExtensionId:'b'.repeat(32),fanaticalScannedOrderFingerprints:['a'.repeat(64)] };
+if(location.pathname.endsWith('test-empty')){values.fanaticalLibraryItems=[];values.galacticLibraryExtensionId='';}
 if(location.pathname.includes('test-editions')) values.fanaticalLibraryItems=[${JSON.stringify(editionBase)},{...${JSON.stringify(editionBase)},sourceItemId:'edition-gold-123456',title:'Space Adventure Gold Edition'}];
 if(location.pathname.includes('test-contents')) values.fanaticalLibraryItems=[{source:'fanatical',sourceItemId:'owned-issue-123456',title:'Saga #1',mediaType:'book',run:'2020',language:'en'}];
 if(location.pathname.includes('test-contents')) values.fanaticalWishlistItems=JSON.parse(sessionStorage.getItem('fixture-wishlist')||'null')||[{sourceItemId:'contents-product-2',title:'Saga #6',mediaType:'book',weight:7}];
@@ -67,13 +69,14 @@ globalThis.chrome = {runtime:{id:'a'.repeat(32),sendMessage:async(first,second)=
   if(message.type==='MATCH_ITEMS'&&centralMode==='fanatical')return {ok:true,apiVersion:1,results:message.items.map(item=>({requestId:item.requestId,matches:item.title==='External comic'?[{provider:'fanatical',title:item.title,ownership:'owned',relationship:'same-edition'}]:[]}))};
   if(message.type==='MATCH_ITEMS'&&centralMode==='reject')return {ok:false,apiVersion:1};
   if(message.type==='MATCH_ITEMS'&&centralMode==='legacy')return {ok:true,apiVersion:1,results:message.items.map(item=>({requestId:item.requestId,matches:[]}))};
-  if(message.type==='MATCH_ITEMS'&&location.pathname.includes('test-contents'))return {ok:true,apiVersion:1,results:message.items.map(item=>{
+  if(message.type==='MATCH_ITEMS'&&location.pathname.includes('test-contents'))return {ok:true,apiVersion:1,results:message.items.filter(item=>centralMode!=='partial'||item.title!=='Saga #8').map(item=>{
     const evidence={provider:'kindle',title:'Saga Complete Collection',ownership:'owned',relationship:'contains',itemRef:'opaque-saga',reason:'Reviewed full issues',confidence:1,evidence:{source:'Reviewed publisher contents',checkedAt:'2026-08-01'},verifiedAt:'2026-08-01'};
     const entries=item.contents||[];const covered=entries.filter(entry=>['2','5'].includes(entry.number)).map(entry=>({...entry,evidence:[evidence]}));
     const uncertain={provider:'kindle',title:'Saga #8',ownership:'unknown',relationship:'same-work',itemRef:'opaque-uncertain',reason:'Title candidate; ownership needs confirmation',evidence:{source:'Kindle import',checkedAt:null}};
     return {requestId:item.requestId,matches:[],possibleMatches:item.title==='Saga #8'?[uncertain]:[],partialMatches:covered.length?[evidence]:[],coverage:entries.length?{total:entries.length,owned:covered.length,complete:covered.length===entries.length,scopeUncertain:false,covered,possibleCovered:[],missing:entries.filter(entry=>!['2','5'].includes(entry.number))}:null};
   })};
   if(message.type==='MATCH_ITEMS')return {ok:true,apiVersion:1,results:message.items.map(item=>({requestId:item.requestId,matches:item.title==='External comic'?[{provider:'humble',title:'External comic',ownership:'owned',relationship:'same-edition',evidence:{source:'Reviewed same-edition relationship',checkedAt:null}}]:[]}))};
+  if(message.type==='FANATICAL_GET_PUBLIC_BUNDLE'&&message.path.includes('test-empty'))return {ok:true,bundle:{_id:'empty-bundle-123456',name:'Empty bundle',bundles:[]}};
   if(message.type==='FANATICAL_GET_PUBLIC_BUNDLE')return {ok:true,bundle:message.path.includes('test-contents')?(message.path.includes('pick-and-mix')?${JSON.stringify(contentsBundle)}:${JSON.stringify({ ...contentsBundle, products: undefined, tiers: undefined })}):message.path.includes('test-editions')?${JSON.stringify(editionBundle)}:message.path.includes('pick-and-mix')?${JSON.stringify({ ...bundle, products, tiers: [{ quantity: 2, price: { USD: 100 } }] })}:${JSON.stringify(bundle)}};
 }},storage:{local:{get:async defaults=>{if(defaults==null)return structuredClone(values);if(typeof defaults==='string')return defaults in values?{[defaults]:structuredClone(values[defaults])}:{};if(Array.isArray(defaults))return Object.fromEntries(defaults.filter(key=>key in values).map(key=>[key,structuredClone(values[key])]));return structuredClone({...defaults,...Object.fromEntries(Object.keys(defaults).filter(key=>key in values).map(key=>[key,values[key]]))});},set:async changes=>{Object.assign(values,changes);if(changes.fanaticalSummaryPreferences)sessionStorage.setItem('fixture-summary',JSON.stringify(changes.fanaticalSummaryPreferences));if('fanaticalWishlistItems' in changes)sessionStorage.setItem('fixture-wishlist',JSON.stringify(changes.fanaticalWishlistItems)); const events={};for(const key in changes)events[key]={newValue:changes[key]};listeners.forEach(listener=>listener(events,'local'));},remove:async keys=>{const changes={};for(const key of Array.isArray(keys)?keys:[keys]){delete values[key];changes[key]={newValue:undefined};}listeners.forEach(listener=>listener(changes,'local'));}},onChanged:{addListener:listener=>listeners.push(listener)}},tabs:{create(){}}};
 globalThis.confirmAnswer = true;
@@ -254,10 +257,11 @@ try {
   finish({ok:true,scenario:'Orders importer coverage, failed scan and control recovery'});
 }catch(error){finish({ok:false,error:error.message})}
 `;
-const contentsChecks = `${common}
+const contentsChecks = `${common}\n${advancedChecks}
 try {
   await wait();
   if(sessionStorage.getItem('verify-wishlist-reload')){const summary=document.querySelector('[data-fanatical-library-summary]');assert(summary.classList.contains('fanatical-library-summary-minimized')&&summary.dataset.position==='top-left','Summary size/corner did not survive reload');summary.querySelector('.fanatical-library-summary-expand').click();await wait();assert(values.fanaticalSummaryPreferences.minimized===false,'Reloaded summary could not expand');const panel=document.querySelector('.fanatical-library-planning');panel.open=true;panel.querySelector('details').open=true;const goal=panel.querySelector('[aria-label="Purchase planning goal"]');goal.value='wishlist';goal.dispatchEvent(new Event('change'));assert(panel.textContent.includes('5 wishlist priority points'),'Reload dropped the saved wishlist');assert(panel.querySelector('li[data-product-id="contents-product-2"] input').value==='5','Reload reset saved wishlist weight');finish({ok:true,scenario:'initial/restored/reloaded wishlist and contents planning',route:location.pathname});}else{
+  if(!sessionStorage.getItem('verify-wishlist-reload'))await runAdvancedParityChecks(false,assert);
   const content=()=>document.querySelector('.fanatical-library-contents');
   assert(content()?.textContent.includes('4 additional · 2 covered · 0 uncertain'),'Distinct bundle unit counts are wrong');
   assert(document.querySelectorAll('.fanatical-library-partial-badge').length===2,'Central and local union coverage did not resolve Partial');
@@ -272,6 +276,11 @@ try {
   const planning=()=>document.querySelector('.fanatical-library-planning');planning().open=true;await wait();planning().querySelector('details').open=true;
   const wishRow=planning().querySelector('li[data-product-id="contents-product-2"]');assert(wishRow.querySelector('input').value==='7'&&wishRow.textContent.includes('Save priority'),'Saved wishlist was ignored on initial bundle load');
   const advanced=document.querySelector('.fanatical-library-advanced');advanced.open=true;
+  const initialWishes=structuredClone(values.fanaticalWishlistItems);
+  await chrome.storage.local.set({fanaticalWishlistItems:[...initialWishes,{...initialWishes[0],sourceItemId:'alternate-product-2',weight:3}]});await wait();
+  const duplicateToggle=document.querySelector('[aria-label="Wishlist Saga #6"]');assert(duplicateToggle.checked,'Duplicate compatible wish lost row recognition');duplicateToggle.checked=false;duplicateToggle.dispatchEvent(new Event('change'));await wait();
+  assert(values.fanaticalWishlistItems.length===0&&!document.querySelector('.fanatical-library-wish-marker'),'Removing a wish left duplicate manifestations marked');
+  await chrome.storage.local.set({fanaticalWishlistItems:initialWishes});await wait();
   const initialGoal=planning().querySelector('[aria-label="Purchase planning goal"]');initialGoal.value='wishlist';initialGoal.dispatchEvent(new Event('change'));assert(planning().textContent.includes('7 wishlist priority points'),'Initial saved wishlist did not affect purchase value');
   globalThis.fixtureStore??= (await import('/src/library-data.mjs')).createSyncStore(chrome.storage.local);const savedBackup=(await fixtureStore.execute('backup'));await fixtureStore.execute('wishlist',['replace',[]]);savedBackup.wishlistItems[0].weight=9;await fixtureStore.execute('restore',[savedBackup]);await wait();assert(planning().textContent.includes('9 wishlist priority points'),'Restored wishlist was ignored by the open bundle');
   assert(document.querySelector('.fanatical-library-advanced').open&&planning().open&&planning().querySelector('details').open,'Wishlist refresh closed active disclosures');
@@ -286,11 +295,22 @@ try {
   assert(inspector?.textContent.includes('Reviewed publisher contents')&&inspector.textContent.includes('2026-08-01'),'Central contents evidence/freshness missing from inspector');
   inspector.querySelector('button').click();await wait();
   const reading=()=>document.querySelector('.fanatical-library-reading');
+  const openUnits=async()=>{for(const section of reading().querySelectorAll('details'))section.open=true;await wait();};
+  await openUnits();
   assert(reading()?.textContent.includes('issue 5: Covered · not offered here'),'Central ownership of an intervening issue was missed');
   assert(reading().textContent.includes('issue 7: Not confirmed covered · not offered here'),'Reading gap outside the offer was not surfaced');
   const reminders=()=>document.querySelector('.fanatical-library-reminders');
+  for(const section of reminders().querySelectorAll('details'))section.open=true;await wait();
   assert(reminders()?.textContent.includes('unknown ownership')&&reminders().textContent.includes('Observation date unavailable'),'Central ownership/freshness reminders missing');
+  const matchedSince=start=>requests.slice(start).filter(message=>message.type==='MATCH_ITEMS').flatMap(message=>message.items);
+  centralMode='partial';const beforeRefresh=requests.length;reminders().querySelector('button').click();await wait();
+  assert(matchedSince(beforeRefresh).some(item=>item.title==='Saga Collection 1'),'Refresh reused a successful central result');
+  assert(document.querySelectorAll('.fanatical-library-partial-badge').length===2&&document.querySelector('.fanatical-library-unchecked-badge'),'Mixed central failure lost valid local/successful coverage');
+  centralMode='normal';const beforeRetry=requests.length;document.querySelector('.fanatical-library-retry-galactic').click();await wait();
+  assert(matchedSince(beforeRetry).length===1&&matchedSince(beforeRetry)[0].title==='Saga #8','Retry did not retain successful evidence');
+  assert(!document.querySelector('.fanatical-library-unchecked-badge'),'Retry did not recover the missing lookup');
   centralMode='legacy';reminders().querySelector('button').click();await wait();
+  await openUnits();
   assert(content()?.textContent.includes('0 additional'),'Legacy title lookup falsely established unit absence');
   assert(reading().textContent.includes('issue 7: Check incomplete'),'Missing central contents capability falsely established a reading gap');
   centralMode='reject';reminders().querySelector('button').click();await wait();
@@ -318,6 +338,7 @@ const server = http.createServer((request, response) => {
   if (url === '/mock.js') return send('text/javascript', mock);
   if (url === '/options-check.js') return send('text/javascript', optionsChecks);
   if (url === '/bundle-check.js') return send('text/javascript', bundleChecks);
+  if (url === '/empty-check.js') return send('text/javascript', common+`try{await wait();assert(document.querySelector('.fanatical-library-summary-counts').textContent.includes('New 0'),'Empty summary has incorrect counts');assert(!document.querySelector('.fanatical-library-advanced'),'No applicable analysis left Advanced mounted');finish({ok:true,scenario:'no applicable Advanced subsection'});}catch(error){finish({ok:false,error:error.message});}`);
   if (url === '/slow-central-check.js') return send('text/javascript', slowCentralChecks);
   if (url === '/catalogue-check.js') return send('text/javascript', catalogueChecks);
   if (url === '/edition-check.js') return send('text/javascript', editionChecks);
@@ -331,6 +352,7 @@ const server = http.createServer((request, response) => {
     return send('text/html', html);
   }
   if (url === '/en/orders') return send('text/html', '<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"></head><body><main>Mock orders</main><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/order-check.js"></script></body></html>');
+  if(url==='/en/bundle/test-empty')return send('text/html','<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"></head><body><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/empty-check.js"></script></body></html>');
   if (url === '/en/bundle/test-comics' || url === '/en/bundle/books' || url === '/en/pick-and-mix/test-mix' || url.endsWith('/test-editions') || url.endsWith('/test-contents')) {
     const isCatalogue = url.endsWith('/books');
     const isEdition = url.endsWith('/test-editions');
@@ -341,7 +363,7 @@ const server = http.createServer((request, response) => {
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
-  const allRoutes = ['/options', '/en/bundle/test-comics', '/en/pick-and-mix/test-mix', '/en/bundle/books', '/en/bundle/test-editions', '/en/pick-and-mix/test-editions', '/en/orders', '/en/bundle/test-contents', '/en/pick-and-mix/test-contents'];
+  const allRoutes = ['/options', '/en/bundle/test-comics', '/en/pick-and-mix/test-mix', '/en/bundle/books', '/en/bundle/test-editions', '/en/pick-and-mix/test-editions', '/en/orders', '/en/bundle/test-contents', '/en/pick-and-mix/test-contents','/en/bundle/test-empty'];
   const selectedRoutes=process.argv.slice(2).filter(arg=>!['--release','--firefox','--slow-central'].includes(arg));const routes=selectedRoutes.length?selectedRoutes:slowCentral?['/en/bundle/test-comics','/en/pick-and-mix/test-mix']:allRoutes;
   if (routes.some(route => !allRoutes.includes(route))) throw new Error('Unknown browser fixture route');
   for (const [index, route] of routes.entries()) {

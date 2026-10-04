@@ -892,11 +892,18 @@
     return { additional: [...additional.values()], covered: [...covered.values()], uncertain: [...uncertain.values()], noContentsProducts, incompleteProducts, tiers };
   }
 
+  function readingUnit(entry, source, title) {
+    // Analysis only: do not reinterpret catalog metadata or ownership badges.
+    const labelled=source==='Title-derived comparison targets' && /\b(annual|special)\s+(?:#|issues?\s*)\d/iu.exec(title||'');
+    return labelled?{...entry,unitType:labelled[1].toLowerCase(),series:entry.series.replace(/\s+(annual|special)$/iu,'')}:entry;
+  }
   function readingTargets(products) {
     const groups = new Map(); let unknownScope = 0; let budget = 20000; let limited = false;
     for (const item of products) {
+      if(item.mediaType && mediaType(item.mediaType)!=='book')continue;
       const target = offerContents(item);
-      for (const entry of target.entries) {
+      for (const original of target.entries) {
+        const entry=readingUnit(original,target.source,item.title);
         if (entry.completeness !== 'full') continue;
         if (!entry.run || !entry.language || target.uncertain) { unknownScope++; continue; }
         const id = JSON.stringify([scopeKey(entry.series), scopeKey(entry.run), entry.unitType, scopeKey(entry.language)]);
@@ -925,9 +932,13 @@
     return { queries, unknownScope, limited };
   }
   function readingCoverage(targets, local, lookup, centralEnabled = false) {
+    const readingLocal=local.map(entry=>{
+      const record=entry.evidence?.find(record=>record.provider==='fanatical'&&record.reason==='Title-derived comparison targets');
+      return record?readingUnit(entry,record.reason,record.title):entry;
+    });
     return targets.queries.map(query => {
       const result = lookup(query.item);
-      return { ...query, coverage: coverageFor({ entries: query.entries, complete: false, uncertain: false }, local, result),
+      return { ...query, coverage: coverageFor({ entries: query.entries, complete: false, uncertain: false }, readingLocal, result),
         lookupIncomplete: centralEnabled && !result?.coverage, externalResult: result, offered: query.item };
     });
   }

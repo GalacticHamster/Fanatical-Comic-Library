@@ -1,4 +1,4 @@
-/* Wishlist and purchase planning use the same evidence rules as badges. */
+/* Wishlist identity is independent of ownership; planning uses resolved badges. */
 (function(global){
   'use strict';const F=global.FanaticalLibrary;
   function wishlistFields(item){
@@ -24,7 +24,7 @@
     if(issues(item)&&issues(wanted)&&issues(item)!==issues(wanted))return 'none';
     const shared=Boolean(a.isbn?.some(id=>b.isbn?.includes(id))||a.asin&&a.asin===b.asin||a.editionId&&a.editionId===b.editionId);
     const sameTitle=policy.fullTitleMatches(item.title,wanted.title,kind);
-    const conflicts=F.identityConflicts(item,wanted,true);
+    const conflicts=F.identityConflicts(item,wanted,true).filter(reason=>reason!=='Author name variation needs review');
     const packageLabel=value=>kind==='game'?(String(value).match(/\b(base(?: game)?|standard|deluxe|gold|platinum|ultimate|complete|definitive|premium|goty|game of the year)(?: edition)?\s*$/iu)?.[0]||'').toLowerCase():'';
     const packageDifference=packageLabel(item.title)!==packageLabel(wanted.title);
     const strong=shared||sameTitle||Boolean((item.externalIds?.steamAppId||item.steamAppId)&&(item.externalIds?.steamAppId||item.steamAppId)===(wanted.externalIds?.steamAppId||wanted.steamAppId));

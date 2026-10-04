@@ -19,7 +19,7 @@
     centralMode='normal';centralDelayMs=4500;retry.click();retry.click();await pause(250);
     assert(summary()===failed&&retry.disabled&&failed.getAttribute('aria-busy')==='true','Retry lost the settled summary or allowed duplicate requests');
     await until(()=>summary()!==failed&&!document.querySelector('.fanatical-library-unchecked-badge'));
-    assert(document.querySelector('.fanatical-library-owned-elsewhere-badge')&&summary().querySelector('.fanatical-library-galactic-status').textContent.includes('Available.'),'Retry left stale failure labels or missed returned ownership');
+    assert(document.querySelector('.fanatical-library-owned-elsewhere-badge')&&summary().querySelector('.fanatical-library-galactic-status').textContent.includes('checked linked libraries')&&summary().querySelector('[data-section="galactic"]').textContent.includes('Available.'),'Retry left stale failure labels or missed returned ownership');
     assert(!summary().querySelector('.fanatical-library-retry-galactic')&&!summary().classList.contains('fanatical-library-summary-minimized')&&summary().dataset.position==='top-left','Successful retry retained a failure action or reset summary preferences');
     assertBadgesVisible();
     const recovered=summary(),calls=requests.filter(row=>row.type==='MATCH_ITEMS').length;await pause(500);
