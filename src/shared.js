@@ -381,14 +381,15 @@
   function scopeKey(value) {
     return String(value ?? '').normalize('NFKC').toLowerCase().replace(/&/gu, ' and ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/gu, ' ');
   }
-  function numberKey(value) {
+  function numberKey(value, unitType) {
     const text = String(value ?? '').trim();
+    if (unitType === 'component') return text.replace(/\s+/gu, ' ');
     const fraction = /^(\d+)\/(\d+)$/u.exec(text);
     if (fraction && Number(fraction[2])) return String(Number(fraction[1]) / Number(fraction[2]));
     return /^\d+(?:\.\d+)?$/u.test(text) ? String(Number(text)) : scopeKey(text);
   }
   function contentKey(entry) {
-    return JSON.stringify([scopeKey(entry.series), scopeKey(entry.run), entry.unitType, numberKey(entry.number), scopeKey(entry.language)]);
+    return JSON.stringify([scopeKey(entry.series), scopeKey(entry.run), entry.unitType, numberKey(entry.number, entry.unitType), scopeKey(entry.language)]);
   }
   function contentsMetadata(raw) {
     if (raw?.contents === undefined) return {};
@@ -402,7 +403,7 @@
         || !['full', 'excerpt'].includes(entry.completeness)
         || ['issue', 'volume', 'annual'].includes(entry.unitType) && (!/^\d+(?:\.\d+|\/\d+)?$/u.test(entry.number.trim()) || /\/0+$/u.test(entry.number.trim()))) { incomplete = true; continue; }
       const unit = { series: entry.series.trim().slice(0, 500), run: typeof entry.run === 'string' ? entry.run.trim().slice(0, 500) : '',
-        unitType: entry.unitType, number: numberKey(entry.number).slice(0, 500), language: typeof entry.language === 'string' ? entry.language.trim().slice(0, 500) : '', completeness: entry.completeness };
+        unitType: entry.unitType, number: numberKey(entry.number, entry.unitType).slice(0, 500), language: typeof entry.language === 'string' ? entry.language.trim().slice(0, 500) : '', completeness: entry.completeness };
       if (unit.number) contents.push(unit); else incomplete = true;
     }
     const excerptKeys = new Set(contents.filter(entry => entry.completeness === 'excerpt').map(contentKey));
@@ -601,7 +602,7 @@
     return entries;
   }
   function coverageFor(target, local, result) {
-    const unitToken = entry => JSON.stringify([scopeKey(entry.series), entry.unitType, numberKey(entry.number)]);
+    const unitToken = entry => JSON.stringify([scopeKey(entry.series), entry.unitType, numberKey(entry.number, entry.unitType)]);
     const build = entries => {
       const index = new Map();
       for (const entry of entries) { const id = unitToken(entry); const rows = index.get(id) ?? []; rows.push(entry); index.set(id, rows); }
@@ -618,7 +619,9 @@
         if (candidate.completeness !== 'full') continue;
         if (entry.run && candidate.run && scopeKey(entry.run) !== scopeKey(candidate.run) || entry.language && candidate.language && scopeKey(entry.language) !== scopeKey(candidate.language)) continue;
         const evidence = (candidate.evidence ?? []).filter(record => permanent(record) && (record.provider !== 'fanatical' || !candidate.central));
-        if (!candidate.uncertain && entry.run && entry.language && candidate.run && candidate.language && contentKey(entry) === contentKey(candidate)) confirmed.push(...evidence);
+        // No catalog/local row carries trusted GL parent scope. Named equality
+        // remains Possible even when local and central evidence are combined.
+        if (entry.unitType !== 'component' && !candidate.uncertain && entry.run && entry.language && candidate.run && candidate.language && contentKey(entry) === contentKey(candidate)) confirmed.push(...evidence);
         else possible.push(...evidence);
       }
       if (confirmed.length) covered.push({ ...entry, evidence: confirmed });

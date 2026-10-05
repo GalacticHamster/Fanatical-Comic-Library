@@ -7,6 +7,25 @@ const unit = (number, extra = {}) => ({ series: 'Saga', run: '2020', language: '
 const record = (extra = {}) => ({ provider: 'kindle', title: 'Owned collection', itemRef: 'opaque', ownership: 'owned', relationship: 'contains', evidence: { source: 'Reviewed contents', checkedAt: '2026-09-30' }, ...extra });
 const product = (extra = {}) => ({ sourceItemId: 'product-123456', title: 'Saga collection', mediaType: 'book', contents: [unit(1), unit(2)], contentsComplete: true, ...extra });
 
+test('central component requests preserve literal numeric, case and edition titles', () => {
+  const names=['01','1','Alpha','alpha','Alpha: Special Edition','Ａlpha'];
+  const request=F.galacticRequestItems([product({contents:names.map(number=>unit(number,{unitType:'component'}))})])[0];
+  assert.deepEqual(request.contents.map(entry=>entry.number),names);
+  assert.notEqual(F.contentKey(request.contents[0]),F.contentKey(request.contents[1]));
+  assert.equal(F.contentKey(unit('01')),F.contentKey(unit('1')));
+});
+test('unscoped central component candidates cannot be promoted or numerically conflated', () => {
+  const entry=unit('01',{unitType:'component'}),target={entries:[entry],complete:true};
+  const result={matches:[],possibleMatches:[record({reason:'Named contents are parent-local'})],coverage:{possibleCovered:[{...entry,evidence:[record()]}],covered:[],complete:false}};
+  const coverage=F.coverageFor(target,[],result);
+  assert.equal(coverage.owned,0);assert.equal(coverage.complete,false);assert.equal(coverage.possibleCovered.length,1);
+  assert.equal(F.mergeGalactic({state:'new'},result,product({contents:[entry]}),coverage).state,'possible');
+  assert.equal(F.coverageFor({entries:[{...entry,number:'1'}]},[],result).possibleCovered.length,0);
+  const local=[{...entry,evidence:[record({provider:'fanatical',title:'Different owned parent'})]}];
+  const combined=F.coverageFor(target,local,result);
+  assert.equal(combined.owned,0);assert.equal(combined.complete,false);assert.equal(combined.possibleCovered.length,1);
+});
+
 test('Unicode titles remain distinct and meaningful package labels survive normalization', () => {
   assert.equal(F.mediaType('manga'), 'book');
   assert.equal(F.galacticRequestItems([{ sourceItemId: 'manga-123456', title: '進撃の巨人 Vol. 1', mediaType: 'manga' }])[0].mediaType, 'book');
