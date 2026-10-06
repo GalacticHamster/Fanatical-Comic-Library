@@ -401,7 +401,7 @@
     const requests = [...new Map(F.galacticRequestItems(products,state.softwareSupported).map(request => { request.requestId = requestId(request); return [request.requestId, request]; })).values()].filter(request => !state.galactic.has(request.requestId));
     if(state.capabilityFailed&&!requests.length){state.galacticStatus='Check incomplete: capability check failed; software ownership is unresolved.';return;}
     if (!requests.length && !state.galactic.size) { state.galacticStatus = 'No unresolved supported items to check; pairing has not been tested on this page.'; return; }
-    const lookup = await F.queryGalacticItems(requests, message => chrome.runtime.sendMessage(extensionId, message));
+    const lookup = await F.queryGalacticItems(requests, message => F.sendGalacticMatch(request=>chrome.runtime.sendMessage(extensionId,request),message));
     if (revision !== state.revision || pageUrl !== location.href) return;
     for (const [id, result] of lookup.results) { state.galactic.set(id, result); state.failed.delete(id); }
     for (const id of lookup.failed) state.failed.add(id);

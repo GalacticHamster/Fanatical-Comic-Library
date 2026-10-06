@@ -736,6 +736,17 @@
     if (resolved.lookupIncomplete && resolved.state === 'new') resolved.state = 'unchecked';
     return resolved;
   }
+  let galacticDiagnosticSequence=0;
+  const galacticDiagnosticPrefix=(global.crypto?.randomUUID?.().replaceAll('-','')??Math.random().toString(16).slice(2).padEnd(12,'0')).slice(0,12);
+  const galacticDiagnosticNow=()=>Number.isFinite(global.performance?.timeOrigin)?global.performance.timeOrigin+global.performance.now():Date.now();
+  async function sendGalacticMatch(send,request){
+    if(request.type!=='MATCH_ITEMS')return send(request);
+    const id='lookup-'+galacticDiagnosticPrefix+'-'+String(++galacticDiagnosticSequence).padStart(3,'0');
+    const response=await send({...request,diagnosticLookupId:id,diagnosticSentEpochMs:galacticDiagnosticNow()});
+    const callback=galacticDiagnosticNow();
+    if(response?.performance?.id===id){try{Promise.resolve(send({type:'MATCH_ITEMS_DIAGNOSTIC_CALLBACK',apiVersion:1,diagnosticLookupId:id,diagnosticCallbackEpochMs:callback})).catch(()=>{});}catch{}}
+    return response;
+  }
   async function queryGalacticItems(requests, send, timeoutMs = GALACTIC_REQUEST_TIMEOUT_MS) {
     const results=new Map(),failed=new Set(),failures=new Set();
     const record=row=>row&&typeof row==='object'&&['steam','gog','epic','amazon-games','audible','kindle','amazon-video','fandango-at-home','kobo','fanatical','humble'].includes(row.provider)&&typeof row.title==='string'&&row.title.trim()&&row.title.length<=500&&['owned','claimed','unknown','subscription','rental','borrowed'].includes(row.ownership)&&(row.relationship===undefined||['same-work','same-edition','contains'].includes(row.relationship));
@@ -1120,7 +1131,7 @@
   }
 
   async function storageSet(updates){const response=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'patch',args:[updates]});if(!response?.ok)throw new Error(response?.error??'Settings storage is unavailable.');}
-  global.FanaticalLibrary = { purchaseImportScope, purchaseImportProgress, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
+  global.FanaticalLibrary = { purchaseImportScope, purchaseImportProgress, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, sendGalacticMatch, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
 }(globalThis));
 
 /* Identical account picker in both companions; all changes use the serialized writer. */
