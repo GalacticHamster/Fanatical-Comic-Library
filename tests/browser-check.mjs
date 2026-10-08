@@ -70,6 +70,7 @@ globalThis.chrome = {runtime:{id:'a'.repeat(32),sendMessage:async(first,second)=
     setTimeout(()=>window.postMessage({type:'FANATICAL_IMPORT_PROGRESS',progressId:message.progressId,progress:{phase:'list',page:999}},location.origin),20);
     return scanFailure?{ok:false,error:'Scan incomplete; previous purchases and successful scan history were kept.'}:{ok:true,summary:{scanMode:message.fullScan?'full':'quick',scanHistoryMissing:scope.scanHistoryMissing,ordersScanned:scope.total,ordersSkipped:scope.skipped,addedProducts:scanScenario==='new'?1:0,ownedLeafProducts:1,historyCoverage:'No pagination metadata: silent server truncation cannot be independently ruled out.'}};
   }
+  if(message.type==='MATCH_ITEMS'&&centralMode==='none')return {ok:true,apiVersion:1,results:message.items.map(item=>({requestId:item.requestId,matches:[],possibleMatches:[],partialMatches:[],coverage:null}))};
   if(message.type==='MATCH_ITEMS'&&centralMode==='fanatical')return {ok:true,apiVersion:1,results:message.items.map(item=>({requestId:item.requestId,matches:item.title==='External comic'?[{provider:'fanatical',title:item.title,ownership:'owned',relationship:'same-edition'}]:[]}))};
   if(message.type==='MATCH_ITEMS'&&centralMode==='reject')return {ok:false,apiVersion:1};
   if(message.type==='MATCH_ITEMS'&&centralMode==='legacy')return {ok:true,apiVersion:1,results:message.items.map(item=>({requestId:item.requestId,matches:[]}))};
@@ -142,8 +143,8 @@ try {
   filter.click();await wait();assert(visibleCards().length===2,'Owned cards not hidden');
   filter.click();await wait();assert(visibleCards().length===4,'Owned cards not restored');
   assert(document.querySelectorAll('[data-fanatical-library-for]').length===4,'Badges changed after filter toggles');
-  await chrome.storage.local.remove('galacticLibraryExtensionId');await wait();
-  assert(!document.querySelector('.fanatical-library-owned-elsewhere-badge'),'Removing Galactic link retained external ownership');
+  centralMode='none';await chrome.storage.local.remove('galacticLibraryExtensionId');for(let n=0;n<100&&document.querySelector('.fanatical-library-owned-elsewhere-badge');n++)await new Promise(resolve=>setTimeout(resolve,30));
+  assert(!document.querySelector('.fanatical-library-owned-elsewhere-badge'),'Empty central lookup retained external ownership');
   assert(document.querySelectorAll('.fanatical-library-new-badge').length===3,'External card did not return to local matching');
   if(!location.pathname.includes('pick-and-mix')) assert(document.querySelector('.fanatical-library-tier-list').textContent.includes('new /'),'Simple still reports tier value after ownership changes');
   await chrome.storage.local.set({fanaticalShowDiagnostics:false});await wait();
@@ -344,7 +345,7 @@ const server = http.createServer((request, response) => {
   if (url === '/mock.js') return send('text/javascript', mock);
   if (url === '/options-check.js') return send('text/javascript', optionsChecks);
   if (url === '/bundle-check.js') return send('text/javascript', bundleChecks);
-  if (url === '/empty-check.js') return send('text/javascript', common+`try{await wait();assert(document.querySelector('.fanatical-library-summary-counts').textContent.includes('New 0'),'Empty summary has incorrect counts');assert(!document.querySelector('.fanatical-library-advanced'),'No applicable analysis left Advanced mounted');finish({ok:true,scenario:'no applicable Advanced subsection'});}catch(error){finish({ok:false,error:error.message});}`);
+  if (url === '/empty-check.js') return send('text/javascript', common+`try{await wait();assert(document.querySelector('.fanatical-library-summary-counts').textContent.includes('New 0'),'Empty summary has incorrect counts');assert(document.querySelector('.fanatical-library-advanced')&&!document.querySelector('.fanatical-library-advanced').open&&document.querySelector('[data-section=galactic]'),'Automatic GL connection details stay collapsed for an empty bundle');finish({ok:true,scenario:'no applicable Advanced subsection'});}catch(error){finish({ok:false,error:error.message});}`);
   if (url === '/slow-central-check.js') return send('text/javascript', slowCentralChecks);
   if (url === '/catalogue-check.js') return send('text/javascript', catalogueChecks);
   if (url === '/edition-check.js') return send('text/javascript', editionChecks);

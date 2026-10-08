@@ -616,11 +616,11 @@ function restoreSummaryState(panel, state) {
 
   function appendRelatedTitles(host, match) {
     if(!['possible','partial'].includes(match?.state))return;
-    const titles=F.presentation.row(match.offered||{},match).relatedTitles;
-    if(!titles.length)return;
+    const caption=F.presentation.relatedCaption(match.offered||{},match);
+    if(!caption)return;
     const note=document.createElement('small');note.className='fanatical-library-related-titles';
     if(host.classList.contains('fanatical-library-card-title'))note.classList.add('fanatical-library-card-edition-note');
-    note.textContent=(match.ownershipReview?'Ownership needs review: ':'Possible match: ')+titles[0];host.append(note);
+    note.textContent=(match.state==='partial'?'Overlap: ':match.ownershipReview?'Check ownership: ':'Possible match: ')+caption;host.append(note);
   }
 
   function appendSummaryControls(summary) {
@@ -687,7 +687,8 @@ function restoreSummaryState(panel, state) {
     close.addEventListener('click', () => dialog.close());
     dialog.addEventListener('close', () => { dialog.remove(); if (trigger?.isConnected) trigger.focus(); });
     const plain=document.createElement('p'); plain.className='fanatical-library-explanation'; plain.textContent=F.presentation.explanation(match.offered||{},match); dialog.append(heading,close,plain);
-    const technical=document.createElement('details'); const technicalTitle=document.createElement('summary'); technicalTitle.textContent='Technical details'; technical.append(technicalTitle);
+    F.presentation.renderCandidates(dialog,match.offered||{},match);
+    const technical=document.createElement('details'); const technicalTitle=document.createElement('summary'); technicalTitle.textContent='Match details'; technical.append(technicalTitle);
     const list = document.createElement('ul');
     for (const text of F.explanationLines(match, state.lastImport)) { const row = document.createElement('li'); row.textContent = text; list.append(row); }
     technical.append(list); dialog.append(technical);
@@ -696,7 +697,7 @@ function restoreSummaryState(panel, state) {
     review.addEventListener('click', () => openCentralReview(review, output));
     const refresh = document.createElement('button'); refresh.type = 'button'; refresh.textContent = 'Refresh central evidence';
     refresh.addEventListener('click', () => { dialog.close(); refreshCentralEvidence(); });
-    if(match.externalResult||match.lookupIncomplete||match.contentsLookupIncomplete||match.state==='owned-elsewhere')technical.append(review,refresh,output); document.body.append(dialog); dialog.showModal();
+    if(match.externalResult||match.lookupIncomplete||match.contentsLookupIncomplete||match.state==='owned-elsewhere')dialog.append(review,refresh,output); document.body.append(dialog); dialog.showModal();
   }
 
   async function openCentralReview(button, output) {
@@ -757,6 +758,7 @@ function restoreSummaryState(panel, state) {
     const title=document.createElement('strong'); title.textContent='Bundle ownership'; element.append(title);
     const heading=document.createElement('strong'); heading.className='fanatical-library-summary-counts';
     heading.textContent=`Owned ${counts.owned} · Owned elsewhere ${counts.elsewhere} · New ${counts.new} · Partial ${counts.partial} · Possible ${counts.possible}${counts.unchecked?` · Check incomplete ${counts.unchecked}`:''}`; element.append(heading);
+    const countHelp=document.createElement('p');countHelp.className='library-ui-muted';countHelp.textContent='Possible needs review; Partial overlaps some known contents. New means no match in available data.';element.append(countHelp);
     const advanced=document.createElement('details'); advanced.className='fanatical-library-advanced'; advanced.dataset.section='advanced';
     const advancedHeading=document.createElement('summary'); advancedHeading.textContent='Advanced'; advanced.append(advancedHeading);
     appendContentsSummary(advanced, parsed, matches);
@@ -872,7 +874,7 @@ function restoreSummaryState(panel, state) {
     if(rows.length||state.readingLimits?.unknownScope){
       const details=document.createElement('details');details.className='fanatical-library-reading';details.dataset.section='series';
       const heading=document.createElement('summary');heading.textContent='Series coverage and gaps';details.append(heading);
-      const note=document.createElement('p');note.textContent='Compared numeric range within a known series/run/language; this is not a publisher reading order. Annuals and specials are listed only when explicit, without filling numbered gaps.';details.append(note);
+      const note=document.createElement('p');note.textContent='Issues and volumes are compared within the same series version and language. Gaps describe this range, not a complete reading order. Annuals and specials appear only when explicitly identified.';details.append(note);
       if(state.readingLimits?.unknownScope){const note=document.createElement('p');note.className='library-ui-warning';note.textContent=`Needs review: ${state.readingLimits.unknownScope} offered units lack confirmed scope; no gaps inferred for them.`;details.append(note);}
       if(state.readingLimits?.limited){const note=document.createElement('p');note.textContent='Comparison bounded to 100 series, 2,000 units per series and 20,000 units total. Unchecked ranges need review.';details.append(note);}
       for(const row of rows){
