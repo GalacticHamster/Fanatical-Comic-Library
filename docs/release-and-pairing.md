@@ -1,5 +1,7 @@
 # Release and pairing verification (FAN-07 / FAN-09 / FAN-11 / FAN-14)
 
+Current official discovery and Advanced settings are documented in [companion pairing](companion-pairing.md). Dated verification below describes earlier manual-only builds; official Gecko identities now remain trusted when duplicate manual entries are removed.
+
 Run node scripts/package-release.mjs to build dist/FanaticalLibrary-<version>.zip, its SHA-256 file and a file/hash report. The explicit runtime-files.json allowlist contains only the manifest and required runtime assets. Dependency validation checks manifest entries, module imports, HTML scripts/styles and CSS references. Real paths cannot leave the repository through symlinks/junctions. ZIP order, timestamps and normalized text line endings are fixed. Tests, wrappers unused by the runtime, documentation, exports, profiles, reconnaissance and Git history are excluded. No adjacent repo is required to build it.
 
 Run node --test tests for regressions and node tests/browser-check.mjs --release for the actual packaged runtime in isolated Chrome fixtures. Projection tests call the same self-contained order importer that Chrome serializes into the page; the standalone bundle parser is also a thin wrapper around the live parser. Package tests check syntax, reproducibility across checkouts, missing dependencies, checksum tampering and unsafe paths.

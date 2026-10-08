@@ -24,9 +24,9 @@ those purchases are not reported as newly bought. FAN checks purchase records,
 not redemption-key status. HB's key-status refresh wording appears only in HB.
 
 Options now include confirmed JSON backup restore, a naturally ordered
-50-item library preview, Galactic Library Save/Test/Remove controls, and an
-opt-in bundle/catalogue diagnostics switch. The options page also shows this
-extension's ID for Galactic Library's companion allowlist.
+50-item library preview, an automatic Galactic Library connection check, and an
+opt-in bundle/catalogue diagnostics switch. Existing custom IDs remain under
+Advanced / Developer pairing. See [companion pairing](docs/companion-pairing.md).
 
 Restoring a supported Fanatical backup replaces the local library after
 confirmation, keeping product IDs, matching IDs, every purchase origin and profile archives.
@@ -283,7 +283,7 @@ signed-in flows still need the manual checks below.
 
 Run `npm run package:firefox`, extract `dist/FanaticalLibrary-0.1.0-firefox.zip`, then select its manifest through `about:debugging#/runtime/this-firefox`. This is a temporary development install; permanent distribution requires signing. Firefox 140+ is supported with a module event page and the same runtime assets as Chrome.
 
-Allow `fanatical-library@galactichamster.com` in Galactic Library and save `galactic-library@galactichamster.com` in Fanatical settings. Use **Test link**. Firefox central review asks the allowed GL extension to open its own options; it needs no native helper or private URL. Older GL versions show toolbar instructions.
+Compatible builds automatically pair using the existing `fanatical-library@galactichamster.com` and `galactic-library@galactichamster.com` IDs. Use **Check connection**. Advanced / Developer pairing retains custom IDs; signing/listing continuity must be confirmed before publication. Firefox central review asks the allowed GL extension to open its own options; it needs no native helper or private URL. Older GL versions show toolbar instructions.
 
 `npm run browser-check:firefox` checks all nine packaged DOM fixtures. From the adjacent GalacticLibrary repo, `node tests/firefox.mjs --companions` verifies actual installed pairing and GL/FAN MAIN injection against 200 synthetic purchases over ten pages, a quick scan over eleven pages fetching only one new detail, and rejection of broken pagination. These test isolated profiles and synthetic accounts.
 
