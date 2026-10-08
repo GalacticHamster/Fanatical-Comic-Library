@@ -8,6 +8,18 @@ const STORAGE_ITEMS = 'fanaticalLibraryItems';
 const STORAGE_SUMMARY = 'fanaticalImportSummary';
 const STORAGE_ORDER_FINGERPRINTS = 'fanaticalScannedOrderFingerprints';
 
+// Inbound status/review only. No external library, storage or importer endpoint.
+chrome.runtime.onMessageExternal?.addListener((message,sender,respond)=>{
+  if(!['PING','GET_STATUS','OPEN_REVIEW'].includes(message?.type))return false;
+  (async()=>{
+    const F=globalThis.FanaticalLibrary,stored=await chrome.storage.local.get({galacticLibraryExtensionId:''});
+    if(!F.trustedGalacticSender(sender?.id,stored.galacticLibraryExtensionId,chrome.runtime))return {ok:false,error:'Companion is not allowed.'};
+    if(message.apiVersion!==1&&!(message.apiVersion===undefined&&['PING','GET_STATUS'].includes(message.type)))return {ok:false,error:'Unsupported companion API version.'};
+    if(message.type==='OPEN_REVIEW')await chrome.runtime.openOptionsPage();
+    return {ok:true,apiVersion:1,appVersion:chrome.runtime.getManifest?.().version??'0.1.0',ready:true,capabilities:{centralReview:true}};
+  })().then(respond,()=>respond({ok:false,error:'Companion request unavailable.'}));return true;
+});
+
 /* This function is serialized by chrome.scripting and runs only in Fanatical's
  * MAIN world. Its return value is an explicit ownership DTO, never raw JSON. */
 
@@ -83,11 +95,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'FANATICAL_OPEN_GALACTIC_REVIEW') {
     if (!chrome.runtime.id || _sender?.id !== chrome.runtime.id) { sendResponse({ ok: false, error: 'Untrusted review request.' }); return false; }
     chrome.storage.local.get({ galacticLibraryExtensionId: '' }).then(async stored => {
-      const F=globalThis.FanaticalLibrary,id=stored.galacticLibraryExtensionId;
+      const F=globalThis.FanaticalLibrary,id=F.resolveGalacticId(stored.galacticLibraryExtensionId,chrome.runtime);
       if(F.isExtensionId(id)&&!/^[a-p]{32}$/u.test(id)){
         try{await F.companionCall(message=>chrome.runtime.sendMessage(id,message),{type:'OPEN_REVIEW',apiVersion:1});sendResponse({ok:true});return;}catch{sendResponse({ok:false,error:'In Firefox, open Galactic Library from its toolbar icon. Check the pairing and update Galactic Library to enable central review.'});return;}
       }
-      const url = globalThis.FanaticalLibrary.centralReviewUrl(stored.galacticLibraryExtensionId);
+      const url = globalThis.FanaticalLibrary.centralReviewUrl(id);
       if (!url) { sendResponse({ ok: false, error: 'Open Galactic Library from its toolbar icon and choose Manage library to review ownership and contents.' }); return; }
       await chrome.tabs.create({ url }); sendResponse({ ok: true });
     }).catch(() => sendResponse({ ok: false, error: 'Open Galactic Library from its toolbar icon to review ownership and contents.' }));

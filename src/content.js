@@ -391,6 +391,7 @@
   }
 
   async function queryGalactic(products, extensionId) {
+    extensionId=F.resolveGalacticId(extensionId,chrome.runtime);
     state.galacticEnabled = F.isExtensionId(extensionId);
     if (!state.galacticEnabled) { state.galacticStatus = 'Not configured.'; return; }
     const revision=state.revision,pageUrl=location.href;

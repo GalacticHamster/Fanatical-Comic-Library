@@ -3,7 +3,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
 (async function options() {
   async function mutate(operation,...args){const result=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation,args});if(!result?.ok)throw new Error(result?.error??'Library storage is unavailable.');return result.result;}
   const $ = (selector) => document.querySelector(selector);
-  const linkSaved = 'Link saved. In Galactic Library, allow the Fanatical Library extension ID shown above.';
+  const linkSaved = 'Override saved. For development builds, allow this extension in Galactic Library Advanced settings, then check the connection.';
   let libraryBusy = false,wishlist=[],wishlistPage=0;
   function renderWishlist(){
     const filtered=wishlist.filter(item=>item.title.toLowerCase().includes($("#wishlist-search").value.toLowerCase())).sort((a,b)=>b.weight-a.weight||a.title.localeCompare(b.title));wishlistPage=Math.min(wishlistPage,Math.max(0,Math.ceil(filtered.length/50)-1));$("#wishlist-count").textContent=`${filtered.length} wishes; page ${wishlistPage+1} of ${Math.max(1,Math.ceil(filtered.length/50))}.`;$("#wishlist-previous").disabled=wishlistPage===0;$("#wishlist-next").disabled=(wishlistPage+1)*50>=filtered.length;
@@ -22,9 +22,9 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
   async function loadReminders(offset=0,history=[]){
     const generation=++reminderGeneration,provider=$('#reminder-provider').value;$('#load-reminders').disabled=$('#reminder-previous').disabled=$('#reminder-next').disabled=true;$('#reminder-status').textContent='Loading central reminders...';$('#reminder-list').replaceChildren();
     try{
-      const {galacticLibraryExtensionId:id=''}=await chrome.storage.local.get({galacticLibraryExtensionId:''});if(!FanaticalLibrary.isExtensionId(id))throw Error('Save a Galactic Library link first.');
+      const stored=await chrome.storage.local.get({galacticLibraryExtensionId:''}),id=FanaticalLibrary.resolveGalacticId(stored.galacticLibraryExtensionId,chrome.runtime);if(!FanaticalLibrary.isExtensionId(id))throw Error('Save a Galactic Library link first.');
       const page=await FanaticalLibrary.loadCentralReminders(message=>chrome.runtime.sendMessage(id,message),{provider,offset,limit:50});
-      const current=await chrome.storage.local.get({galacticLibraryExtensionId:''});if(generation!==reminderGeneration||current.galacticLibraryExtensionId!==id)return;
+      const current=await chrome.storage.local.get({galacticLibraryExtensionId:''});if(generation!==reminderGeneration||FanaticalLibrary.resolveGalacticId(current.galacticLibraryExtensionId,chrome.runtime)!==id)return;
       reminderNext=page.nextOffset;reminderHistory=history;$('#reminder-status').textContent=page.total&&page.reminders.length?`${page.total} reported reminders; showing ${offset+1}-${offset+page.reminders.length}.`:'No current reminders reported by Galactic Library. This is not proof of activation or permanent ownership.';
       const labels={activation:'Activation needs confirmation','key-expiry':'Key expiry','key-unavailable':'Key unavailable','access-expiry':'Access expiry','temporary-access':'Temporary access; expiry unknown'};
       $('#reminder-list').replaceChildren(...page.reminders.map(row=>{const li=document.createElement('li');li.textContent=`${row.title} (${row.provider}): ${labels[row.kind]}; ${row.dueAt||'deadline not reported'}; ${row.severity}.`;if(row.source==='humble-companion')li.textContent+=' Humble companion report; review in Humble or Galactic Library.';return li;}));
@@ -62,7 +62,8 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     $('#history-note').textContent = `${attempt?.status === 'incomplete' ? 'Last scan incomplete: complete order-history coverage could not be confirmed. Previous purchases and the last successful scan were kept. ' : ''}${summary?.historyCoverage ?? 'No order-history coverage has been checked yet.'}`;
     if (diagnostics && summary?.coverage) $('#history-note').textContent += ` ${summary.coverage.retries} retries; at most ${summary.coverage.concurrency} concurrent detail requests.`;
     $('#galactic-id').value = extensionId;
-    $('#galactic-status').textContent = extensionId ? linkSaved : 'No Galactic Library link configured.';
+    $('#builtin-galactic-id').textContent=FanaticalLibrary.builtinGalacticId(chrome.runtime);
+    $('#galactic-status').textContent = extensionId ? 'Saved override retained. Connection not yet verified; check the connection.' : 'Automatic Galactic Library pairing ready. Connection not yet verified; check the connection.';
     $('#fanatical-extension-id').textContent = chrome.runtime.id;
     $('#show-diagnostics').checked = Boolean(diagnostics);
     const display=await chrome.storage.local.get({fanaticalSummaryPreferences:{}}),prefs=FanaticalLibrary.normalizeSummaryPreferences(display.fanaticalSummaryPreferences);$('#summary-minimized').checked=prefs.minimized;$('#summary-position').value=prefs.position;
@@ -105,20 +106,20 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
   });
 
   $('#test-galactic').addEventListener('click', async () => {
-    const id = $('#galactic-id').value.trim(); const button = $('#test-galactic'); const status = $('#galactic-status');
-    if (!FanaticalLibrary.isExtensionId(id)) { status.textContent = 'Enter a valid Chrome or Firefox extension ID.'; return; }
+    const id = FanaticalLibrary.resolveGalacticId($('#galactic-id').value,chrome.runtime); const button = $('#test-galactic'); const status = $('#galactic-status');
+    const problem=FanaticalLibrary.companionTargetProblem(id,chrome.runtime);if(problem){status.textContent=problem;return;}
     button.disabled = true; status.textContent = 'Testing Galactic Library link…';
     try{
       const capabilities=await FanaticalLibrary.testGalacticLink(message=>chrome.runtime.sendMessage(id,message));
       status.textContent=`Connected to Galactic Library${capabilities.appVersion?' '+capabilities.appVersion:''}. ${capabilities.advertised?'Media: '+(capabilities.mediaTypes.join(', ')||'none')+'; reviewed contents '+(capabilities.reviewedContents?'supported':'unavailable')+'; entitlement reminders '+(capabilities.entitlementReminders?'supported':'unavailable')+'.':'Capabilities not advertised; newer features remain unconfirmed.'}`;
-    }catch(error){status.textContent='Could not connect: '+error.message+' Check the extension ID, enable Galactic Library, and allow the Fanatical Library extension ID shown above.';}finally{button.disabled=false;}
+    }catch(error){status.textContent='Could not connect: '+error.message+' Enable or update Galactic Library and check Advanced pairing if using an unpacked build. A receiver manifest may restrict custom IDs; failed transport does not prove it is uninstalled.';}finally{button.disabled=false;}
 
   });
 
   $('#remove-galactic').addEventListener('click', async () => {
     try {
       await mutate('unlink');
-      $('#galactic-id').value = ''; $('#galactic-status').textContent = 'Galactic Library link removed.';resetReminders();
+      $('#galactic-id').value = ''; $('#galactic-status').textContent = 'Override removed. Automatic Galactic Library pairing remains available; check the connection.';resetReminders();
     } catch { $('#galactic-status').textContent = 'Could not remove the Galactic Library link.'; }
   });
 

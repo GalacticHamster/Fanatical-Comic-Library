@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import {spawn} from 'node:child_process';
-import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
+import {spawn,execFileSync} from 'node:child_process';
+import {mkdtemp,mkdir,writeFile,rm,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {resolve,join,dirname,sep} from 'node:path';
 import {setTimeout as pause} from 'node:timers/promises';
@@ -51,6 +51,22 @@ try{
       await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'patch',args:[{galacticLibraryExtensionId:id}]});document.querySelector('#reminder-provider').value='';document.querySelector('#load-reminders').click();for(let n=0;n<200;n++){if(!document.querySelector('#load-reminders').disabled)break;await new Promise(done=>setTimeout(done,20));}if(document.querySelector('#reminder-list').children.length!==3)throw Error(document.querySelector('#reminder-status').textContent);
       return ['real allow-listed software matching excludes central Fanatical copies','real central feed keeps activation and reported key expiry distinct','installed reminder controls consume the central worker'];
     })()`,options);pairedChecks.forEach(check=>console.log('PASS installed Chrome: '+check));
+    const hbRoot=resolve('..','HB'),hbPackage=join(temporary,'hb-package'),hbStage=join(temporary,'hb-runtime');await mkdir(hbPackage);
+    execFileSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',join(hbRoot,'scripts/package-release.ps1'),'-OutputDirectory',hbPackage],{windowsHide:true,stdio:'pipe'});
+    const hbManifest=JSON.parse(await readFile(join(hbRoot,'manifest.json'),'utf8')),extract=join(temporary,'extract-hb.ps1');
+    await writeFile(extract,'param($Archive,$Destination)\nAdd-Type -AssemblyName System.IO.Compression.FileSystem\n[System.IO.Compression.ZipFile]::ExtractToDirectory($Archive,$Destination)\n');
+    execFileSync('powershell.exe',['-NoProfile','-File',extract,join(hbPackage,'Humble-Comic-Library-'+hbManifest.version+'.zip'),hbStage],{windowsHide:true,stdio:'pipe'});
+    const hb=await driver.send('Extensions.loadUnpacked',{path:hbStage}),hbPage=await attach('chrome-extension://'+hb.id+'/options.html');await wait("typeof HumbleComicLibrary!=='undefined'",hbPage);
+    await evaluate('(async()=>{const S=await import("./src/lib/storage.js");await S.addAllowedExternalClientId('+JSON.stringify(hb.id)+');return true;})()',centralPage);
+    await evaluate('(async()=>{await HumbleComicLibrary.storageSet({galacticLibraryExtensionId:'+JSON.stringify(paired.id)+'});return true;})()',hbPage);
+    for(const id of [hb.id,installed.id])assert.equal((await evaluate('chrome.runtime.sendMessage('+JSON.stringify(id)+',{type:"PING",apiVersion:1})',centralPage)).ok,true);
+    assert.equal((await evaluate('chrome.runtime.sendMessage('+JSON.stringify(installed.id)+',{type:"PING",apiVersion:1})',hbPage)).ok,false);
+    const request={type:'MATCH_ITEMS',apiVersion:1,items:[{requestId:'same',title:'Native creative software',mediaType:'software',excludeProviders:['humble','fanatical']}]},expression='chrome.runtime.sendMessage('+JSON.stringify(paired.id)+','+JSON.stringify(request)+')';
+    const hbMatch=await evaluate(expression,hbPage),fanMatch=await evaluate(expression,options);assert.deepEqual(hbMatch.results,fanMatch.results);
+    await evaluate('(async()=>{const S=await import("./src/lib/storage.js");await S.saveAllowedExternalClientIds([]);return true;})()',centralPage);
+    for(const page of [hbPage,options])assert.equal((await evaluate(expression,page)).ok,false);
+    console.log('PASS installed Chrome: all three packaged extensions, matching parity, GL status in both companions, HB-to-FAN rejection and custom-ID revocation');
+
   }
 
   // Every request on this synthetic Fanatical tab is fulfilled locally. It

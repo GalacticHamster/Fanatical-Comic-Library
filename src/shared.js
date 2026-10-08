@@ -1022,6 +1022,25 @@
     });return {total:response.total,nextOffset:response.nextOffset,reminders};
   }
 
+  // Store identities stay separate from user-saved pairing configuration.
+  const COMPANION_IDENTITIES=Object.freeze({
+    hb:Object.freeze({name:'Humble Comic Library',chrome:'bjjpfofmcmiipeghcbhdfjedpldmkcii',firefox:'humble-comic-library@galactichamster.com'}),
+    gl:Object.freeze({name:'Galactic Library',chrome:'pdknncacndkicpogbebdfanniibnnpic',firefox:'galactic-library@galactichamster.com'}),
+    fan:Object.freeze({name:'Fanatical Library',chrome:'ieoobffekgbfjfoiheejkfihneooiadb',firefox:'fanatical-library@galactichamster.com'})
+  });
+  function companionBrowser(runtime=globalThis.chrome?.runtime){return runtime?.getURL?.('').startsWith('moz-extension:')||runtime?.getManifest?.().browser_specific_settings?.gecko?'firefox':'chrome';}
+  function builtinGalacticId(runtime=globalThis.chrome?.runtime){return COMPANION_IDENTITIES.gl[companionBrowser(runtime)];}
+  function resolveGalacticId(saved,runtime=globalThis.chrome?.runtime){return String(saved??'').trim()||builtinGalacticId(runtime);}
+  function trustedGalacticSender(senderId,saved,runtime=globalThis.chrome?.runtime){return senderId===builtinGalacticId(runtime)||isExtensionId(saved)&&senderId===String(saved).trim();}
+  function companionTargetProblem(id,runtime=globalThis.chrome?.runtime){
+    const browser=companionBrowser(runtime);
+    if(!isExtensionId(id))return 'Enter a valid Chrome extension ID or Firefox add-on ID.';
+    if(browser==='chrome'&&!/^[a-p]{32}$/u.test(id))return 'This saved add-on ID is not a Chrome target. It is preserved; use a Chrome ID in Advanced settings.';
+    // This is the sender manifest, not the receiver policy. Receiver restrictions
+    // cannot be inferred locally; failed sends never prove the target is absent.
+    return '';
+  }
+
   function isExtensionId(value) {
     const id = String(value ?? '').trim();
     return /^\{[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\}$/iu.test(id) || /^[a-p]{32}$/u.test(id) || /^[a-z0-9](?:[a-z0-9._+-]*[a-z0-9])?@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/iu.test(id);
@@ -1131,7 +1150,7 @@
   }
 
   async function storageSet(updates){const response=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'patch',args:[updates]});if(!response?.ok)throw new Error(response?.error??'Settings storage is unavailable.');}
-  global.FanaticalLibrary = { purchaseImportScope, purchaseImportProgress, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, sendGalacticMatch, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
+  global.FanaticalLibrary = { purchaseImportScope, purchaseImportProgress, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, sendGalacticMatch, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, COMPANION_IDENTITIES, companionBrowser, builtinGalacticId, resolveGalacticId, trustedGalacticSender, companionTargetProblem, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
 }(globalThis));
 
 /* Identical account picker in both companions; all changes use the serialized writer. */
