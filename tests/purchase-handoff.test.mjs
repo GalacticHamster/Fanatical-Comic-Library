@@ -27,3 +27,7 @@ test('FAN order/bundle occurrence counts are idempotent and overlapping groups a
  const first=A.fanMerge([],[{...row(),origins:[origin]}]);const again=A.fanMerge(first.items,[{...row(),origins:[origin]}]);assert.deepEqual(again.items,first.items);assert.equal(again.items[0].purchaseOrigins[0].quantity,2);
  const added=A.fanMerge(again.items,[{...row(),origins:[{...origin,orderRef:other,quantity:1}]}]);assert.equal(added.items[0].purchaseOrigins.length,2);
 });
+
+test('Legacy named FAN accounts with primary bundle only, empty archives and missing IDs stay discoverable',async()=>{
+ const rows=Array.from({length:47},(_,n)=>({source:'fanatical',sourceItemId:'legacy_'+n,title:'Legacy book '+n,mediaType:'book',bundle:{sourceItemId:'legacy_bundle',title:'Legacy bundle'}}));const area=memory({fanaticalProfileLabel:'Personal',fanaticalLibraryItems:rows,fanaticalProfileArchives:[{profileLabel:'Empty',items:[]},{profileLabel:'Incomplete',items:[{title:'Unidentified',mediaType:'book'}]}]}),store=createFanStore(area);const accounts=await store.execute('handoffAccounts');assert.equal(accounts.length,3);assert.equal(accounts[0].eligibleCount,47);assert.equal(accounts[1].count,0);assert.equal(accounts[2].eligibleCount,0);const snapshot=await store.execute('handoffSnapshot',[accounts[0].accountRef]);assert.equal(snapshot.records.length,47);assert.equal(snapshot.records[0].metadata.bundleTitle,'Legacy bundle');assert.equal(snapshot.records[0].origins.length,0);assert.equal(area.sets,0);
+});

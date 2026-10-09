@@ -23,7 +23,7 @@ chrome.runtime.onMessageExternal?.addListener((message,sender,respond)=>{
     if(!F.trustedGalacticSender(sender?.id,stored.galacticLibraryExtensionId,chrome.runtime))return {ok:false,error:'Companion is not allowed.'};
     if(message.apiVersion!==1&&!(message.apiVersion===undefined&&['PING','GET_STATUS'].includes(message.type)))return {ok:false,error:'Unsupported companion API version.'};
     if(message.type==='OPEN_REVIEW')await chrome.runtime.openOptionsPage();
-    return {ok:true,apiVersion:1,appVersion:chrome.runtime.getManifest?.().version??'0.1.0',ready:true,capabilities:{centralReview:true}};
+    return {ok:true,apiVersion:1,appVersion:chrome.runtime.getManifest?.().version??'0.1.0',ready:true,purchaseProvider:'fanatical',capabilities:{centralReview:true}};
   })().then(respond,()=>respond({ok:false,error:'Companion request unavailable.'}));return true;
 });
 
