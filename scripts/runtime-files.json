@@ -16,5 +16,9 @@
   "src/theme.js",
   "src/theme.css",
   "src/theme-app.css",
-  "src/theme-overlays.css"
+  "src/theme-overlays.css",
+  "src/purchase-snapshot.js",
+  "src/purchase-transfer.js",
+  "src/purchase-adapters.js",
+  "src/purchase-handoff-ui.js"
 ]

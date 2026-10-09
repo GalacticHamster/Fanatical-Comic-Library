@@ -1,6 +1,7 @@
 /* Chrome MV3 entry point. The only main-world execution is the strict importer. */
 import { safeId, validateScanResult, createSyncStore, mergeLibraryItems } from './library-data.mjs';
 import './theme.js';
+import './purchase-transfer.js';
 
 import {importFanaticalOrdersInPage} from './order-importer.mjs';
 
@@ -132,5 +133,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     fetchPublicBundle(message.path).then((bundle) => sendResponse({ ok: true, bundle })).catch((error) => sendResponse({ ok: false, error: String(error?.message ?? 'Bundle data is unavailable.') }));
     return true;
   }
-  return true;
+  return false;
 });
+
+const purchaseHandoff=GalacticPurchaseTransfer.createService({runtime:chrome.runtime,area:chrome.storage.local,
+ authorize:async(id,provider)=>provider==='fanatical'&&FanaticalLibrary.trustedGalacticSender(id,(await chrome.storage.local.get({galacticLibraryExtensionId:''})).galacticLibraryExtensionId,chrome.runtime),
+ peer:async provider=>{if(provider!=='fanatical')throw Error('Wrong provider.');return FanaticalLibrary.resolveGalacticId((await chrome.storage.local.get({galacticLibraryExtensionId:''})).galacticLibraryExtensionId,chrome.runtime);},
+ accounts:()=>syncStore.execute('handoffAccounts'),snapshot:(_,ref)=>syncStore.execute('handoffSnapshot',[ref]),commit:(data,target)=>syncStore.execute('handoffImport',[data,target])});
+purchaseHandoff.register();

@@ -247,7 +247,7 @@ signed-in flows still need the manual checks below.
 - Confirm a signed-out import reports a sign-in/session error without exposing
   token data.
 - Pair Galactic Library; verify an exact external match reads **Owned
-  elsewhere — Provider**, never **Owned**.
+  elsewhere â€” Provider**, never **Owned**.
 - Verify that disabling/removing the paired ID leaves local matching functional.
 - Compare a deluxe edition with an owned base game sharing its Steam App ID;
   confirm **Possible** and the owned-title/package explanation. If explicit
@@ -318,3 +318,7 @@ Settings offer Dark, Light and System using the shared GalacticHamster navy/neut
 When following GL, your independent mode is retained and its selector is disabled. Open a page or select Refresh linked appearance to fetch GL's mode using your existing pairing. There is no polling. If GL is unavailable, its cached mode for that target is retained; a different target falls back to your local choice. These overlays do not restyle native store controls. Browser-owned tooltips and confirmation prompts remain controlled by the browser.
 
 Theme version 1 is authored in GalacticLibrary/shared/theme.js, theme.css, theme-app.css and theme-overlays.css. From GL run `node scripts/sync-companion-themes.mjs`, then `node scripts/sync-companion-themes.mjs --check`; commit and validate the resulting copies in all three repos. Packaged extensions carry their own assets and work independently.
+
+## Manual purchase sharing
+
+[Share saved purchases](docs/purchase-sharing.md) with Galactic Library without another website scan. Both directions require compatible linked extensions and explicit destination-account confirmation. Historical limitations are reported; repeated imports are additive and idempotent.

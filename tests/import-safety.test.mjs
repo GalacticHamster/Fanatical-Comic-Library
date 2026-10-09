@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { createHash, webcrypto } from 'node:crypto';
 import test from 'node:test';
+const purchaseModules=['purchase-snapshot.js', 'purchase-transfer.js', 'purchase-adapters.js'].map(file=>fs.readFileSync(new URL('../src/'+file,import.meta.url),'utf8')).join('\n');
+const dispatch=(listeners,message,sender,respond)=>{for(const fn of listeners)if(fn(message,sender,respond)===true)return;respond(null);};
 import { safeId, validateScanResult, createSyncStore, mergeLibraryItems } from '../src/library-data.mjs';
 
 import {importFanaticalOrdersInPage} from '../src/order-importer.mjs';
@@ -17,7 +19,7 @@ const previous = { fanaticalLibraryItems: [{ source: 'fanatical', sourceItemId: 
 function harness({ list = [summary], details = { [orderId]: detail }, headers = {}, status = 200, invalidJSON = false, known = [], scriptResult, respond, authRead=()=>'SECRET-TOKEN', pageOverrides = {} } = {}) {
   const stored = structuredClone({ ...previous, fanaticalProfileLabel:'fixture',fanaticalProfileArchives:[],fanaticalScannedOrderFingerprints: known });
   const before = structuredClone(stored); const writes = []; const paths = []; const receipts = [];
-  let listener; let active = 0; let maxActive = 0;
+  const listeners=[]; let active = 0; let maxActive = 0;
   const page = { TextEncoder, crypto: webcrypto, URL, AbortController, setTimeout, clearTimeout, ...pageOverrides, localStorage: { getItem: () => JSON.stringify({ token:authRead() }) }, fetch: async (url, options) => {
     paths.push(url); active++; maxActive = Math.max(active, maxActive);
     let reply;
@@ -28,7 +30,7 @@ function harness({ list = [summary], details = { [orderId]: detail }, headers = 
       return reply.json ? reply.json(options) : structuredClone(reply.data);
     } };
   } };
-  const chrome = { runtime: { id:'a'.repeat(32),getURL:()=>`chrome-extension://${'a'.repeat(32)}/`, onMessage: { addListener(handler) { listener = handler; } } }, tabs: { query: async () => [{ id: 1, url: 'https://www.fanatical.com/en/orders' }] }, storage: { local: {
+  const chrome = { runtime: { id:'a'.repeat(32),getURL:()=>`chrome-extension://${'a'.repeat(32)}/`, onMessage: { addListener(handler) { listeners.push(handler); } } }, tabs: { query: async () => [{ id: 1, url: 'https://www.fanatical.com/en/orders' }] }, storage: { local: {
     get: async (defaults) => ({ ...defaults, ...structuredClone(stored) }),
     set: async (changes) => { if(Object.keys(changes).some(key=>key!=='fanaticalSyncControl'))writes.push(structuredClone(changes)); Object.assign(stored, structuredClone(changes)); }
   } }, scripting: { executeScript: async ({ func, args }) => {
@@ -37,10 +39,10 @@ function harness({ list = [summary], details = { [orderId]: detail }, headers = 
     const mainWorld = vm.runInNewContext(`(${func.toString()})`, page);
     const result = await mainWorld(...args); receipts.push(structuredClone(result)); return [{ result }];
   } } };
-  const worker = vm.runInNewContext(`${fs.readFileSync(new URL('../src/theme.js',import.meta.url),'utf8')}\n${source}\n;({ importPurchases, syncStore });`, { chrome, safeId, validateScanResult, createSyncStore, mergeLibraryItems, importFanaticalOrdersInPage });
+  const worker = vm.runInNewContext(`${purchaseModules}\n${fs.readFileSync(new URL('../src/theme.js',import.meta.url),'utf8')}\n${source}\n;({ importPurchases, syncStore });`, { chrome, safeId, validateScanResult, createSyncStore, mergeLibraryItems, importFanaticalOrdersInPage });
   return { stored, before, writes, paths, receipts, get maxActive() { return maxActive; }, scan: (fullScan = true,progressId='') => worker.importPurchases({ fullScan,progressId,profileLabel:'fixture',confirmed:true }),
-    store: (operation,args,url='https://www.fanatical.com/en/orders',id=chrome.runtime.id)=>new Promise(resolve=>listener({type:'FANATICAL_STORE',operation,args},{id,url,tab:{id:1}},resolve)),
-    send: (fullScan = true) => new Promise((resolve) => listener({ type: 'FANATICAL_IMPORT_PURCHASES', fullScan,profileLabel:'fixture',confirmed:true }, {id:chrome.runtime.id,url:'https://www.fanatical.com/en/orders',tab:{id:1}}, resolve)) };
+    store: (operation,args,url='https://www.fanatical.com/en/orders',id=chrome.runtime.id)=>new Promise(resolve=>dispatch(listeners,{type:'FANATICAL_STORE',operation,args},{id,url,tab:{id:1}},resolve)),
+    send: (fullScan = true) => new Promise((resolve) => dispatch(listeners,{ type: 'FANATICAL_IMPORT_PURCHASES', fullScan,profileLabel:'fixture',confirmed:true }, {id:chrome.runtime.id,url:'https://www.fanatical.com/en/orders',tab:{id:1}}, resolve)) };
 }
 
 test('serialized importer emits only aggregate progress and explains missing saved scan history', async () => {
