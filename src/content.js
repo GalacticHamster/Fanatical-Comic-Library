@@ -691,6 +691,7 @@ function restoreSummaryState(panel, state) {
     const technical=document.createElement('details'); const technicalTitle=document.createElement('summary'); technicalTitle.textContent='Match details'; technical.append(technicalTitle);
     const list = document.createElement('ul');
     for (const text of F.explanationLines(match, state.lastImport)) { const row = document.createElement('li'); row.textContent = text; list.append(row); }
+    F.presentation.renderDeferred(technical,match.offered||{},match);
     technical.append(list); dialog.append(technical);
     const review = document.createElement('button'); review.type = 'button'; review.textContent = 'Review in Galactic Library';
     const output = document.createElement('p'); output.setAttribute('role', 'status');
@@ -934,6 +935,7 @@ function restoreSummaryState(panel, state) {
       const ownedOffers = parsed.products.filter(product => F.classify(product, stored.fanaticalLibraryItems).state === 'owned');
       const localUnits = F.localContents([...stored.fanaticalLibraryItems, ...ownedOffers]);
       const matches = parsed.products.map((product) => status(product, stored.fanaticalLibraryItems, localUnits));
+      F.presentation.reconcileBundle(parsed.products.map((item,index)=>({item,match:matches[index],overlapProtected:F.isBundleOverlapProduct(item)})), {complete:F.isCompleteBundleCatalogue(parsed)});
       state.reading = F.readingCoverage(reading, [...localUnits, ...F.editionContentsEvidence(matches)], externalResult, state.galacticEnabled);
       state.readingLimits = reading;
       parsed.products.forEach((product, index) => {
