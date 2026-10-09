@@ -25,13 +25,16 @@
         "https://www.fanatical.com/*"
       ],
       "js": [
+        "src/theme.js",
         "src/shared.js",
         "src/planning.js",
         "src/planning-ui.js",
         "src/content.js"
       ],
       "css": [
-        "src/content.css"
+        "src/theme.css",
+        "src/content.css",
+        "src/theme-overlays.css"
       ],
       "run_at": "document_idle"
     }

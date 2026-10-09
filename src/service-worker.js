@@ -1,9 +1,15 @@
 /* Chrome MV3 entry point. The only main-world execution is the strict importer. */
 import { safeId, validateScanResult, createSyncStore, mergeLibraryItems } from './library-data.mjs';
+import './theme.js';
 
 import {importFanaticalOrdersInPage} from './order-importer.mjs';
 
 const syncStore=createSyncStore(chrome.storage.local);
+const appearanceService=GalacticHamsterTheme.createService({runtime:chrome.runtime,companion:true,
+  read:async()=>{const value=await chrome.storage.local.get({galacticHamsterAppearance:null});return value.galacticHamsterAppearance;},
+  save:prefs=>syncStore.execute('patch',[{galacticHamsterAppearance:prefs}]),
+  resolveId:async()=>{const value=await chrome.storage.local.get({galacticLibraryExtensionId:''});return globalThis.FanaticalLibrary.resolveGalacticId(value.galacticLibraryExtensionId,chrome.runtime);}});
+GalacticHamsterTheme.register(appearanceService,chrome.runtime);
 const STORAGE_ITEMS = 'fanaticalLibraryItems';
 const STORAGE_SUMMARY = 'fanaticalImportSummary';
 const STORAGE_ORDER_FINGERPRINTS = 'fanaticalScannedOrderFingerprints';

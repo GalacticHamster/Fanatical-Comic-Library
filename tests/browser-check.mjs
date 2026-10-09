@@ -10,6 +10,7 @@ import {setTimeout as pause} from 'node:timers/promises';
 import {createRelease} from '../scripts/release.mjs';
 const firefox=process.argv.includes('--firefox');
 const slowCentral=process.argv.includes('--slow-central');
+const themeMode=process.argv.includes('--theme'),themeWidth=process.argv.includes('--tiny')?420:process.argv.includes('--narrow')?560:1200;
 const lifecycle=process.argv.includes('--lifecycle');
 const packaged=process.argv.includes('--release')?await createRelease(undefined,undefined,firefox?'firefox':'chrome'):null;
 const readRuntime=name=>process.env.FAN_TEST_CONTENT_REF&&name==='src/content.js'
@@ -50,7 +51,7 @@ globalThis.centralMode = 'normal';
 globalThis.centralDelayMs = ${slowCentral?4500:0};
 if(${slowCentral})values.fanaticalSummaryPreferences={minimized:true,position:'top-left'};
 globalThis.requests = [];
-globalThis.chrome = {runtime:{id:'a'.repeat(32),sendMessage:async(first,second)=>{
+globalThis.chrome = {runtime:{getManifest:()=>({name:'Fanatical Library'}),id:'a'.repeat(32),sendMessage:async(first,second)=>{
   const message=second||first; requests.push(message);
   if(message.type==='MATCH_ITEMS'&&centralDelayMs)await new Promise(resolve=>setTimeout(resolve,centralDelayMs));
   if(message.type==='FANATICAL_STORE'){
@@ -341,6 +342,7 @@ const server = http.createServer((request, response) => {
   }
   const send = (type, contents) => { response.writeHead(200, { 'content-type': `${type}; charset=utf-8` }); response.end(contents); };
   if (url === '/lifecycle-fixture.js') return send('text/javascript',fs.readFileSync(new URL('./lifecycle-fixture.js',import.meta.url),'utf8'));
+  if(url==='/theme-check.js')return send('text/javascript',fs.readFileSync(new URL('./theme-overlay-checks.js',import.meta.url),'utf8'));
   if (url === '/lifecycle-check.js') return send('text/javascript',common+presentationChecks+fs.readFileSync(new URL('./lifecycle-checks.js',import.meta.url),'utf8'));
   if (url === '/mock.js') return send('text/javascript', mock);
   if (url === '/options-check.js') return send('text/javascript', optionsChecks);
@@ -358,27 +360,27 @@ const server = http.createServer((request, response) => {
     const html = readRuntime('src/options.html').replace('<head>', '<head><base href="/src/">').replace('<script src="shared.js">', '<script src="/mock.js"></script><script src="shared.js">').replace('</body>', '<script type="module" src="/options-check.js"></script></body>');
     return send('text/html', html);
   }
-  if (url === '/en/orders') return send('text/html', '<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"></head><body><main>Mock orders</main><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/order-check.js"></script></body></html>');
-  if(url==='/en/bundle/test-empty')return send('text/html','<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"></head><body><script src="/mock.js"></script><script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/empty-check.js"></script></body></html>');
+  if (url === '/en/orders') return send('text/html', '<!doctype html><html><head><link rel="stylesheet" href="/src/theme.css"><link rel="stylesheet" href="/src/content.css"><link rel="stylesheet" href="/src/theme-overlays.css"></head><body><main>Mock orders</main><script src="/mock.js"></script><script src="/src/theme.js"></script><script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/order-check.js"></script></body></html>');
+  if(url==='/en/bundle/test-empty')return send('text/html','<!doctype html><html><head><link rel="stylesheet" href="/src/theme.css"><link rel="stylesheet" href="/src/content.css"><link rel="stylesheet" href="/src/theme-overlays.css"></head><body><script src="/mock.js"></script><script src="/src/theme.js"></script><script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/empty-check.js"></script></body></html>');
   if (url === '/en/bundle/test-comics' || url === '/en/bundle/books' || url === '/en/pick-and-mix/test-mix' || url.endsWith('/test-editions') || url.endsWith('/test-contents')) {
     const isCatalogue = url.endsWith('/books');
     const isEdition = url.endsWith('/test-editions');
     const isContents = url.endsWith('/test-contents');
-    return send('text/html', `<!doctype html><html><head><link rel="stylesheet" href="/src/content.css"><style>.fan-grid-container{display:grid;grid-template-columns:repeat(3,240px);gap:20px}.fanatical-library-pick-mix-reflow{grid-column:1/-1}article{min-height:350px;position:relative}.cover-container{height:310px;overflow:hidden;position:relative}.cover-container img{display:block;width:100%;height:310px}.faux-block-link a,.faux-block-link abbr[title],.faux-block-link button{position:relative;z-index:3}.new-to-bundle-label{position:absolute;top:0;left:0;z-index:3;height:32px}</style></head><body><main>${isCatalogue ? `<ul class="HitCardsRow row">${catalogue}</ul>` : `<section class="tier"><div class="fan-grid-container">${cards(url.includes('pick-and-mix') ? 'PickAndMixCard' : 'bundle-product-card', isContents ? contentsProducts : isEdition ? editionProducts : products)}</div></section>`}</main><script src="/mock.js"></script>${lifecycle?'<script src="/lifecycle-fixture.js"></script>':''}<script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/${lifecycle ? 'lifecycle' : isCatalogue ? 'catalogue' : isContents ? 'contents' : isEdition ? 'edition' : slowCentral ? 'slow-central' : 'bundle'}-check.js"></script></body></html>`);
+    return send('text/html', `<!doctype html><html><head><link rel="stylesheet" href="/src/theme.css"><link rel="stylesheet" href="/src/content.css"><link rel="stylesheet" href="/src/theme-overlays.css"><style>${themeMode?".fan-grid-container{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))!important}main{max-width:100%;overflow:hidden}":""}.fan-grid-container{display:grid;grid-template-columns:repeat(3,240px);gap:20px}.fanatical-library-pick-mix-reflow{grid-column:1/-1}article{min-height:350px;position:relative}.cover-container{height:310px;overflow:hidden;position:relative}.cover-container img{display:block;width:100%;height:310px}.faux-block-link a,.faux-block-link abbr[title],.faux-block-link button{position:relative;z-index:3}.new-to-bundle-label{position:absolute;top:0;left:0;z-index:3;height:32px}</style></head><body><main>${isCatalogue ? `<ul class="HitCardsRow row">${catalogue}</ul>` : `<section class="tier"><div class="fan-grid-container">${cards(url.includes('pick-and-mix') ? 'PickAndMixCard' : 'bundle-product-card', isContents ? contentsProducts : isEdition ? editionProducts : products)}</div></section>`}</main><script src="/mock.js"></script>${lifecycle?'<script src="/lifecycle-fixture.js"></script>':''}<script src="/src/theme.js"></script><script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/${themeMode ? 'theme' : lifecycle ? 'lifecycle' : isCatalogue ? 'catalogue' : isContents ? 'contents' : isEdition ? 'edition' : slowCentral ? 'slow-central' : 'bundle'}-check.js"></script></body></html>`);
   }
   response.writeHead(404).end();
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
   const allRoutes = ['/options', '/en/bundle/test-comics', '/en/pick-and-mix/test-mix', '/en/bundle/books', '/en/bundle/test-editions', '/en/pick-and-mix/test-editions', '/en/orders', '/en/bundle/test-contents', '/en/pick-and-mix/test-contents','/en/bundle/test-empty'];
-  const selectedRoutes=process.argv.slice(2).filter(arg=>!['--release','--firefox','--slow-central','--lifecycle'].includes(arg));const routes=selectedRoutes.length?selectedRoutes:lifecycle?['/en/bundle/test-contents','/en/bundle/test-editions']:slowCentral?['/en/bundle/test-comics','/en/pick-and-mix/test-mix']:allRoutes;
+  const selectedRoutes=process.argv.slice(2).filter(arg=>!['--release','--firefox','--slow-central','--lifecycle','--theme','--narrow','--tiny'].includes(arg));const routes=selectedRoutes.length?selectedRoutes:themeMode?['/en/bundle/test-comics','/en/bundle/test-contents']:lifecycle?['/en/bundle/test-contents','/en/bundle/test-editions']:slowCentral?['/en/bundle/test-comics','/en/pick-and-mix/test-mix']:allRoutes;
   if (routes.some(route => !allRoutes.includes(route))) throw new Error('Unknown browser fixture route');
   for (const [index, route] of routes.entries()) {
     let stopped=Promise.resolve();
     const result = await new Promise((resolve, reject) => {
       const profile=path.join(profileRoot,String(index));fs.mkdirSync(profile);const url=`http://127.0.0.1:${server.address().port}${route}`;
-      const args=firefox?['--headless','--no-remote','--profile',profile,url]:['--headless','--disable-gpu','--no-first-run','--no-default-browser-check',`--user-data-dir=${profile}`,url];
-      const child = spawn(browserPath,args, { windowsHide: true });
+      const args=firefox?['--headless','--no-remote','--profile',profile,url]:['--headless',`--window-size=${themeWidth},1000`,'--disable-gpu','--no-first-run','--no-default-browser-check',`--user-data-dir=${profile}`,url];
+      const child = spawn(browserPath,args, { env:{...process.env,...(firefox?{MOZ_HEADLESS_WIDTH:String(themeWidth),MOZ_HEADLESS_HEIGHT:'1000'}:{})},windowsHide: true });
       stopped=new Promise(resolve=>child.once('exit',resolve));
       child.stdout.resume(); child.stderr.resume();
       const timeout = setTimeout(() => { pendingResults.delete(route); child.kill(); reject(new Error(`Browser check timed out: ${route}`)); }, 25000);

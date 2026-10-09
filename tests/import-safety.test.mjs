@@ -37,7 +37,7 @@ function harness({ list = [summary], details = { [orderId]: detail }, headers = 
     const mainWorld = vm.runInNewContext(`(${func.toString()})`, page);
     const result = await mainWorld(...args); receipts.push(structuredClone(result)); return [{ result }];
   } } };
-  const worker = vm.runInNewContext(`${source}\n;({ importPurchases, syncStore });`, { chrome, safeId, validateScanResult, createSyncStore, mergeLibraryItems, importFanaticalOrdersInPage });
+  const worker = vm.runInNewContext(`${fs.readFileSync(new URL('../src/theme.js',import.meta.url),'utf8')}\n${source}\n;({ importPurchases, syncStore });`, { chrome, safeId, validateScanResult, createSyncStore, mergeLibraryItems, importFanaticalOrdersInPage });
   return { stored, before, writes, paths, receipts, get maxActive() { return maxActive; }, scan: (fullScan = true,progressId='') => worker.importPurchases({ fullScan,progressId,profileLabel:'fixture',confirmed:true }),
     store: (operation,args,url='https://www.fanatical.com/en/orders',id=chrome.runtime.id)=>new Promise(resolve=>listener({type:'FANATICAL_STORE',operation,args},{id,url,tab:{id:1}},resolve)),
     send: (fullScan = true) => new Promise((resolve) => listener({ type: 'FANATICAL_IMPORT_PURCHASES', fullScan,profileLabel:'fixture',confirmed:true }, {id:chrome.runtime.id,url:'https://www.fanatical.com/en/orders',tab:{id:1}}, resolve)) };

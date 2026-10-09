@@ -12,5 +12,9 @@
   "src/popup.js",
   "src/popup.html",
   "src/planning.js",
-  "src/planning-ui.js"
+  "src/planning-ui.js",
+  "src/theme.js",
+  "src/theme.css",
+  "src/theme-app.css",
+  "src/theme-overlays.css"
 ]
