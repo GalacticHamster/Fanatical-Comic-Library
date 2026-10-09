@@ -421,8 +421,11 @@
     return request ? state.galactic.get(requestId(request)) || (state.galacticEnabled ? { matches: [], lookupIncomplete: true } : null) : null;
   }
   function status(product, localItems, localUnits) {
-    const result = externalResult(product);
-    const match = F.resolveProduct(product, localItems, localUnits, externalResult, 0, state.history);
+    // Extra exact-owned queries are context only; preserve the existing local result.
+    const contextOnly=F.classify(product,localItems).state==='owned'&&!F.offerContents(product).entries.length;
+    const lookup=query=>contextOnly&&query===product?(state.galacticEnabled?{matches:[],lookupIncomplete:true}:null):externalResult(query);
+    const result = lookup(product);
+    const match = F.resolveProduct(product, localItems, localUnits, lookup, 0, state.history);
     if (state.galacticEnabled && (!result || result.lookupIncomplete) && match.state !== 'owned' && (['game', 'book', 'audiobook'].includes(product.mediaType)||product.mediaType==='software'&&(state.softwareSupported||state.capabilityFailed))) {
       match.lookupIncomplete = true;
       if (match.state === 'new') { match.state = 'unchecked'; match.reason = 'No local match found. Galactic Library could not complete the ownership check; this item may already be owned.'; }
@@ -930,12 +933,14 @@ function restoreSummaryState(panel, state) {
       }
       const allProducts = F.flattenProducts(parsed.products);
       const reading = F.readingTargets(parsed.products);
-      await queryGalactic([...allProducts.filter(product => F.classify(product, stored.fanaticalLibraryItems).state !== 'owned'), ...reading.queries.map(query => query.item)], stored.galacticLibraryExtensionId);
+      const identityProducts=F.isCompleteBundleCatalogue(parsed)?parsed.products.filter(product=>F.classify(product,stored.fanaticalLibraryItems).state==='owned'&&!F.offerContents(product).entries.length):[];
+      await queryGalactic([...allProducts.filter(product => F.classify(product, stored.fanaticalLibraryItems).state !== 'owned'),...identityProducts, ...reading.queries.map(query => query.item)], stored.galacticLibraryExtensionId);
       if (revision !== state.revision || uiRevision !== (state.uiRevision ?? 0) || pageUrl !== location.href) return;
       const ownedOffers = parsed.products.filter(product => F.classify(product, stored.fanaticalLibraryItems).state === 'owned');
       const localUnits = F.localContents([...stored.fanaticalLibraryItems, ...ownedOffers]);
       const matches = parsed.products.map((product) => status(product, stored.fanaticalLibraryItems, localUnits));
-      F.presentation.reconcileBundle(parsed.products.map((item,index)=>({item,match:matches[index],overlapProtected:F.isBundleOverlapProduct(item)})), {complete:F.isCompleteBundleCatalogue(parsed)});
+      F.presentation.reconcileBundle(parsed.products.map((item,index)=>({item,match:matches[index],identityContext:identityProducts.includes(item)?externalResult(item):null,
+        contextIncomplete:identityProducts.includes(item)&&state.galacticEnabled&&Boolean(externalResult(item)?.lookupIncomplete),overlapProtected:F.isBundleOverlapProduct(item)})), {complete:F.isCompleteBundleCatalogue(parsed)});
       state.reading = F.readingCoverage(reading, [...localUnits, ...F.editionContentsEvidence(matches)], externalResult, state.galacticEnabled);
       state.readingLimits = reading;
       parsed.products.forEach((product, index) => {
