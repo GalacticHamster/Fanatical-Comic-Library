@@ -2,11 +2,11 @@
 
 Open Options -> Galactic Library connection -> Purchase sharing. Account choices load automatically when opened. Choose Send or Import, select the source and destination accounts, and confirm they represent the same store account. Equal nicknames do not prove identity. A new nickname is requested only for a new separate destination.
 
-Import transfers, validates and commits supported saved purchases here. Send opens Galactic Library with an offer and the selected destination; complete the receiving review and Import confirmation there. An offer is not a completed import. Progress and committed counts show what actually happened. Use Refresh account choices after changing either saved library.
+Import transfers, validates and commits supported saved purchases here. Send opens Galactic Library with an offer and the selected destination; complete the receiving review and Import confirmation there. An offer is not a completed import. Progress and committed counts show what actually happened. Use Refresh account choices after changing either saved library. This only reloads saved selections; it does not scan Fanatical. Results lead with whether purchases were imported or an offer awaits confirmation. Exact counts and exclusions appear in expandable Technical details; updates can include bookkeeping changes.
 
 Check connection verifies communication only. Bundle matching uses GL's additional ownership evidence; refresh an already-open bundle page after connecting. Checking a connection or refreshing a bundle never transfers purchases.
 
-Local, empty, archived and older accounts remain visible even if GL is unavailable. Eligibility limitations are separate from account discovery. Older Humble purchases without native product IDs can only enrich an unambiguous existing GL purchase/title. Unmatched rows are skipped. Missing Fanatical product identity is excluded and reported; primary bundle data is retained when historical order references are unavailable. No identity is guessed.
+Local, empty, archived and older accounts remain visible even if GL is unavailable. Eligibility limitations are separate from account discovery. Saved Fanatical items without enough product information cannot be shared. Existing bundle information remains available when older order details are absent. No purchase identity is guessed.
 
 Official builds connect by published ID. For unpacked builds, allow this extension's ID in GL Advanced pairing and enter GL's ID here. Update both extensions for the purchase-sharing protocol. GL verifies responding authorized IDs; it does not trust an ID claimed in a message. Missing, disabled and incorrectly addressed extensions can produce the same browser error.
 
