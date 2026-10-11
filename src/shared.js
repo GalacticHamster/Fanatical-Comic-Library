@@ -17,7 +17,17 @@
       .replace(/\b(vol|issue)\s+(i|ii|iii|iv|v|vi|vii|viii|ix|x)\b/gu, (_match, unit, number) => unit + ' ' + roman[number])
       .replace(/\s+/gu, ' ').trim();
     // Limit zero padding to explicitly labeled whole book volumes.
-    if (kind === 'book') title = title.replace(/\bvol\s+0+(\d+)(?=\s|$)/gu, 'vol $1');
+    if (kind === 'book') {
+      title = title.replace(/\bvol\s+0+(\d+)(?=\s|$)/gu, 'vol $1');
+      // Only a leading article in a distinctive, explicitly numbered series is
+      // presentation-equivalent. Short/generic and unnumbered works stay literal.
+      const numbered = /^(?:the|a|an) (.+?) vol \d+(?= |$)/u.exec(title);
+      if (numbered) {
+        const generic = new Set(['the','a','an','and','of','in','to','for','with','book','books','guide','manual','introduction','collection','complete','edition','story','stories']);
+        const words = new Set(numbered[1].split(' ').filter(word => /^\p{L}{3,}$/u.test(word) && !generic.has(word)));
+        if (words.size >= 2 || [...words].some(word => word.length >= 8)) title = title.replace(/^(?:the|a|an) /u, '');
+      }
+    }
     return title;
   }
   function ownershipTitleKeys(title, kind = 'book') {
@@ -236,7 +246,7 @@
       title = qualifier[1].trim(); stripEdition();
     }
     const subtitle = /^(.*?)\s*:\s+(.+)$/u.exec(title);
-    return { primary: normalizeTitle(subtitle?.[1]?.trim() || title), subtitle: Boolean(subtitle),
+    return { primary: kind === 'book' ? presentationTitle(subtitle?.[1]?.trim() || title, kind) : normalizeTitle(subtitle?.[1]?.trim() || title), subtitle: Boolean(subtitle),
       qualifier: Boolean(qualifier), hasEdition, hasVersion: false };
   }
 
@@ -530,7 +540,13 @@
     const offeredUnits = offerContents({ ...left, title: candidate.title }).entries;
     const ownedUnits = offerContents({ ...right, title: owned.title }).entries;
     if (offeredUnits.length === 1 && ownedUnits.length === 1) {
-      for (const name of ['series', 'run', 'unitType']) if (offeredUnits[0][name] && ownedUnits[0][name] && scopeKey(offeredUnits[0][name]) !== scopeKey(ownedUnits[0][name])) reasons.push(`Different ${name}`);
+      for (const name of ['series', 'run', 'unitType']) {
+        // Explicit metadata conflicts above remain authoritative; derived
+        // series labels use the bounded book-title presentation rule.
+        const sameSeries = name === 'series' && mediaType(candidate.mediaType ?? candidate.kind) === 'book'
+          && global.LibraryMatchingPolicy.presentationTitle(offeredUnits[0].series+' vol '+offeredUnits[0].number, 'book') === global.LibraryMatchingPolicy.presentationTitle(ownedUnits[0].series+' vol '+ownedUnits[0].number, 'book');
+        if (!sameSeries && offeredUnits[0][name] && ownedUnits[0][name] && scopeKey(offeredUnits[0][name]) !== scopeKey(ownedUnits[0][name])) reasons.push(`Different ${name}`);
+      }
       if (numberKey(offeredUnits[0].number) !== numberKey(ownedUnits[0].number)) reasons.push('Different issue/volume');
     }
     if (edition) {
