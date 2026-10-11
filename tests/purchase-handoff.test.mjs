@@ -31,3 +31,20 @@ test('FAN order/bundle occurrence counts are idempotent and overlapping groups a
 test('Legacy named FAN accounts with primary bundle only, empty archives and missing IDs stay discoverable',async()=>{
  const rows=Array.from({length:47},(_,n)=>({source:'fanatical',sourceItemId:'legacy_'+n,title:'Legacy book '+n,mediaType:'book',bundle:{sourceItemId:'legacy_bundle',title:'Legacy bundle'}}));const area=memory({fanaticalProfileLabel:'Personal',fanaticalLibraryItems:rows,fanaticalProfileArchives:[{profileLabel:'Empty',items:[]},{profileLabel:'Incomplete',items:[{title:'Unidentified',mediaType:'book'}]}]}),store=createFanStore(area);const accounts=await store.execute('handoffAccounts');assert.equal(accounts.length,3);assert.equal(accounts[0].eligibleCount,47);assert.equal(accounts[1].count,0);assert.equal(accounts[2].eligibleCount,0);const snapshot=await store.execute('handoffSnapshot',[accounts[0].accountRef]);assert.equal(snapshot.records.length,47);assert.equal(snapshot.records[0].metadata.bundleTitle,'Legacy bundle');assert.equal(snapshot.records[0].origins.length,0);assert.equal(area.sets,0);
 });
+
+test('FAN preview is read-only and uses the real merge for existing, new and additional titles',async()=>{
+ const area=memory({fanaticalProfileLabel:'Personal',fanaticalLibraryItems:[],fanaticalSyncControl:{active:true}}),store=createFanStore(area),ref=(await store.execute('handoffAccounts'))[0].accountRef;
+ const data=snapshot([row(1),row(2)]),before=JSON.stringify(area.values);
+ const preview=await store.execute('handoffPreview',[data,{accountRef:ref}]);assert.equal(preview.readOnly,true);assert.equal(preview.added,2);assert.equal(preview.newTitleNames,2);assert.equal(JSON.stringify(area.values),before);assert.equal(area.sets,0);
+ const fresh=await store.execute('handoffPreview',[data,{newLabel:'Separate',expectedActiveLabel:'Personal'}]);assert.equal(fresh.added,2);assert.equal(area.sets,0);
+ delete area.values.fanaticalSyncControl;await store.execute('handoffImport',[data,{accountRef:ref}]);const next=(await store.execute('handoffAccounts'))[0].accountRef;
+ const unchanged=await store.execute('handoffPreview',[data,{accountRef:next}]);assert.equal(unchanged.unchanged,2);assert.equal(unchanged.newTitleNames,0);
+ const additional=await store.execute('handoffPreview',[snapshot([{...row(3),title:row(1).title}]),{accountRef:next}]);assert.equal(additional.additionalRecords,1);assert.equal(additional.newTitleNames,0);
+ await assert.rejects(store.execute('handoffPreview',[data,{accountRef:ref}]),/changed/);
+});
+
+
+test('FAN preview applies the same destination validation as import without writing',async()=>{
+ const area=memory({fanaticalProfileLabel:'Personal',fanaticalLibraryItems:[{source:'fanatical',sourceItemId:'local_123',title:'Saved book',mediaType:'invalid'}]}),store=createFanStore(area),target={accountRef:(await store.execute('handoffAccounts'))[0].accountRef},data=snapshot([row(9)]),before=JSON.stringify(area.values);
+ await assert.rejects(store.execute('handoffPreview',[data,target]),/Invalid backup media type/);await assert.rejects(store.execute('handoffImport',[data,target]),/Invalid backup media type/);assert.equal(area.sets,0);assert.equal(JSON.stringify(area.values),before);
+});

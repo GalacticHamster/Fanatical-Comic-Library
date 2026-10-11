@@ -150,16 +150,17 @@ export function createSyncStore(area){
       if(!Array.isArray(fingerprints)||fingerprints.some(value=>typeof value!=='string'||!/^[a-f0-9]{64}$/.test(value)))throw Error('Saved account scan history is invalid.');
       return {profileLabel:state.fanaticalProfileLabel,items:parseLibraryBackup({schemaVersion:1,items:state.fanaticalLibraryItems}),historicalItems:parseHistoricalItems(state.fanaticalHistoricalItems,state.fanaticalProfileLabel),archivedAt:new Date().toISOString(),localScanState:{fingerprints:[...new Set(fingerprints)],summary:state.fanaticalImportSummary,attempt:state.fanaticalLastScanAttempt}};
     }
-    if(['handoffAccounts','handoffSnapshot','handoffImport'].includes(operation)){
+    if(['handoffAccounts','handoffSnapshot','handoffImport','handoffPreview'].includes(operation)){
       const A=globalThis.GalacticPurchaseAdapters,S=globalThis.GalacticPurchaseSnapshot,state=await area.get(defaults);
       if(operation==='handoffAccounts')return A.accounts('fan',state);
       if(operation==='handoffSnapshot')return A.snapshot('fan',state,args[0]);
       const [raw,target]=args,data=S.validate(raw);if(data.provider!=='fanatical')throw Error('Wrong purchase provider.');
-      if((await area.get({[key]:null}))[key])throw Error('Wait for the Fanatical scan to finish before importing saved purchases.');
+      if(operation!=='handoffPreview'&&(await area.get({[key]:null}))[key])throw Error('Wait for the Fanatical scan to finish before importing saved purchases.');
       let scope;
       if(target?.newLabel){const label=String(target.newLabel).trim();if(!label||label.length>100||A.fanScopes(state).some(value=>value.label===label)||target.expectedActiveLabel!==state.fanaticalProfileLabel)throw Error('Invalid or stale new account choice.');scope={label,items:[],fresh:true};}
       else scope=await A.selected('fan',state,target?.accountRef);
       const result=A.fanMerge(scope.items,data.records),items=parseLibraryBackup({schemaVersion:1,items:result.items});
+      if(operation==='handoffPreview')return {readOnly:true,sourceRecords:data.records.length,destinationRecords:scope.items.length,...result.stats,...A.previewTitles(scope.items,result.items.slice(scope.items.length)),updateBreakdownKnown:false,limitations:data.limitations};
       if(!result.stats.added&&!result.stats.updated&&!scope.fresh)return result.stats;
       if(scope.label===state.fanaticalProfileLabel||!state.fanaticalProfileLabel&&!state.fanaticalLibraryItems.length)await area.set({fanaticalLibraryItems:items,fanaticalProfileLabel:scope.label});
       else {const archives=state.fanaticalProfileArchives.filter(p=>p.profileLabel!==scope.label);archives.push({...scope.state,profileLabel:scope.label,items,historicalItems:scope.state?.historicalItems??[],archivedAt:new Date().toISOString()});if(archives.length>100)throw Error('Too many saved accounts.');await area.set({fanaticalProfileArchives:archives});}
