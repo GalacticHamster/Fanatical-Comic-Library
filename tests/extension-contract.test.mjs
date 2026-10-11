@@ -12,7 +12,7 @@ const options = fs.readFileSync(new URL('src/options.js', root), 'utf8');
 
 test('manifest uses only Fanatical host access and minimal importer permissions', () => {
   assert.deepEqual(manifest.host_permissions, ['https://www.fanatical.com/*']);
-  assert.deepEqual(manifest.permissions.sort(), ['scripting', 'storage']);
+  assert.deepEqual(manifest.permissions.sort(), ['alarms', 'scripting', 'storage']);
   assert.equal(JSON.stringify(manifest).includes('cookies'), false);
 });
 

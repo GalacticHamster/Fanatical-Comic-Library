@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { createHash, webcrypto } from 'node:crypto';
 import test from 'node:test';
-const purchaseModules=['purchase-snapshot.js', 'purchase-transfer.js', 'purchase-adapters.js'].map(file=>fs.readFileSync(new URL('../src/'+file,import.meta.url),'utf8')).join('\n');
+const purchaseModules=['purchase-snapshot.js', 'purchase-transfer.js', 'purchase-sync.js', 'purchase-adapters.js'].map(file=>fs.readFileSync(new URL('../src/'+file,import.meta.url),'utf8')).join('\n');
 const dispatch=(listeners,message,sender,respond)=>{for(const fn of listeners)if(fn(message,sender,respond)===true)return;respond(null);};
 import { safeId, validateScanResult, createSyncStore, mergeLibraryItems } from '../src/library-data.mjs';
 

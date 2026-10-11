@@ -5,7 +5,8 @@
   "description": "Locally mark Fanatical products and bundles you already own.",
   "permissions": [
     "storage",
-    "scripting"
+    "scripting",
+    "alarms"
   ],
   "host_permissions": [
     "https://www.fanatical.com/*"
