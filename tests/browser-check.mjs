@@ -51,7 +51,7 @@ globalThis.centralMode = 'normal';
 globalThis.centralDelayMs = ${slowCentral?4500:0};
 if(${slowCentral})values.fanaticalSummaryPreferences={minimized:true,position:'top-left'};
 globalThis.requests = [];
-globalThis.chrome = {runtime:{getManifest:()=>({name:'Fanatical Library'}),id:'a'.repeat(32),sendMessage:async(first,second)=>{
+globalThis.chrome = {runtime:{getManifest:()=>({name:'Fanatical Library'}),onMessage:{addListener(){}},id:'a'.repeat(32),sendMessage:async(first,second)=>{
   const message=second||first; requests.push(message);
   if(message.type==='MATCH_ITEMS'&&centralDelayMs)await new Promise(resolve=>setTimeout(resolve,centralDelayMs));
   if(message.type==='FANATICAL_STORE'){
@@ -110,6 +110,7 @@ const finish=result=>{const node=document.createElement('pre');node.id='browser-
 `;
 const bundleChecks = `${common}
 try {
+  assert(['Book Six','Book Three','Book Two'].sort(globalThis.LibraryTitleSort.compare).join('|')==='Book Two|Book Three|Book Six','Written book numbers sort naturally in the packaged storefront runtime');
   await wait();
   assert(!diagnostics(),'Diagnostics should default off');
   assert(document.querySelectorAll('[data-fanatical-library-for]').length===4,'Missing card badges');

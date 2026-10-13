@@ -2,7 +2,7 @@
   'use strict';
   const F = globalThis.FanaticalLibrary;
   if (!F) return;
-  const titleCollator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+  const titleCollator = {compare:(left,right)=>globalThis.LibraryTitleSort.compare(left,right)};
   const state = { wishlist:[],planGoal:'products',planUncertain:false,planOpen:false,wishOpen:false,offerWishPage:0, capabilityId:null, softwareSupported:false, capabilityFailed:false, url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), requests: new Map(), failed: new Set(), lookupFailures: new Set(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false, showNewOnlyLoaded: false, pickMixReflow: [], summaryDirty: false, summaryPreferences:{minimized:false,position:'bottom-right'}, revision: 0 };
   const catalogueState = { items: null, filters: null, rendering: false };
   let observer = null;

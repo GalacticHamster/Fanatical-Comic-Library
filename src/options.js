@@ -6,7 +6,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
   const linkSaved = 'Override saved. For development builds, allow this extension in Galactic Library Advanced settings, then check the connection.';
   let libraryBusy = false,wishlist=[],wishlistPage=0;
   function renderWishlist(){
-    const filtered=wishlist.filter(item=>item.title.toLowerCase().includes($("#wishlist-search").value.toLowerCase())).sort((a,b)=>b.weight-a.weight||a.title.localeCompare(b.title));wishlistPage=Math.min(wishlistPage,Math.max(0,Math.ceil(filtered.length/50)-1));$("#wishlist-count").textContent=`${filtered.length} wishes; page ${wishlistPage+1} of ${Math.max(1,Math.ceil(filtered.length/50))}.`;$("#wishlist-previous").disabled=wishlistPage===0;$("#wishlist-next").disabled=(wishlistPage+1)*50>=filtered.length;
+    const filtered=wishlist.filter(item=>item.title.toLowerCase().includes($("#wishlist-search").value.toLowerCase())).sort((a,b)=>b.weight-a.weight||globalThis.LibraryTitleSort.compare(a.title,b.title));wishlistPage=Math.min(wishlistPage,Math.max(0,Math.ceil(filtered.length/50)-1));$("#wishlist-count").textContent=`${filtered.length} wishes; page ${wishlistPage+1} of ${Math.max(1,Math.ceil(filtered.length/50))}.`;$("#wishlist-previous").disabled=wishlistPage===0;$("#wishlist-next").disabled=(wishlistPage+1)*50>=filtered.length;
     $("#wishlist-list").replaceChildren(...filtered.slice(wishlistPage*50,wishlistPage*50+50).map(item=>{
       const row=document.createElement('li'),title=document.createElement('span'),priority=document.createElement('input'),remove=document.createElement('button');
       title.className='wish-title';title.textContent=`${item.title} (${item.mediaType})`;

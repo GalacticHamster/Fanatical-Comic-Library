@@ -60,7 +60,7 @@
     const eligible=rows.filter(row=>!['owned','owned-elsewhere'].includes(row.match.state)&&!row.match.lookupIncomplete&&(row.match.state==='new'||goal==='units'&&row.match.state==='partial'&&row.units.size||includeUncertain&&row.match.state==='possible'));
     const targets=eligible.filter(row=>goal==='wishlist'?row.weight>0:goal==='units'?row.units.size>0:true),targetIds=new Set(targets.map(row=>row.product.sourceItemId)),targetUnits=new Set(targets.flatMap(row=>[...row.units]));
     const targetWishes=new Set(targets.flatMap(row=>[...row.wishIds]));
-    const preference=(a,b)=>b.weight-a.weight||b.units.size-a.units.size||a.product.title.localeCompare(b.product.title);
+    const preference=(a,b)=>b.weight-a.weight||b.units.size-a.units.size||globalThis.LibraryTitleSort.compare(a.product.title,b.product.title);
     const metrics=selected=>{const fulfilled=new Set(selected.flatMap(row=>[...row.wishIds]));return {wishlistWeight:[...fulfilled].reduce((sum,id)=>sum+wishes[id].weight,0),wishlistCount:fulfilled.size,additionalUnits:new Set(selected.flatMap(row=>[...row.units])).size};};
     let uncertainSearch=false;const plans=[];
     if(parsed.kind==='standard'){
