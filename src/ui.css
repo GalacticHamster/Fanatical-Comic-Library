@@ -12,7 +12,7 @@ button:disabled { cursor: wait; opacity: 0.65; }
 #galactic-id { display: block; width: min(100%, 28rem); margin-top: 0.35rem; }
 code { font-family: ui-monospace, monospace; }
 #fanatical-extension-id { overflow-wrap: anywhere; }
-#library-preview { padding-left: 1.5rem; }
+#library-preview { max-height: 28rem; overflow: auto; padding-left: 4.25rem; }
 #library-preview li { margin: 0.25rem 0; overflow-wrap: anywhere; }
 
 label { display:block; margin:.5rem 0; } #summary-position { padding:.35rem; }
@@ -57,5 +57,13 @@ label { display:block; margin:.5rem 0; } #summary-position { padding:.35rem; }
 .library-navigation { display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin:.75rem 0 .25rem; }
 .library-navigation p { margin:0; font-size:.9rem; color:var(--gh-text-muted); }
 .library-navigation .actions { margin:0; }
-#library-preview { max-height:28rem; overflow:auto; padding-left:1.5rem; margin:.5rem 0; }
+#library-preview { max-height:28rem; overflow:auto; padding-left:4.25rem; margin:.5rem 0; }
 #library-preview li { margin:.3rem 0; overflow-wrap:anywhere; }
+
+/* Provenance details in library browser */
+.library-item-details { margin: 0.25rem 0 0.35rem; font-size: 0.85rem; }
+.library-item-summary { cursor: pointer; color: var(--gh-text-muted); font-size: 0.82rem; user-select: none; }
+.library-item-summary:hover { color: var(--gh-text); }
+.library-provenance-list { margin: 0.35rem 0 0.25rem 1.25rem; padding: 0; list-style: disc; font-size: 0.82rem; color: var(--gh-text-muted); }
+.library-provenance-list li { margin: 0.2rem 0; }
+.library-provenance-empty { margin: 0.25rem 0 0.25rem 0.5rem; font-style: italic; color: var(--gh-text-muted); font-size: 0.82rem; }

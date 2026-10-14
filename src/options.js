@@ -93,9 +93,184 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     }
   }
 
+  function itemsMatchExactly(a, b) {
+    if (a === b) return true;
+    const titleA = (typeof a === 'string' ? a : (a?.title || '')).trim().toLowerCase();
+    const titleB = (typeof b === 'string' ? b : (b?.title || '')).trim().toLowerCase();
+    if (!titleA || titleA !== titleB) return false;
+
+    const mediaA = (typeof a === 'string' ? 'other' : (a?.mediaType || a?.kind || 'other')).toLowerCase();
+    const mediaB = (typeof b === 'string' ? 'other' : (b?.mediaType || b?.kind || 'other')).toLowerCase();
+    if (mediaA !== mediaB) return false;
+
+    if (typeof a === 'object' && typeof b === 'object' && a !== null && b !== null) {
+      const idA = (a.sourceItemId || '').trim();
+      const idB = (b.sourceItemId || '').trim();
+      if (idA && idB && idA !== idB) return false;
+
+      const edA = (a.edition || '').trim().toLowerCase();
+      const edB = (b.edition || '').trim().toLowerCase();
+      if (edA !== edB) return false;
+
+      const volA = (a.volume || '').trim().toLowerCase();
+      const volB = (b.volume || '').trim().toLowerCase();
+      if (volA !== volB) return false;
+
+      const issA = (a.issue || '').trim().toLowerCase();
+      const issB = (b.issue || '').trim().toLowerCase();
+      if (issA !== issB) return false;
+
+      const isbnA = (a.externalIds?.isbn || a.isbn || '').trim().toUpperCase();
+      const isbnB = (b.externalIds?.isbn || b.isbn || '').trim().toUpperCase();
+      if (isbnA && isbnB && isbnA !== isbnB) return false;
+
+      const steamA = (a.externalIds?.steamAppId || a.steamAppId || '').trim();
+      const steamB = (b.externalIds?.steamAppId || b.steamAppId || '').trim();
+      if (steamA && steamB && steamA !== steamB) return false;
+    }
+
+    return true;
+  }
+
+  function extractItemOrigins(item) {
+    if (!item || typeof item !== 'object') return [];
+    if (Array.isArray(item.purchaseOrigins) && item.purchaseOrigins.length > 0) {
+      return item.purchaseOrigins.map((o) => ({
+        bundle: {
+          sourceItemId: o.bundle?.sourceItemId || '',
+          title: o.bundle?.title || item.bundle?.title || '',
+          slug: o.bundle?.slug || ''
+        },
+        purchaseDate: o.purchaseDate || item.purchaseDate || null,
+        purchaseRef: o.purchaseRef || '',
+        quantity: o.quantity || 1,
+        drm: Array.isArray(o.drm) ? o.drm : (Array.isArray(item.drm) ? item.drm : (typeof item.drm === 'string' ? [item.drm] : [])),
+        platforms: Array.isArray(o.platforms) ? o.platforms : (Array.isArray(item.platforms) ? item.platforms : []),
+        formats: Array.isArray(o.formats) ? o.formats : (Array.isArray(item.formats) ? item.formats : [])
+      }));
+    }
+    const bundleTitle = item.bundle?.title || item.sourceBundle || '';
+    const bundleId = item.bundle?.sourceItemId || '';
+    if (bundleTitle || item.purchaseDate || item.purchaseRef || item.drm) {
+      const drmList = Array.isArray(item.drm) ? item.drm : (typeof item.drm === 'string' ? [item.drm] : []);
+      return [{
+        bundle: {
+          sourceItemId: bundleId,
+          title: bundleTitle,
+          slug: item.bundle?.slug || ''
+        },
+        purchaseDate: item.purchaseDate || null,
+        purchaseRef: item.purchaseRef || '',
+        quantity: item.quantity || 1,
+        drm: drmList,
+        platforms: Array.isArray(item.platforms) ? item.platforms : [],
+        formats: Array.isArray(item.formats) ? item.formats : []
+      }];
+    }
+    return [];
+  }
+
+  function mergeOriginRecords(existingOrigins, incomingOrigins) {
+    const merged = new Map();
+    function originKey(origin) {
+      if (origin.purchaseRef) {
+        return `ref:${origin.purchaseRef.toLowerCase()}:${origin.bundle?.sourceItemId || ''}`;
+      }
+      return `bundle:${(origin.bundle?.sourceItemId || origin.bundle?.title || '').toLowerCase()}:${origin.purchaseDate || ''}:${origin.quantity || 1}`;
+    }
+    for (const origin of [...existingOrigins, ...incomingOrigins]) {
+      const key = originKey(origin);
+      if (!merged.has(key)) {
+        merged.set(key, origin);
+      } else {
+        const prev = merged.get(key);
+        merged.set(key, {
+          ...prev,
+          ...origin,
+          bundle: {
+            sourceItemId: prev.bundle?.sourceItemId || origin.bundle?.sourceItemId || '',
+            title: prev.bundle?.title || origin.bundle?.title || '',
+            slug: prev.bundle?.slug || origin.bundle?.slug || ''
+          },
+          purchaseDate: prev.purchaseDate || origin.purchaseDate,
+          quantity: Math.max(prev.quantity || 1, origin.quantity || 1)
+        });
+      }
+    }
+    return [...merged.values()].sort((a, b) => {
+      const timeA = a.purchaseDate ? Date.parse(a.purchaseDate) : 0;
+      const timeB = b.purchaseDate ? Date.parse(b.purchaseDate) : 0;
+      if (timeA && timeB && timeA !== timeB) return timeB - timeA;
+      if (timeA && !timeB) return -1;
+      if (!timeA && timeB) return 1;
+      return (a.bundle?.title || '').localeCompare(b.bundle?.title || '');
+    });
+  }
+
+  function consolidateFanaticalItemInto(target, incoming) {
+    const targetObj = typeof target === 'string' ? { title: target, mediaType: 'other' } : { ...target };
+    const incomingObj = typeof incoming === 'string' ? { title: incoming, mediaType: 'other' } : incoming;
+
+    const targetOrigins = extractItemOrigins(targetObj);
+    const incomingOrigins = extractItemOrigins(incomingObj);
+    const allOrigins = mergeOriginRecords(targetOrigins, incomingOrigins);
+
+    const latestOrigin = allOrigins[0];
+    const targetDate = getItemPurchaseDate(targetObj);
+    const incomingDate = getItemPurchaseDate(incomingObj);
+    const useIncomingDate = incomingDate !== null && (targetDate === null || incomingDate > targetDate);
+
+    const targetDrm = Array.isArray(targetObj.drm) ? targetObj.drm : (typeof targetObj.drm === 'string' ? [targetObj.drm] : []);
+    const incomingDrm = Array.isArray(incomingObj.drm) ? incomingObj.drm : (typeof incomingObj.drm === 'string' ? [incomingObj.drm] : []);
+    const combinedDrm = [...new Set([...targetDrm, ...incomingDrm])];
+
+    const combinedPlatforms = [...new Set([...(targetObj.platforms || []), ...(incomingObj.platforms || [])])];
+    const combinedFormats = [...new Set([...(targetObj.formats || []), ...(incomingObj.formats || [])])];
+
+    return {
+      ...targetObj,
+      ...(useIncomingDate ? incomingObj : {}),
+      sourceItemId: targetObj.sourceItemId || incomingObj.sourceItemId,
+      bundle: latestOrigin?.bundle || targetObj.bundle || incomingObj.bundle || { sourceItemId: '', title: '' },
+      purchaseDate: latestOrigin?.purchaseDate || (useIncomingDate ? incomingObj.purchaseDate : targetObj.purchaseDate) || null,
+      purchaseOrigins: allOrigins,
+      ...(combinedDrm.length ? { drm: combinedDrm } : {}),
+      ...(combinedPlatforms.length ? { platforms: combinedPlatforms } : {}),
+      ...(combinedFormats.length ? { formats: combinedFormats } : {})
+    };
+  }
+
+  function consolidateLibrary(items) {
+    if (!Array.isArray(items)) return [];
+    const buckets = new Map();
+    for (const item of items) {
+      const title = (typeof item === 'string' ? item : (item?.title || '')).trim().toLowerCase();
+      const media = (typeof item === 'string' ? 'other' : (item?.mediaType || item?.kind || 'other')).toLowerCase();
+      const bucketKey = `${media}:::${title}`;
+      let group = buckets.get(bucketKey);
+      if (!group) {
+        group = [];
+        buckets.set(bucketKey, group);
+      }
+      const existingIndex = group.findIndex((candidate) => itemsMatchExactly(candidate, item));
+      if (existingIndex >= 0) {
+        group[existingIndex] = consolidateFanaticalItemInto(group[existingIndex], item);
+      } else {
+        const itemObj = typeof item === 'string' ? { title: item, mediaType: media } : { ...item };
+        const origins = extractItemOrigins(itemObj);
+        group.push({ ...itemObj, purchaseOrigins: origins });
+      }
+    }
+    const consolidated = [];
+    for (const group of buckets.values()) {
+      consolidated.push(...group);
+    }
+    return consolidated;
+  }
+
   function filterAndSortLibrary(items, { search = '', media = '', metadata = '', sort = 'title-asc' } = {}) {
     const collator = globalThis.LibraryTitleSort || new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
-    let result = Array.isArray(items) ? [...items] : [];
+    let result = Array.isArray(items) ? consolidateLibrary(items) : [];
 
     if (search && search.trim()) {
       const term = search.trim().toLowerCase();
@@ -117,8 +292,25 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
       result = result.filter((item) => {
         if (metadata === 'dated') return getItemPurchaseDate(item) !== null;
         if (metadata === 'bundle') return Boolean(typeof item === 'object' && (item.bundle?.title || item.sourceBundle));
-        if (metadata === 'steam') return typeof item === 'object' && (item.drm === 'steam' || Boolean(item.steamAppId) || Boolean(item.steamAppIds?.length) || (Array.isArray(item.keys) && item.keys.some(k => k.type === 'steam')));
-        if (metadata === 'drm-free') return typeof item === 'object' && (item.drm === 'drm-free' || item.drm === 'none' || Boolean(item.drmFree) || Boolean(item.downloads?.length));
+        if (metadata === 'steam') {
+          return typeof item === 'object' && (
+            item.drm === 'steam' ||
+            Boolean(item.steamAppId) ||
+            Boolean(item.steamAppIds?.length) ||
+            (Array.isArray(item.keys) && item.keys.some(k => k.type === 'steam')) ||
+            (Array.isArray(item.drm) && item.drm.includes('steam')) ||
+            Boolean(item.externalIds?.steamAppId)
+          );
+        }
+        if (metadata === 'drm-free') {
+          return typeof item === 'object' && (
+            item.drm === 'drm-free' ||
+            item.drm === 'none' ||
+            Boolean(item.drmFree) ||
+            Boolean(item.downloads?.length) ||
+            (Array.isArray(item.drm) && (item.drm.includes('drm-free') || item.drm.includes('none')))
+          );
+        }
         if (metadata === 'multi-origin') return typeof item === 'object' && Array.isArray(item.purchaseOrigins) && item.purchaseOrigins.length > 1;
         return true;
       });
@@ -164,13 +356,54 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     const bundle = typeof item === 'object' ? (item.bundle?.title || item.sourceBundle || '') : '';
     const title = typeof item === 'string' ? item : (item.title || '');
     let text = bundle ? `${title} — ${bundle}` : title;
-    if (item.purchaseOrigins?.length > 1) {
-      text += ` (${item.purchaseOrigins.length} purchase origins)`;
+    const origins = extractItemOrigins(item);
+    if (origins.length > 1) {
+      text += ` (${origins.length} purchase origins)`;
     }
     const date = getItemPurchaseDate(item);
     const dateStr = formatPurchaseDate(date);
     if (dateStr) text += ` · ${dateStr}`;
     row.textContent = text;
+
+    const details = document.createElement('details');
+    details.className = 'library-item-details';
+    const summary = document.createElement('summary');
+    summary.className = 'library-item-summary';
+
+    if (origins.length > 1) {
+      summary.textContent = `View all ${origins.length} purchase origins`;
+    } else if (origins.length === 1) {
+      summary.textContent = 'View purchase details';
+    } else {
+      summary.textContent = 'Provenance details';
+    }
+    details.append(summary);
+
+    if (origins.length > 0) {
+      const list = document.createElement('ul');
+      list.className = 'library-provenance-list';
+      for (const origin of origins) {
+        const li = document.createElement('li');
+        const parts = [];
+        const bTitle = origin.bundle?.title || bundle;
+        if (bTitle) parts.push(`Bundle: ${bTitle}`);
+        const pDate = formatPurchaseDate(origin.purchaseDate);
+        if (pDate) parts.push(`Purchased: ${pDate}`);
+        if (origin.quantity && origin.quantity > 1) parts.push(`Qty: ${origin.quantity}`);
+        if (origin.purchaseRef) parts.push(`Ref: ${origin.purchaseRef.slice(0, 16)}…`);
+        if (origin.drm && origin.drm.length) parts.push(`DRM: ${origin.drm.join(', ')}`);
+        li.textContent = parts.join(' · ') || 'Purchase record stored without bundle details';
+        list.append(li);
+      }
+      details.append(list);
+    } else {
+      const empty = document.createElement('p');
+      empty.className = 'library-provenance-empty';
+      empty.textContent = 'No bundle or purchase record stored.';
+      details.append(empty);
+    }
+
+    row.append(details);
     return row;
   }
 
@@ -195,7 +428,8 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     if (librarySort && librarySort.value !== libraryBrowserState.sort) librarySort.value = libraryBrowserState.sort;
     if (libraryPageSize && Number(libraryPageSize.value) !== libraryBrowserState.pageSize) libraryPageSize.value = String(libraryBrowserState.pageSize);
 
-    const processed = filterAndSortLibrary(latestLibraryItems, {
+    const uniqueItems = consolidateLibrary(latestLibraryItems);
+    const processed = filterAndSortLibrary(uniqueItems, {
       search: libraryBrowserState.search,
       media: libraryBrowserState.media,
       metadata: libraryBrowserState.metadata,
@@ -221,10 +455,10 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
       if (!latestLibraryItems.length) {
         note.textContent = 'Your library is empty. Import purchases or restore a backup to see a preview.';
       } else if (!processed.length) {
-        note.textContent = `No items match your search or filter criteria (0 of ${latestLibraryItems.length} items).`;
+        note.textContent = `No items match your search or filter criteria (0 of ${uniqueItems.length} items).`;
       } else {
         const pageInfo = totalPages > 1 ? ` (page ${libraryBrowserState.page + 1} of ${totalPages})` : '';
-        const filterInfo = processed.length !== latestLibraryItems.length ? ` (filtered from ${latestLibraryItems.length})` : '';
+        const filterInfo = processed.length !== uniqueItems.length ? ` (filtered from ${uniqueItems.length})` : '';
         const sortLabel = libraryBrowserState.sort === 'date-desc' ? 'by purchase date (newest)'
           : libraryBrowserState.sort === 'date-asc' ? 'by purchase date (oldest)'
           : libraryBrowserState.sort === 'title-desc' ? 'reverse alphabetically'

@@ -331,3 +331,106 @@ test('options library browser preserves state in sessionStorage and restores upo
   assert.equal(ui.get('#library-sort').value, 'title-desc');
   assert.equal(ui.get('#library-page-size').value, '20');
 });
+
+test('exact duplicate library items consolidate into one row with expandable provenance details', async () => {
+  const ui = await optionsHarness({
+    fanaticalLibraryItems: [
+      {
+        source: 'fanatical',
+        sourceItemId: 'product-game-1',
+        title: 'Exact Game',
+        mediaType: 'game',
+        bundle: { sourceItemId: 'bundle-1', title: 'First Bundle' },
+        purchaseDate: '2026-01-15T00:00:00Z',
+        purchaseOrigins: [{
+          bundle: { sourceItemId: 'bundle-1', title: 'First Bundle' },
+          purchaseDate: '2026-01-15T00:00:00Z',
+          purchaseRef: 'a'.repeat(64),
+          quantity: 1,
+          drm: ['steam']
+        }],
+        drm: ['steam']
+      },
+      {
+        source: 'fanatical',
+        sourceItemId: 'product-game-1',
+        title: 'Exact Game',
+        mediaType: 'game',
+        bundle: { sourceItemId: 'bundle-2', title: 'Second Bundle' },
+        purchaseDate: '2026-06-20T00:00:00Z',
+        purchaseOrigins: [{
+          bundle: { sourceItemId: 'bundle-2', title: 'Second Bundle' },
+          purchaseDate: '2026-06-20T00:00:00Z',
+          purchaseRef: 'b'.repeat(64),
+          quantity: 2,
+          drm: ['steam']
+        }],
+        drm: ['steam']
+      }
+    ]
+  });
+
+  const preview = ui.get('#library-preview');
+  // Both purchases consolidate into 1 exact library row
+  assert.equal(preview.children.length, 1);
+  const row = preview.children[0];
+  assert.match(row.textContent, /Exact Game — Second Bundle \(2 purchase origins\) · 2026-06-20/);
+
+  // Expandable details element
+  assert.equal(row.children.length, 1);
+  const details = row.children[0];
+  assert.equal(details.className, 'library-item-details');
+  const summary = details.children[0];
+  assert.equal(summary.className, 'library-item-summary');
+  assert.equal(summary.textContent, 'View all 2 purchase origins');
+
+  // Provenance list shows both individual purchases ordered newest first
+  const list = details.children[1];
+  assert.equal(list.className, 'library-provenance-list');
+  assert.equal(list.children.length, 2);
+  assert.match(list.children[0].textContent, /Bundle: Second Bundle · Purchased: 2026-06-20 · Qty: 2 · Ref: b{16}… · DRM: steam/);
+  assert.match(list.children[1].textContent, /Bundle: First Bundle · Purchased: 2026-01-15 · Ref: a{16}… · DRM: steam/);
+});
+
+test('different editions, versions, and volumes remain separate and are not consolidated', async () => {
+  const ui = await optionsHarness({
+    fanaticalLibraryItems: [
+      { source: 'fanatical', sourceItemId: 'p-1', title: 'Hero Comic', edition: 'Standard Edition', mediaType: 'book', bundle: { title: 'Bundle A' }, purchaseDate: null },
+      { source: 'fanatical', sourceItemId: 'p-2', title: 'Hero Comic', edition: 'Deluxe Edition', mediaType: 'book', bundle: { title: 'Bundle B' }, purchaseDate: null },
+      { source: 'fanatical', sourceItemId: 'p-3', title: 'Saga Series', volume: '1', mediaType: 'book', bundle: { title: 'Bundle C' }, purchaseDate: null },
+      { source: 'fanatical', sourceItemId: 'p-4', title: 'Saga Series', volume: '2', mediaType: 'book', bundle: { title: 'Bundle D' }, purchaseDate: null },
+      { source: 'fanatical', sourceItemId: 'p-5', title: 'Adventure Game', mediaType: 'game', bundle: { title: 'Bundle E' }, purchaseDate: null },
+      { source: 'fanatical', sourceItemId: 'p-6', title: 'Adventure Game', mediaType: 'book', bundle: { title: 'Bundle F' }, purchaseDate: null }
+    ]
+  });
+
+  const preview = ui.get('#library-preview');
+  // Different editions, volumes, and media types must remain distinct items
+  assert.equal(preview.children.length, 6);
+  const note = ui.get('#preview-note').textContent;
+  assert.match(note, /Showing 6 of 6 items/);
+});
+
+test('incomplete or missing provenance is handled gracefully', async () => {
+  const ui = await optionsHarness({
+    fanaticalLibraryItems: [
+      { source: 'fanatical', sourceItemId: 'p-manual', title: 'Manual Book Without Provenance', mediaType: 'book' },
+      { source: 'fanatical', sourceItemId: 'p-partial', title: 'Item With Partial Provenance', mediaType: 'game', bundle: { title: '' }, purchaseDate: null }
+    ]
+  });
+
+  const preview = ui.get('#library-preview');
+  assert.equal(preview.children.length, 2);
+
+  const manualRow = preview.children.find((r) => r.textContent.includes('Manual Book Without Provenance'));
+  assert(manualRow);
+  const manualDetails = manualRow.children[0];
+  assert.equal(manualDetails.className, 'library-item-details');
+  assert.equal(manualDetails.children[0].textContent, 'Provenance details');
+  assert.equal(manualDetails.children[1].textContent, 'No bundle or purchase record stored.');
+});
+
+test('src/ui.css configures library-preview with 4.25rem padding-left to prevent clipping 3-5 digit item numbers', () => {
+  const css = fs.readFileSync(new URL('../src/ui.css', import.meta.url), 'utf8');
+  assert.match(css, /#library-preview\s*\{[^}]*padding-left:\s*4\.25rem/);
+});
