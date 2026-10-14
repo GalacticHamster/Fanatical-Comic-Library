@@ -10,27 +10,40 @@ const item = (title, id = 'product-123456') => ({ source: 'fanatical', sourceIte
 
 async function optionsHarness(initial = {}) {
   const stored = structuredClone(initial); const writes = []; const messages = []; const nodes = new Map();
+  const sessionData = new Map();
+  const sessionStorage = {
+    getItem(key) { return sessionData.get(key) ?? null; },
+    setItem(key, value) { sessionData.set(key, String(value)); },
+    removeItem(key) { sessionData.delete(key); },
+    clear() { sessionData.clear(); }
+  };
   const element = () => ({ textContent: '', value: '', checked: false, disabled: false, files: [], children: [], listeners: {}, addEventListener(type, handler) { this.listeners[type] = handler; }, replaceChildren(...children) { this.children = children; }, append(...children) {this.children.push(...children);}, setAttribute(name,value) {this[name]=value;}, click() {} });
   const get = (selector) => { if (!nodes.has(selector)) nodes.set(selector, element()); return nodes.get(selector); };
   const config = { confirm: true, response: { ok: true, apiVersion: 1, appVersion: '0.1.0' }, failure: false };
   const context = vm.createContext({
     document: { querySelector: get, createElement: element },
+    sessionStorage,
     chrome: { runtime: { id: 'a'.repeat(32), async sendMessage(id, message) { messages.push({ id, message }); if (config.failure) throw new Error('PRIVATE transport failure'); return config.respond ? config.respond(message) : config.response; } }, storage: { local: {
       async get(defaults) { return { ...defaults, ...stored }; },
       async set(value) { writes.push(structuredClone(value)); Object.assign(stored, structuredClone(value)); },
       async remove(keys) { for (const key of Array.isArray(keys) ? keys : [keys]) delete stored[key]; }
     } }, tabs: { create() {} } },
     confirm: () => config.confirm, LibraryTitleSort:globalThis.LibraryTitleSort, LibraryAccountProfiles:globalThis.LibraryAccountProfiles, FanaticalLibrary: globalThis.FanaticalLibrary,
-    backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitleCatalog, Blob, URL, setTimeout, clearTimeout
+    backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitleCatalog, Blob, URL, setTimeout, clearTimeout, Intl
   });
   const store=createSyncStore(context.chrome.storage.local);const oldSend=context.chrome.runtime.sendMessage;
   context.chrome.runtime.sendMessage=async (...args)=>{const message=args[0];if(message?.type!=='FANATICAL_STORE')return oldSend(...args);try{return {ok:true,result:await store.execute(message.operation,message.args)};}catch(error){return {ok:false,error:error.message};}};
   await vm.runInContext(code, context);
-  return { stored, writes, messages, get, config, async click(selector) { await get(selector).listeners.click(); }, async upload(value, raw = false) {
-    const contents = raw ? value : JSON.stringify(value);
-    get('#import-file').files = [{ size: contents.length, text: async () => contents }];
-    await get('#import-file').listeners.change();
-  } };
+  return { stored, writes, messages, get, config, context, sessionData,
+    async click(selector) { await get(selector).listeners.click?.(); },
+    async input(selector, val) { const el = get(selector); el.value = val; await el.listeners.input?.(); },
+    async change(selector, val) { const el = get(selector); if (val !== undefined) el.value = val; await el.listeners.change?.(); },
+    async upload(value, raw = false) {
+      const contents = raw ? value : JSON.stringify(value);
+      get('#import-file').files = [{ size: contents.length, text: async () => contents }];
+      await get('#import-file').listeners.change();
+    }
+  };
 }
 
 test('options preview is bounded, naturally ordered, and displays bundle provenance safely', async () => {
@@ -131,4 +144,190 @@ test('wishlist priority editing and restore are validated, confirmed and indepen
   await upload([{title:'Bad wish',mediaType:'book',weight:0}]);assert.equal(ui.stored.fanaticalWishlistItems[0].weight,9);assert.match(ui.get('#wishlist-status').textContent,/failed/);
   ui.config.confirm=false;await upload([{title:'Replacement',mediaType:'game',weight:2}]);assert.equal(ui.stored.fanaticalWishlistItems[0].title,'Keep wish');
   ui.config.confirm=true;await upload([{title:'Replacement',mediaType:'game',weight:2}]);assert.equal(ui.stored.fanaticalWishlistItems[0].title,'Replacement');assert.deepEqual(ui.stored.fanaticalLibraryItems,before);
+});
+
+test('options library search filters items by title case-insensitively', async () => {
+  const ui = await optionsHarness({
+    fanaticalLibraryItems: [
+      { ...item('Alpha Game'), mediaType: 'game' },
+      { ...item('Beta Guide'), mediaType: 'book' },
+      { ...item('Gamma Tool'), mediaType: 'software' }
+    ]
+  });
+
+  assert.equal(ui.get('#library-preview').children.length, 3);
+  await ui.input('#library-search', 'beta');
+  assert.equal(ui.get('#library-preview').children.length, 1);
+  assert.equal(ui.get('#library-preview').children[0].textContent, 'Beta Guide — Test bundle');
+  assert.match(ui.get('#preview-note').textContent, /Showing 1 of 1 items \(filtered from 3\)/);
+
+  await ui.input('#library-search', 'NOMATCH');
+  assert.equal(ui.get('#library-preview').children.length, 0);
+  assert.match(ui.get('#preview-note').textContent, /No items match your search or filter criteria/);
+
+  await ui.input('#library-search', '');
+  assert.equal(ui.get('#library-preview').children.length, 3);
+});
+
+test('options library media filter isolates books, games, software, and audiobooks', async () => {
+  const ui = await optionsHarness({
+    fanaticalLibraryItems: [
+      { ...item('Game One'), mediaType: 'game' },
+      { ...item('Book One'), mediaType: 'book' },
+      { ...item('Software One'), mediaType: 'software' },
+      { ...item('Audiobook One'), mediaType: 'audiobook' }
+    ]
+  });
+
+  assert.equal(ui.get('#library-preview').children.length, 4);
+
+  await ui.change('#library-filter-media', 'game');
+  assert.equal(ui.get('#library-preview').children.length, 1);
+  assert.match(ui.get('#library-preview').children[0].textContent, /Game One/);
+
+  await ui.change('#library-filter-media', 'book');
+  assert.equal(ui.get('#library-preview').children.length, 1);
+  assert.match(ui.get('#library-preview').children[0].textContent, /Book One/);
+
+  await ui.change('#library-filter-media', 'software');
+  assert.equal(ui.get('#library-preview').children.length, 1);
+  assert.match(ui.get('#library-preview').children[0].textContent, /Software One/);
+
+  await ui.change('#library-filter-media', 'audiobook');
+  assert.equal(ui.get('#library-preview').children.length, 1);
+  assert.match(ui.get('#library-preview').children[0].textContent, /Audiobook One/);
+
+  await ui.change('#library-filter-media', '');
+  assert.equal(ui.get('#library-preview').children.length, 4);
+});
+
+test('options library metadata filter isolates dated, bundle, steam, drm-free, and multi-origin items', async () => {
+  const ui = await optionsHarness({
+    fanaticalLibraryItems: [
+      { ...item('Dated Item'), purchaseDate: '2026-05-01' },
+      { ...item('Standalone Item'), bundle: null },
+      { ...item('Steam DRM Item'), drm: 'steam' },
+      { ...item('DRM Free Item'), drm: 'drm-free' },
+      { ...item('Multi Origin Item'), purchaseOrigins: [{ orderId: 'o1' }, { orderId: 'o2' }] }
+    ]
+  });
+
+  await ui.change('#library-filter-metadata', 'dated');
+  assert.equal(ui.get('#library-preview').children.length, 1);
+  assert.match(ui.get('#library-preview').children[0].textContent, /Dated Item.*2026-05-01/);
+
+  await ui.change('#library-filter-metadata', 'bundle');
+  assert.equal(ui.get('#library-preview').children.length, 4);
+
+  await ui.change('#library-filter-metadata', 'steam');
+  assert.equal(ui.get('#library-preview').children.length, 1);
+  assert.match(ui.get('#library-preview').children[0].textContent, /Steam DRM Item/);
+
+  await ui.change('#library-filter-metadata', 'drm-free');
+  assert.equal(ui.get('#library-preview').children.length, 1);
+  assert.match(ui.get('#library-preview').children[0].textContent, /DRM Free Item/);
+
+  await ui.change('#library-filter-metadata', 'multi-origin');
+  assert.equal(ui.get('#library-preview').children.length, 1);
+  assert.match(ui.get('#library-preview').children[0].textContent, /Multi Origin Item.*2 purchase origins/);
+});
+
+test('options library sorting supports title A-Z, title Z-A, date newest, and date oldest', async () => {
+  const ui = await optionsHarness({
+    fanaticalLibraryItems: [
+      { ...item('Beta Game'), purchaseDate: '2026-01-15' },
+      { ...item('Alpha Game'), purchaseDate: '2026-08-20' },
+      { ...item('Gamma Game'), purchaseDate: null }
+    ]
+  });
+
+  // Default: title-asc
+  assert.deepEqual(
+    ui.get('#library-preview').children.map((r) => r.textContent.split(' — ')[0]),
+    ['Alpha Game', 'Beta Game', 'Gamma Game']
+  );
+
+  // title-desc
+  await ui.change('#library-sort', 'title-desc');
+  assert.deepEqual(
+    ui.get('#library-preview').children.map((r) => r.textContent.split(' — ')[0]),
+    ['Gamma Game', 'Beta Game', 'Alpha Game']
+  );
+  assert.match(ui.get('#preview-note').textContent, /reverse alphabetically/);
+
+  // date-desc (newest first, undated at end)
+  await ui.change('#library-sort', 'date-desc');
+  assert.deepEqual(
+    ui.get('#library-preview').children.map((r) => r.textContent.split(' — ')[0]),
+    ['Alpha Game', 'Beta Game', 'Gamma Game']
+  );
+  assert.match(ui.get('#preview-note').textContent, /by purchase date \(newest\)/);
+
+  // date-asc (oldest first, undated at end)
+  await ui.change('#library-sort', 'date-asc');
+  assert.deepEqual(
+    ui.get('#library-preview').children.map((r) => r.textContent.split(' — ')[0]),
+    ['Beta Game', 'Alpha Game', 'Gamma Game']
+  );
+  assert.match(ui.get('#preview-note').textContent, /by purchase date \(oldest\)/);
+});
+
+test('options library pagination handles selectable page sizes, previous/next, and out-of-bounds clamping', async () => {
+  const items = Array.from({ length: 55 }, (_, i) => item(`Product ${String(i).padStart(2, '0')}`, `prod-${i}`));
+  const ui = await optionsHarness({ fanaticalLibraryItems: items });
+
+  // Default: 50 items per page
+  assert.equal(ui.get('#library-preview').children.length, 50);
+  assert.equal(ui.get('#library-previous').disabled, true);
+  assert.equal(ui.get('#library-next').disabled, false);
+  assert.match(ui.get('#preview-note').textContent, /Showing 50 of 55 items \(page 1 of 2\)/);
+
+  await ui.click('#library-next');
+  assert.equal(ui.get('#library-preview').children.length, 5);
+  assert.equal(ui.get('#library-previous').disabled, false);
+  assert.equal(ui.get('#library-next').disabled, true);
+  assert.match(ui.get('#preview-note').textContent, /Showing 5 of 55 items \(page 2 of 2\)/);
+
+  await ui.click('#library-previous');
+  assert.equal(ui.get('#library-preview').children.length, 50);
+
+  // Change page size to 20
+  await ui.change('#library-page-size', '20');
+  assert.equal(ui.get('#library-preview').children.length, 20);
+  assert.match(ui.get('#preview-note').textContent, /Showing 20 of 55 items \(page 1 of 3\)/);
+
+  // Change page size to 100
+  await ui.change('#library-page-size', '100');
+  assert.equal(ui.get('#library-preview').children.length, 55);
+  assert.equal(ui.get('#library-previous').disabled, true);
+  assert.equal(ui.get('#library-next').disabled, true);
+});
+
+test('options library browser preserves state in sessionStorage and restores upon re-render', async () => {
+  const ui = await optionsHarness({
+    fanaticalLibraryItems: [
+      item('Alpha One'),
+      item('Beta Two'),
+      item('Gamma Three')
+    ]
+  });
+
+  await ui.input('#library-search', 'Two');
+  await ui.change('#library-sort', 'title-desc');
+  await ui.change('#library-page-size', '20');
+
+  // Verify sessionStorage has saved the state
+  const rawSession = ui.sessionData.get('fan_library_browser_state');
+  assert(rawSession);
+  const parsed = JSON.parse(rawSession);
+  assert.equal(parsed.search, 'Two');
+  assert.equal(parsed.sort, 'title-desc');
+  assert.equal(parsed.pageSize, 20);
+
+  // Re-render via LibraryBrowser.render
+  ui.context.LibraryBrowser.render();
+  assert.equal(ui.get('#library-preview').children.length, 1);
+  assert.equal(ui.get('#library-search').value, 'Two');
+  assert.equal(ui.get('#library-sort').value, 'title-desc');
+  assert.equal(ui.get('#library-page-size').value, '20');
 });

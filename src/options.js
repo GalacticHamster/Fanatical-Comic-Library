@@ -44,6 +44,237 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     for (const selector of ['#import-file', '#export', '#export-catalog', '#reset']) $(selector).disabled = busy;
   }
 
+  const STORAGE_KEY = 'fan_library_browser_state';
+  const defaultLibraryState = {
+    search: '',
+    media: '',
+    metadata: '',
+    sort: 'title-asc',
+    pageSize: 50,
+    page: 0
+  };
+
+  function loadLibraryState() {
+    try {
+      if (typeof sessionStorage !== 'undefined') {
+        const raw = sessionStorage.getItem(STORAGE_KEY);
+        if (raw) return { ...defaultLibraryState, ...JSON.parse(raw) };
+      }
+    } catch {}
+    return { ...defaultLibraryState };
+  }
+
+  function saveLibraryState(state) {
+    try {
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      }
+    } catch {}
+  }
+
+  const libraryBrowserState = loadLibraryState();
+
+  function getItemPurchaseDate(item) {
+    if (!item || typeof item !== 'object') return null;
+    const raw = item.purchaseDate || item.purchasedAt
+      || (Array.isArray(item.purchaseOrigins) && item.purchaseOrigins[0]?.purchaseDate)
+      || (Array.isArray(item.provenance) && (item.provenance[0]?.purchasedAt || item.provenance[0]?.purchaseDate));
+    if (!raw) return null;
+    const time = Date.parse(raw);
+    return Number.isFinite(time) ? time : null;
+  }
+
+  function formatPurchaseDate(timestamp) {
+    if (!timestamp) return '';
+    try {
+      return new Date(timestamp).toISOString().slice(0, 10);
+    } catch {
+      return '';
+    }
+  }
+
+  function filterAndSortLibrary(items, { search = '', media = '', metadata = '', sort = 'title-asc' } = {}) {
+    const collator = globalThis.LibraryTitleSort || new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+    let result = Array.isArray(items) ? [...items] : [];
+
+    if (search && search.trim()) {
+      const term = search.trim().toLowerCase();
+      result = result.filter((item) => {
+        const title = typeof item === 'string' ? item : (item.title || '');
+        return title.toLowerCase().includes(term);
+      });
+    }
+
+    if (media) {
+      const targetMedia = media.toLowerCase();
+      result = result.filter((item) => {
+        const kind = typeof item === 'string' ? 'game' : (item.mediaType || item.kind || 'game');
+        return kind.toLowerCase() === targetMedia;
+      });
+    }
+
+    if (metadata) {
+      result = result.filter((item) => {
+        if (metadata === 'dated') return getItemPurchaseDate(item) !== null;
+        if (metadata === 'bundle') return Boolean(typeof item === 'object' && (item.bundle?.title || item.sourceBundle));
+        if (metadata === 'steam') return typeof item === 'object' && (item.drm === 'steam' || Boolean(item.steamAppId) || Boolean(item.steamAppIds?.length) || (Array.isArray(item.keys) && item.keys.some(k => k.type === 'steam')));
+        if (metadata === 'drm-free') return typeof item === 'object' && (item.drm === 'drm-free' || item.drm === 'none' || Boolean(item.drmFree) || Boolean(item.downloads?.length));
+        if (metadata === 'multi-origin') return typeof item === 'object' && Array.isArray(item.purchaseOrigins) && item.purchaseOrigins.length > 1;
+        return true;
+      });
+    }
+
+    result.sort((a, b) => {
+      const titleA = typeof a === 'string' ? a : (a.title || '');
+      const titleB = typeof b === 'string' ? b : (b.title || '');
+
+      if (sort === 'title-desc') {
+        return collator.compare(titleB, titleA);
+      }
+      if (sort === 'date-desc') {
+        const dateA = getItemPurchaseDate(a);
+        const dateB = getItemPurchaseDate(b);
+        if (dateA !== null && dateB !== null) {
+          if (dateB !== dateA) return dateB - dateA;
+          return collator.compare(titleA, titleB);
+        }
+        if (dateA !== null) return -1;
+        if (dateB !== null) return 1;
+        return collator.compare(titleA, titleB);
+      }
+      if (sort === 'date-asc') {
+        const dateA = getItemPurchaseDate(a);
+        const dateB = getItemPurchaseDate(b);
+        if (dateA !== null && dateB !== null) {
+          if (dateA !== dateB) return dateA - dateB;
+          return collator.compare(titleA, titleB);
+        }
+        if (dateA !== null) return -1;
+        if (dateB !== null) return 1;
+        return collator.compare(titleA, titleB);
+      }
+      return collator.compare(titleA, titleB);
+    });
+
+    return result;
+  }
+
+  function renderLibraryRow(item) {
+    const row = document.createElement('li');
+    const bundle = typeof item === 'object' ? (item.bundle?.title || item.sourceBundle || '') : '';
+    const title = typeof item === 'string' ? item : (item.title || '');
+    let text = bundle ? `${title} — ${bundle}` : title;
+    if (item.purchaseOrigins?.length > 1) {
+      text += ` (${item.purchaseOrigins.length} purchase origins)`;
+    }
+    const date = getItemPurchaseDate(item);
+    const dateStr = formatPurchaseDate(date);
+    if (dateStr) text += ` · ${dateStr}`;
+    row.textContent = text;
+    return row;
+  }
+
+  let latestLibraryItems = [];
+
+  function renderLibraryBrowser(items = latestLibraryItems) {
+    latestLibraryItems = Array.isArray(items) ? items : [];
+    const preview = $('#library-preview');
+    if (!preview) return;
+
+    const librarySearch = $('#library-search');
+    const libraryFilterMedia = $('#library-filter-media');
+    const libraryFilterMetadata = $('#library-filter-metadata');
+    const librarySort = $('#library-sort');
+    const libraryPageSize = $('#library-page-size');
+    const libraryPrevious = $('#library-previous');
+    const libraryNext = $('#library-next');
+
+    if (librarySearch && librarySearch.value !== libraryBrowserState.search) librarySearch.value = libraryBrowserState.search;
+    if (libraryFilterMedia && libraryFilterMedia.value !== libraryBrowserState.media) libraryFilterMedia.value = libraryBrowserState.media;
+    if (libraryFilterMetadata && libraryFilterMetadata.value !== libraryBrowserState.metadata) libraryFilterMetadata.value = libraryBrowserState.metadata;
+    if (librarySort && librarySort.value !== libraryBrowserState.sort) librarySort.value = libraryBrowserState.sort;
+    if (libraryPageSize && Number(libraryPageSize.value) !== libraryBrowserState.pageSize) libraryPageSize.value = String(libraryBrowserState.pageSize);
+
+    const processed = filterAndSortLibrary(latestLibraryItems, {
+      search: libraryBrowserState.search,
+      media: libraryBrowserState.media,
+      metadata: libraryBrowserState.metadata,
+      sort: libraryBrowserState.sort
+    });
+
+    const pageSize = libraryBrowserState.pageSize || 50;
+    const totalPages = Math.max(1, Math.ceil(processed.length / pageSize));
+    libraryBrowserState.page = Math.max(0, Math.min(libraryBrowserState.page, totalPages - 1));
+    saveLibraryState(libraryBrowserState);
+
+    const start = libraryBrowserState.page * pageSize;
+    const pageItems = processed.slice(start, start + pageSize);
+
+    preview.start = start + 1;
+    preview.replaceChildren(...pageItems.map(renderLibraryRow));
+
+    if (libraryPrevious) libraryPrevious.disabled = libraryBrowserState.page === 0;
+    if (libraryNext) libraryNext.disabled = (libraryBrowserState.page + 1) * pageSize >= processed.length;
+
+    const note = $('#preview-note');
+    if (note) {
+      if (!latestLibraryItems.length) {
+        note.textContent = 'Your library is empty. Import purchases or restore a backup to see a preview.';
+      } else if (!processed.length) {
+        note.textContent = `No items match your search or filter criteria (0 of ${latestLibraryItems.length} items).`;
+      } else {
+        const pageInfo = totalPages > 1 ? ` (page ${libraryBrowserState.page + 1} of ${totalPages})` : '';
+        const filterInfo = processed.length !== latestLibraryItems.length ? ` (filtered from ${latestLibraryItems.length})` : '';
+        const sortLabel = libraryBrowserState.sort === 'date-desc' ? 'by purchase date (newest)'
+          : libraryBrowserState.sort === 'date-asc' ? 'by purchase date (oldest)'
+          : libraryBrowserState.sort === 'title-desc' ? 'reverse alphabetically'
+          : 'alphabetically';
+        note.textContent = `Showing ${pageItems.length} of ${processed.length} items${filterInfo}${pageInfo}, ${sortLabel}.`;
+      }
+    }
+  }
+
+  $('#library-search')?.addEventListener('input', () => {
+    libraryBrowserState.page = 0;
+    libraryBrowserState.search = $('#library-search').value;
+    saveLibraryState(libraryBrowserState);
+    renderLibraryBrowser();
+  });
+  $('#library-filter-media')?.addEventListener('change', () => {
+    libraryBrowserState.page = 0;
+    libraryBrowserState.media = $('#library-filter-media').value;
+    saveLibraryState(libraryBrowserState);
+    renderLibraryBrowser();
+  });
+  $('#library-filter-metadata')?.addEventListener('change', () => {
+    libraryBrowserState.page = 0;
+    libraryBrowserState.metadata = $('#library-filter-metadata').value;
+    saveLibraryState(libraryBrowserState);
+    renderLibraryBrowser();
+  });
+  $('#library-sort')?.addEventListener('change', () => {
+    libraryBrowserState.page = 0;
+    libraryBrowserState.sort = $('#library-sort').value;
+    saveLibraryState(libraryBrowserState);
+    renderLibraryBrowser();
+  });
+  $('#library-page-size')?.addEventListener('change', () => {
+    libraryBrowserState.page = 0;
+    libraryBrowserState.pageSize = Number($('#library-page-size').value) || 50;
+    saveLibraryState(libraryBrowserState);
+    renderLibraryBrowser();
+  });
+  $('#library-previous')?.addEventListener('click', () => {
+    libraryBrowserState.page--;
+    saveLibraryState(libraryBrowserState);
+    renderLibraryBrowser();
+  });
+  $('#library-next')?.addEventListener('click', () => {
+    libraryBrowserState.page++;
+    saveLibraryState(libraryBrowserState);
+    renderLibraryBrowser();
+  });
+
   async function refresh() {
     const {
       fanaticalImportSummary: summary = null,
@@ -71,11 +302,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     const counts = new Map();
     for (const item of items) counts.set(item.mediaType || 'other', (counts.get(item.mediaType || 'other') || 0) + 1);
     if (counts.size) $('#library-count').textContent += ` ${[...counts].sort().map(([kind, total]) => `${total} ${kind}`).join(', ')}.`;
-    const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
-    $('#library-preview').replaceChildren(...[...items].sort((a, b) => collator.compare(a.title, b.title)).slice(0, 50).map((item) => {
-      const row = document.createElement('li'); row.textContent = item.bundle?.title ? `${item.title} — ${item.bundle.title}` : item.title; if(item.purchaseOrigins?.length>1)row.textContent+=` (${item.purchaseOrigins.length} purchase origins)`; return row;
-    }));
-    $('#preview-note').textContent = items.length ? `Showing ${Math.min(50, items.length)} of ${items.length} items, alphabetically.` : 'Your library is empty. Import purchases or restore a backup to see a preview.';
+    renderLibraryBrowser(items);
   }
 
   $('#import-file').addEventListener('change', async () => {
@@ -181,5 +408,12 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
   });
 
   LibraryAccountProfiles.mount($('#account-profiles'),{request:mutate,keys:['fanaticalProfileLabel','fanaticalProfileArchives'],onActiveChange:()=>refresh().catch(()=>{})});
+  globalThis.LibraryBrowser = {
+    filterAndSortLibrary,
+    getItemPurchaseDate,
+    getState: () => ({ ...libraryBrowserState }),
+    setState: (next) => { Object.assign(libraryBrowserState, next); saveLibraryState(libraryBrowserState); renderLibraryBrowser(); },
+    render: () => renderLibraryBrowser()
+  };
   try { await refresh(); } catch { $('#local-status').textContent = 'Could not load local library settings. Reload this page and try again.'; }
 }());
