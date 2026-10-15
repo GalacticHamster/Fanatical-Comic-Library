@@ -76,12 +76,23 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
 
   function getItemPurchaseDate(item) {
     if (!item || typeof item !== 'object') return null;
-    const raw = item.purchaseDate || item.purchasedAt
-      || (Array.isArray(item.purchaseOrigins) && item.purchaseOrigins[0]?.purchaseDate)
-      || (Array.isArray(item.provenance) && (item.provenance[0]?.purchasedAt || item.provenance[0]?.purchaseDate));
-    if (!raw) return null;
-    const time = Date.parse(raw);
-    return Number.isFinite(time) ? time : null;
+    let latest = null;
+    const directRaw = item.purchaseDate || item.purchasedAt;
+    if (directRaw) {
+      const time = Date.parse(directRaw);
+      if (Number.isFinite(time)) latest = time;
+    }
+    const list = Array.isArray(item.purchaseOrigins) ? item.purchaseOrigins : (Array.isArray(item.provenance) ? item.provenance : []);
+    for (const rec of list) {
+      const raw = rec?.purchaseDate || rec?.purchasedAt;
+      if (raw) {
+        const time = Date.parse(raw);
+        if (Number.isFinite(time) && (latest === null || time > latest)) {
+          latest = time;
+        }
+      }
+    }
+    return latest;
   }
 
   function formatPurchaseDate(timestamp) {
@@ -132,10 +143,36 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     return true;
   }
 
+  function parseRecordTimestamp(record) {
+    if (!record || typeof record !== 'object') return null;
+    const raw = record.purchaseDate || record.purchasedAt;
+    if (!raw) return null;
+    const time = Date.parse(raw);
+    return Number.isFinite(time) ? time : null;
+  }
+
+  function sortOriginRecords(records) {
+    return [...records].sort((a, b) => {
+      const timeA = parseRecordTimestamp(a);
+      const timeB = parseRecordTimestamp(b);
+      if (timeA !== null && timeB !== null) {
+        if (timeB !== timeA) return timeB - timeA;
+        const bundleA = (a.bundle?.title || a.sourceBundle || '').trim();
+        const bundleB = (b.bundle?.title || b.sourceBundle || '').trim();
+        return bundleA.localeCompare(bundleB);
+      }
+      if (timeA !== null) return -1;
+      if (timeB !== null) return 1;
+      const bundleA = (a.bundle?.title || a.sourceBundle || '').trim();
+      const bundleB = (b.bundle?.title || b.sourceBundle || '').trim();
+      return bundleA.localeCompare(bundleB);
+    });
+  }
+
   function extractItemOrigins(item) {
     if (!item || typeof item !== 'object') return [];
     if (Array.isArray(item.purchaseOrigins) && item.purchaseOrigins.length > 0) {
-      return item.purchaseOrigins.map((o) => ({
+      return sortOriginRecords(item.purchaseOrigins.map((o) => ({
         bundle: {
           sourceItemId: o.bundle?.sourceItemId || '',
           title: o.bundle?.title || item.bundle?.title || '',
@@ -147,7 +184,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
         drm: Array.isArray(o.drm) ? o.drm : (Array.isArray(item.drm) ? item.drm : (typeof item.drm === 'string' ? [item.drm] : [])),
         platforms: Array.isArray(o.platforms) ? o.platforms : (Array.isArray(item.platforms) ? item.platforms : []),
         formats: Array.isArray(o.formats) ? o.formats : (Array.isArray(item.formats) ? item.formats : [])
-      }));
+      })));
     }
     const bundleTitle = item.bundle?.title || item.sourceBundle || '';
     const bundleId = item.bundle?.sourceItemId || '';
@@ -197,14 +234,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
         });
       }
     }
-    return [...merged.values()].sort((a, b) => {
-      const timeA = a.purchaseDate ? Date.parse(a.purchaseDate) : 0;
-      const timeB = b.purchaseDate ? Date.parse(b.purchaseDate) : 0;
-      if (timeA && timeB && timeA !== timeB) return timeB - timeA;
-      if (timeA && !timeB) return -1;
-      if (!timeA && timeB) return 1;
-      return (a.bundle?.title || '').localeCompare(b.bundle?.title || '');
-    });
+    return sortOriginRecords([...merged.values()]);
   }
 
   function consolidateFanaticalItemInto(target, incoming) {
@@ -353,30 +383,38 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
 
   function renderLibraryRow(item) {
     const row = document.createElement('li');
-    const bundle = typeof item === 'object' ? (item.bundle?.title || item.sourceBundle || '') : '';
+    row.className = 'library-item';
+
     const title = typeof item === 'string' ? item : (item.title || '');
-    let text = bundle ? `${title} — ${bundle}` : title;
-    const origins = extractItemOrigins(item);
-    if (origins.length > 1) {
-      text += ` (${origins.length} purchase origins)`;
+    const origins = sortOriginRecords(extractItemOrigins(item));
+
+    const distinctBundles = new Set();
+    for (const origin of origins) {
+      const bTitle = (origin.bundle?.title || origin.sourceBundle || '').trim();
+      if (bTitle) distinctBundles.add(bTitle);
     }
-    const date = getItemPurchaseDate(item);
-    const dateStr = formatPurchaseDate(date);
-    if (dateStr) text += ` · ${dateStr}`;
-    row.textContent = text;
+
+    let summarySuffix = '';
+    if (distinctBundles.size === 1) {
+      summarySuffix = ' — in 1 bundle';
+    } else if (distinctBundles.size > 1) {
+      summarySuffix = ` — in ${distinctBundles.size} bundles`;
+    } else if (origins.length === 1) {
+      summarySuffix = ' — single purchase';
+    } else if (origins.length > 1) {
+      summarySuffix = ` — ${origins.length} purchase origins`;
+    } else {
+      summarySuffix = ' — manual entry';
+    }
+
+    const headerText = `${title}${summarySuffix}`;
 
     const details = document.createElement('details');
     details.className = 'library-item-details';
+
     const summary = document.createElement('summary');
     summary.className = 'library-item-summary';
-
-    if (origins.length > 1) {
-      summary.textContent = `View all ${origins.length} purchase origins`;
-    } else if (origins.length === 1) {
-      summary.textContent = 'View purchase details';
-    } else {
-      summary.textContent = 'Provenance details';
-    }
+    summary.textContent = headerText;
     details.append(summary);
 
     if (origins.length > 0) {
@@ -385,7 +423,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
       for (const origin of origins) {
         const li = document.createElement('li');
         const parts = [];
-        const bTitle = origin.bundle?.title || bundle;
+        const bTitle = origin.bundle?.title || origin.sourceBundle || '';
         if (bTitle) parts.push(`Bundle: ${bTitle}`);
         const pDate = formatPurchaseDate(origin.purchaseDate);
         if (pDate) parts.push(`Purchased: ${pDate}`);
@@ -404,6 +442,17 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     }
 
     row.append(details);
+
+    try {
+      Object.defineProperty(row, 'textContent', {
+        get() { return summary.textContent; },
+        set(val) { summary.textContent = val; },
+        configurable: true
+      });
+    } catch {
+      row.textContent = headerText;
+    }
+
     return row;
   }
 

@@ -49,7 +49,7 @@ async function optionsHarness(initial = {}) {
 test('options preview is bounded, naturally ordered, and displays bundle provenance safely', async () => {
   const ui = await optionsHarness({ fanaticalLibraryItems: [item('Comic #10'), item('Comic #2'), ...Array.from({ length: 50 }, (_, index) => item(`Z ${index}`))] });
   assert.equal(ui.get('#library-preview').children.length, 50);
-  assert.deepEqual(ui.get('#library-preview').children.slice(0, 2).map((row) => row.textContent), ['Comic #2 — Test bundle', 'Comic #10 — Test bundle']);
+  assert.deepEqual(ui.get('#library-preview').children.slice(0, 2).map((row) => row.textContent), ['Comic #2 — in 1 bundle', 'Comic #10 — in 1 bundle']);
   assert.match(ui.get('#preview-note').textContent, /50 of 52/);
   assert.equal(ui.get('#fanatical-extension-id').textContent, 'a'.repeat(32));
 });
@@ -75,7 +75,7 @@ test('confirmed restore updates the preview and resets scan history while preser
   assert.equal(ui.stored.fanaticalLastScanAttempt, null);
   assert.equal(ui.stored.galacticLibraryExtensionId, 'b'.repeat(32));
   assert.equal(ui.stored.fanaticalShowDiagnostics, true);
-  assert.equal(ui.get('#library-preview').children[0].textContent, 'Restored — Test bundle');
+  assert.equal(ui.get('#library-preview').children[0].textContent, 'Restored — in 1 bundle');
 });
 
 test('options disclose incomplete coverage while retaining the last successful scan and library preview', async () => {
@@ -158,7 +158,7 @@ test('options library search filters items by title case-insensitively', async (
   assert.equal(ui.get('#library-preview').children.length, 3);
   await ui.input('#library-search', 'beta');
   assert.equal(ui.get('#library-preview').children.length, 1);
-  assert.equal(ui.get('#library-preview').children[0].textContent, 'Beta Guide — Test bundle');
+  assert.equal(ui.get('#library-preview').children[0].textContent, 'Beta Guide — in 1 bundle');
   assert.match(ui.get('#preview-note').textContent, /Showing 1 of 1 items \(filtered from 3\)/);
 
   await ui.input('#library-search', 'NOMATCH');
@@ -214,7 +214,8 @@ test('options library metadata filter isolates dated, bundle, steam, drm-free, a
 
   await ui.change('#library-filter-metadata', 'dated');
   assert.equal(ui.get('#library-preview').children.length, 1);
-  assert.match(ui.get('#library-preview').children[0].textContent, /Dated Item.*2026-05-01/);
+  assert.equal(ui.get('#library-preview').children[0].textContent, 'Dated Item — in 1 bundle');
+  assert.match(ui.get('#library-preview').children[0].children[0].children[1].children[0].textContent, /2026-05-01/);
 
   await ui.change('#library-filter-metadata', 'bundle');
   assert.equal(ui.get('#library-preview').children.length, 4);
@@ -229,7 +230,8 @@ test('options library metadata filter isolates dated, bundle, steam, drm-free, a
 
   await ui.change('#library-filter-metadata', 'multi-origin');
   assert.equal(ui.get('#library-preview').children.length, 1);
-  assert.match(ui.get('#library-preview').children[0].textContent, /Multi Origin Item.*2 purchase origins/);
+  assert.equal(ui.get('#library-preview').children[0].textContent, 'Multi Origin Item — in 1 bundle');
+  assert.equal(ui.get('#library-preview').children[0].children[0].children[1].children.length, 2);
 });
 
 test('options library sorting supports title A-Z, title Z-A, date newest, and date oldest', async () => {
@@ -374,7 +376,7 @@ test('exact duplicate library items consolidate into one row with expandable pro
   // Both purchases consolidate into 1 exact library row
   assert.equal(preview.children.length, 1);
   const row = preview.children[0];
-  assert.match(row.textContent, /Exact Game — Second Bundle \(2 purchase origins\) · 2026-06-20/);
+  assert.equal(row.textContent, 'Exact Game — in 2 bundles');
 
   // Expandable details element
   assert.equal(row.children.length, 1);
@@ -382,7 +384,7 @@ test('exact duplicate library items consolidate into one row with expandable pro
   assert.equal(details.className, 'library-item-details');
   const summary = details.children[0];
   assert.equal(summary.className, 'library-item-summary');
-  assert.equal(summary.textContent, 'View all 2 purchase origins');
+  assert.equal(summary.textContent, 'Exact Game — in 2 bundles');
 
   // Provenance list shows both individual purchases ordered newest first
   const list = details.children[1];
@@ -390,6 +392,81 @@ test('exact duplicate library items consolidate into one row with expandable pro
   assert.equal(list.children.length, 2);
   assert.match(list.children[0].textContent, /Bundle: Second Bundle · Purchased: 2026-06-20 · Qty: 2 · Ref: b{16}… · DRM: steam/);
   assert.match(list.children[1].textContent, /Bundle: First Bundle · Purchased: 2026-01-15 · Ref: a{16}… · DRM: steam/);
+});
+
+test('distinct bundle counting preserves repeated purchases from the same bundle', async () => {
+  const ui = await optionsHarness({
+    fanaticalLibraryItems: [
+      {
+        source: 'fanatical',
+        sourceItemId: 'p-1',
+        title: 'Saga Vol. 1',
+        mediaType: 'book',
+        bundle: { title: 'Comic Legends Bundle' },
+        purchaseDate: '2022-03-01T00:00:00Z',
+        purchaseRef: 'a'.repeat(64),
+        quantity: 1
+      },
+      {
+        source: 'fanatical',
+        sourceItemId: 'p-1',
+        title: 'Saga Vol. 1',
+        mediaType: 'book',
+        bundle: { title: 'Comic Legends Bundle' },
+        purchaseDate: '2024-08-15T00:00:00Z',
+        purchaseRef: 'b'.repeat(64),
+        quantity: 1
+      }
+    ]
+  });
+
+  const preview = ui.get('#library-preview');
+  assert.equal(preview.children.length, 1);
+  const row = preview.children[0];
+  // Since both purchases are from the same bundle, count is 1 bundle
+  assert.equal(row.textContent, 'Saga Vol. 1 — in 1 bundle');
+
+  // Both individual purchases remain accessible in expanded details
+  const details = row.children[0];
+  const list = details.children[1];
+  assert.equal(list.children.length, 2);
+  assert.match(list.children[0].textContent, /Purchased: 2024-08-15/);
+  assert.match(list.children[1].textContent, /Purchased: 2022-03-01/);
+});
+
+test('purchase history sorting orders purchases newest first with undated records last', async () => {
+  const ui = await optionsHarness({
+    fanaticalLibraryItems: [
+      {
+        source: 'fanatical',
+        sourceItemId: 'p-multi',
+        title: 'Saga Vol. 1',
+        mediaType: 'book',
+        purchaseOrigins: [
+          { bundle: { title: 'Bundle 2022 A' }, purchaseDate: '2022-01-10T00:00:00Z', purchaseRef: 'ref-1' },
+          { bundle: { title: 'Bundle 2025' }, purchaseDate: '2025-06-01T00:00:00Z', purchaseRef: 'ref-2' },
+          { bundle: { title: 'Bundle 2022 B' }, purchaseDate: '2022-09-15T00:00:00Z', purchaseRef: 'ref-3' },
+          { bundle: { title: 'Bundle 2023' }, purchaseDate: '2023-11-20T00:00:00Z', purchaseRef: 'ref-4' },
+          { bundle: { title: 'Undated Bundle' }, purchaseDate: null, purchaseRef: 'ref-5' }
+        ]
+      }
+    ]
+  });
+
+  const preview = ui.get('#library-preview');
+  assert.equal(preview.children.length, 1);
+  const row = preview.children[0];
+  assert.equal(row.textContent, 'Saga Vol. 1 — in 5 bundles');
+
+  const list = row.children[0].children[1];
+  assert.equal(list.children.length, 5);
+  // Newest first: 2025, 2023, 2022-09, 2022-01, undated last
+  assert.match(list.children[0].textContent, /Bundle: Bundle 2025 · Purchased: 2025-06-01/);
+  assert.match(list.children[1].textContent, /Bundle: Bundle 2023 · Purchased: 2023-11-20/);
+  assert.match(list.children[2].textContent, /Bundle: Bundle 2022 B · Purchased: 2022-09-15/);
+  assert.match(list.children[3].textContent, /Bundle: Bundle 2022 A · Purchased: 2022-01-10/);
+  assert.match(list.children[4].textContent, /Bundle: Undated Bundle/);
+  assert.doesNotMatch(list.children[4].textContent, /Purchased:/);
 });
 
 test('different editions, versions, and volumes remain separate and are not consolidated', async () => {
@@ -424,9 +501,10 @@ test('incomplete or missing provenance is handled gracefully', async () => {
 
   const manualRow = preview.children.find((r) => r.textContent.includes('Manual Book Without Provenance'));
   assert(manualRow);
+  assert.equal(manualRow.textContent, 'Manual Book Without Provenance — manual entry');
   const manualDetails = manualRow.children[0];
   assert.equal(manualDetails.className, 'library-item-details');
-  assert.equal(manualDetails.children[0].textContent, 'Provenance details');
+  assert.equal(manualDetails.children[0].textContent, 'Manual Book Without Provenance — manual entry');
   assert.equal(manualDetails.children[1].textContent, 'No bundle or purchase record stored.');
 });
 
