@@ -16,17 +16,56 @@ function purchaseOrigins(value,strict=false){
   return value.map(origin=>{
     if(!origin||typeof origin!=='object'||origin.purchaseRef!==undefined&&origin.purchaseRef!==null&&!/^[a-f0-9]{64}$/iu.test(origin.purchaseRef)||!Number.isSafeInteger(origin.quantity??1)||(origin.quantity??1)<1||(origin.quantity??1)>100000)throw new Error('Invalid purchase origin.');
     if(strict&&(origin.bundle?.sourceItemId&&!safeId(origin.bundle.sourceItemId)||origin.purchaseDate!=null&&!safeDate(origin.purchaseDate)))throw new Error('Invalid purchase provenance.');
-    return {...(origin.purchaseRef?{purchaseRef:origin.purchaseRef.toLowerCase()}:{}),bundle:{sourceItemId:safeId(origin.bundle?.sourceItemId),title:safeText(origin.bundle?.title),...(safeText(origin.bundle?.slug,300)?{slug:safeText(origin.bundle.slug,300)}:{})},purchaseDate:safeDate(origin.purchaseDate),quantity:origin.quantity??1};
+    return {
+      ...(origin.purchaseRef?{purchaseRef:origin.purchaseRef.toLowerCase()}:{}),
+      bundle:{sourceItemId:safeId(origin.bundle?.sourceItemId),title:safeText(origin.bundle?.title),...(safeText(origin.bundle?.slug,300)?{slug:safeText(origin.bundle.slug,300)}:{})},
+      purchaseDate:safeDate(origin.purchaseDate),
+      quantity:origin.quantity??1,
+      ...(origin.delivery ? { delivery: safeText(origin.delivery) } : {}),
+      ...(origin.streaming ? { streaming: true } : {}),
+      ...(Array.isArray(origin.drm) && origin.drm.length ? { drm: safeList(origin.drm) } : {}),
+      ...(Array.isArray(origin.platforms) && origin.platforms.length ? { platforms: safeList(origin.platforms) } : {}),
+      ...(Array.isArray(origin.formats) ? { formats: safeList(origin.formats) } : {})
+    };
   });
 }
 function mergeProduct(previous,incoming){
   if(!previous)return incoming;
   const origins=new Map();
-  for(const item of [previous,incoming])for(const origin of item.purchaseOrigins??[{bundle:item.bundle,purchaseDate:item.purchaseDate,quantity:1}]){
-    const key=origin.purchaseRef?JSON.stringify([origin.purchaseRef,origin.bundle.sourceItemId]):JSON.stringify(['legacy',origin.bundle.sourceItemId,origin.bundle.title,origin.purchaseDate]);origins.set(key,origin);
+  for(const item of [previous,incoming])for(const origin of item.purchaseOrigins??[{bundle:item.bundle,purchaseDate:item.purchaseDate,quantity:1,delivery:item.delivery,streaming:item.streaming,formats:item.formats}]){
+    const key=origin.purchaseRef?JSON.stringify([origin.purchaseRef,origin.bundle?.sourceItemId]):JSON.stringify(['legacy',origin.bundle?.sourceItemId,origin.bundle?.title,origin.purchaseDate]);
+    const prev = origins.get(key);
+    if (!prev) {
+      origins.set(key, origin);
+    } else {
+      const combinedFormats = Array.isArray(prev.formats) || Array.isArray(origin.formats)
+        ? [...new Set([...(prev.formats || []), ...(origin.formats || [])])].sort()
+        : undefined;
+      const mergedDelivery = origin.delivery || prev.delivery;
+      const mergedStreaming = Boolean(origin.streaming || prev.streaming);
+      origins.set(key, {
+        ...prev,
+        ...origin,
+        quantity: Math.max(prev.quantity || 1, origin.quantity || 1),
+        ...(mergedDelivery ? { delivery: mergedDelivery } : {}),
+        ...(mergedStreaming ? { streaming: true } : {}),
+        ...(combinedFormats !== undefined ? { formats: combinedFormats } : {})
+      });
+    }
   }
   const latest=Date.parse(previous.purchaseDate)>Date.parse(incoming.purchaseDate)?previous:incoming;
-  return {...latest,purchaseOrigins:[...origins.values()]};
+  const combinedFormats = Array.isArray(previous.formats) || Array.isArray(incoming.formats)
+    ? [...new Set([...(previous.formats || []), ...(incoming.formats || [])])].sort()
+    : undefined;
+  const mergedDelivery = incoming.delivery || previous.delivery || latest.delivery;
+  const mergedStreaming = Boolean(incoming.streaming || previous.streaming || latest.streaming);
+  return {
+    ...latest,
+    ...(mergedDelivery ? { delivery: mergedDelivery } : {}),
+    ...(mergedStreaming ? { streaming: true } : {}),
+    ...(combinedFormats !== undefined ? { formats: combinedFormats } : {}),
+    purchaseOrigins:[...origins.values()]
+  };
 }
 export function mergeLibraryItems(items){return sanitizeImportResult({items}).items;}
 
@@ -54,7 +93,7 @@ export function sanitizeImportResult(value) {
       ...globalThis.FanaticalLibrary.contentsMetadata(candidate),
       ...(safeList(candidate?.drm).length ? { drm: safeList(candidate.drm) } : {}),
       ...(safeList(candidate?.platforms).length ? { platforms: safeList(candidate.platforms) } : {}),
-      ...(safeList(candidate?.formats).length ? { formats: safeList(candidate.formats) } : {}),
+      ...(Array.isArray(candidate?.formats) ? { formats: safeList(candidate.formats) } : {}),
       bundle: { sourceItemId: safeId(candidate?.bundle?.sourceItemId), title: safeText(candidate?.bundle?.title), ...(safeText(candidate?.bundle?.slug, 300) ? { slug: safeText(candidate.bundle.slug, 300) } : {}) },
       purchaseDate: safeDate(candidate?.purchaseDate),
       ...(candidate.purchaseOrigins!==undefined?{purchaseOrigins:purchaseOrigins(candidate.purchaseOrigins)}:{})
@@ -88,6 +127,12 @@ export function parseLibraryBackup(value) {
   }
   if (value.rejectedPurchaseItems !== undefined) {
     if (!Array.isArray(value.rejectedPurchaseItems) || value.rejectedPurchaseItems.length > 50000) throw new Error('Invalid backup rejected items.');
+    value.rejectedPurchaseItems = value.rejectedPurchaseItems.map(item => ({
+      ...item,
+      sourceItemId: typeof item.sourceItemId === 'string' && item.sourceItemId.length <= 128 ? item.sourceItemId : (safeId(item.sourceItemId) || `fan_rej_${safeText(item.title, 50)}`),
+      title: safeText(item.title),
+      ...(Array.isArray(item.formats) ? { formats: safeList(item.formats) } : {})
+    }));
   }
   return sanitizeImportResult(value).items;
 }

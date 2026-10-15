@@ -196,12 +196,14 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
         quantity: o.quantity || 1,
         drm: Array.isArray(o.drm) ? o.drm : (Array.isArray(item.drm) ? item.drm : (typeof item.drm === 'string' ? [item.drm] : [])),
         platforms: Array.isArray(o.platforms) ? o.platforms : (Array.isArray(item.platforms) ? item.platforms : []),
-        formats: Array.isArray(o.formats) ? o.formats : (Array.isArray(item.formats) ? item.formats : [])
+        formats: Array.isArray(o.formats) ? o.formats : (Array.isArray(item.formats) ? item.formats : undefined),
+        delivery: o.delivery || item.delivery || '',
+        streaming: Boolean(o.streaming || item.streaming)
       })));
     }
     const bundleTitle = item.bundle?.title || item.sourceBundle || '';
     const bundleId = item.bundle?.sourceItemId || '';
-    if (bundleTitle || item.purchaseDate || item.purchaseRef || item.drm) {
+    if (bundleTitle || item.purchaseDate || item.purchaseRef || item.drm || item.delivery || item.streaming || item.formats !== undefined) {
       const drmList = Array.isArray(item.drm) ? item.drm : (typeof item.drm === 'string' ? [item.drm] : []);
       return [{
         bundle: {
@@ -214,7 +216,9 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
         quantity: item.quantity || 1,
         drm: drmList,
         platforms: Array.isArray(item.platforms) ? item.platforms : [],
-        formats: Array.isArray(item.formats) ? item.formats : []
+        formats: Array.isArray(item.formats) ? item.formats : undefined,
+        delivery: item.delivery || '',
+        streaming: Boolean(item.streaming)
       }];
     }
     return [];
@@ -234,6 +238,9 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
         merged.set(key, origin);
       } else {
         const prev = merged.get(key);
+        const combinedFormats = Array.isArray(prev.formats) || Array.isArray(origin.formats)
+          ? [...new Set([...(prev.formats || []), ...(origin.formats || [])])].sort()
+          : undefined;
         merged.set(key, {
           ...prev,
           ...origin,
@@ -243,7 +250,10 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
             slug: prev.bundle?.slug || origin.bundle?.slug || ''
           },
           purchaseDate: prev.purchaseDate || origin.purchaseDate,
-          quantity: Math.max(prev.quantity || 1, origin.quantity || 1)
+          quantity: Math.max(prev.quantity || 1, origin.quantity || 1),
+          delivery: origin.delivery || prev.delivery || '',
+          streaming: Boolean(origin.streaming || prev.streaming),
+          ...(combinedFormats !== undefined ? { formats: combinedFormats } : {})
         });
       }
     }
@@ -268,18 +278,22 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     const combinedDrm = [...new Set([...targetDrm, ...incomingDrm])];
 
     const combinedPlatforms = [...new Set([...(targetObj.platforms || []), ...(incomingObj.platforms || [])])];
-    const combinedFormats = [...new Set([...(targetObj.formats || []), ...(incomingObj.formats || [])])];
+    const combinedFormats = Array.isArray(targetObj.formats) || Array.isArray(incomingObj.formats)
+      ? [...new Set([...(targetObj.formats || []), ...(incomingObj.formats || [])])].sort()
+      : undefined;
 
     return {
       ...targetObj,
       ...(useIncomingDate ? incomingObj : {}),
+      ...(combinedFormats !== undefined ? { formats: combinedFormats } : {}),
       sourceItemId: targetObj.sourceItemId || incomingObj.sourceItemId,
       bundle: latestOrigin?.bundle || targetObj.bundle || incomingObj.bundle || { sourceItemId: '', title: '' },
       purchaseDate: latestOrigin?.purchaseDate || (useIncomingDate ? incomingObj.purchaseDate : targetObj.purchaseDate) || null,
       purchaseOrigins: allOrigins,
+      delivery: targetObj.delivery || incomingObj.delivery || latestOrigin?.delivery || '',
+      streaming: Boolean(targetObj.streaming || incomingObj.streaming || latestOrigin?.streaming),
       ...(combinedDrm.length ? { drm: combinedDrm } : {}),
-      ...(combinedPlatforms.length ? { platforms: combinedPlatforms } : {}),
-      ...(combinedFormats.length ? { formats: combinedFormats } : {})
+      ...(combinedPlatforms.length ? { platforms: combinedPlatforms } : {})
     };
   }
 
@@ -472,13 +486,19 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
           secondaryParts.push(origin.delivery);
         }
 
-        const formats = Array.isArray(origin.formats) && origin.formats.length > 0
+        const formats = Array.isArray(origin.formats)
           ? origin.formats
-          : (Array.isArray(item.formats) && item.formats.length > 0 ? item.formats : []);
-        if (formats.length > 0) {
-          secondaryParts.push(`Formats: ${formats.map(f => f.startsWith('.') ? f : '.' + f).join(', ')}`);
-        } else if (origin.delivery === 'direct-download' || item.delivery === 'direct-download' || (item.mediaType === 'unclassified' || item.kind === 'unclassified')) {
-          secondaryParts.push('File formats unavailable');
+          : (Array.isArray(item.formats) ? item.formats : null);
+        if (formats && formats.length > 0) {
+          secondaryParts.push(`Formats: ${formats.map(f => f.startsWith('.') ? f : (/^[a-z0-9]{2,10}$/iu.test(f) ? '.' + f.toLowerCase() : f)).join(', ')}`);
+        } else if (formats && formats.length === 0) {
+          if (origin.delivery !== 'streaming' && !origin.streaming && origin.delivery !== 'external-key' && (!origin.drm || !origin.drm.includes('steam'))) {
+            secondaryParts.push('No file formats in purchase metadata');
+          }
+        } else if (formats === null) {
+          if (origin.delivery !== 'streaming' && !origin.streaming && origin.delivery !== 'external-key' && (!origin.drm || !origin.drm.includes('steam'))) {
+            secondaryParts.push('Format details require library rescan');
+          }
         }
 
         if (secondaryParts.length > 0) {
@@ -786,9 +806,12 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
         titleSpan.textContent = rec.title;
         const metaSpan = document.createElement('span');
         metaSpan.className = 'library-rejected-meta';
-        const formatsText = Array.isArray(rec.formats) && rec.formats.length > 0
-          ? `Formats: ${rec.formats.map(f => f.startsWith('.') ? f : '.' + f).join(', ')}`
-          : (rec.delivery === 'direct-download' ? 'File formats unavailable' : '');
+        const rejFormats = Array.isArray(rec.formats) ? rec.formats : null;
+        const formatsText = rejFormats && rejFormats.length > 0
+          ? `Formats: ${rejFormats.map(f => f.startsWith('.') ? f : (/^[a-z0-9]{2,10}$/iu.test(f) ? '.' + f.toLowerCase() : f)).join(', ')}`
+          : rejFormats && rejFormats.length === 0
+          ? (rec.delivery === 'direct-download' ? 'No file formats in purchase metadata' : '')
+          : (rec.delivery === 'direct-download' ? 'Format details require library rescan' : '');
         const deliveryText = rec.delivery === 'streaming' ? 'Streaming' : (rec.delivery === 'direct-download' ? 'Direct download' : (rec.delivery === 'external-key' ? 'External key' : ''));
         const parts = [
           rec.sourceBundle || rec.bundle?.title ? `Bundle: ${rec.sourceBundle || rec.bundle?.title}` : '',
@@ -956,6 +979,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
 
   LibraryAccountProfiles.mount($('#account-profiles'),{request:mutate,keys:['fanaticalProfileLabel','fanaticalProfileArchives'],onActiveChange:()=>refresh().catch(()=>{})});
   globalThis.LibraryBrowser = {
+    consolidateFanaticalItemInto,
     filterAndSortLibrary,
     getItemPurchaseDate,
     getState: () => ({ ...libraryBrowserState }),

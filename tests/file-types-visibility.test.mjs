@@ -126,11 +126,11 @@ test('Fanatical file-type extraction: extracts distinct download formats from so
   assert.equal(item.mediaType, 'software');
 });
 
-test('Fanatical options: displays formats and missing format indicator in expanded item details', async () => {
+test('Fanatical options: displays formats and distinct explanations for missing formats in expanded item details', async () => {
   const itemWithFormats = {
     source: 'fanatical',
     sourceItemId: 'item_with_formats',
-    title: 'Multi-Format Comic',
+    title: 'A - Multi-Format Comic',
     mediaType: 'comic',
     delivery: 'direct-download',
     formats: ['pdf', 'epub', 'cbz'],
@@ -141,7 +141,7 @@ test('Fanatical options: displays formats and missing format indicator in expand
   const itemWithoutFormats = {
     source: 'fanatical',
     sourceItemId: 'item_unclassified_no_formats',
-    title: 'Unknown Digital Pack',
+    title: 'B - Unknown Digital Pack',
     mediaType: 'unclassified',
     delivery: 'direct-download',
     formats: [],
@@ -149,12 +149,33 @@ test('Fanatical options: displays formats and missing format indicator in expand
     purchaseDate: '2026-03-02T00:00:00.000Z'
   };
 
+  const itemLegacyUnscanned = {
+    source: 'fanatical',
+    sourceItemId: 'item_legacy_unscanned',
+    title: 'C - Legacy Book Without Format Scan',
+    mediaType: 'book',
+    delivery: 'direct-download',
+    bundle: { title: 'Old Book Bundle' },
+    purchaseDate: '2025-01-01T00:00:00.000Z'
+  };
+
+  const itemExternalKey = {
+    source: 'fanatical',
+    sourceItemId: 'item_external_key',
+    title: 'D - Steam Game Pack',
+    mediaType: 'game',
+    delivery: 'external-key',
+    drm: ['steam'],
+    bundle: { title: 'Game Bundle' },
+    purchaseDate: '2026-03-03T00:00:00.000Z'
+  };
+
   const ui = await createOptionsHarness({
-    fanaticalLibraryItems: [itemWithFormats, itemWithoutFormats]
+    fanaticalLibraryItems: [itemWithFormats, itemWithoutFormats, itemLegacyUnscanned, itemExternalKey]
   });
 
   const preview = ui.get('#library-preview');
-  assert.equal(preview.children.length, 2);
+  assert.equal(preview.children.length, 4);
 
   // Check item 1 with formats
   const row1 = preview.children[0];
@@ -163,12 +184,26 @@ test('Fanatical options: displays formats and missing format indicator in expand
   assert.match(sec1.textContent, /Direct download/);
   assert.match(sec1.textContent, /Formats: \.pdf, \.epub, \.cbz/);
 
-  // Check item 2 without formats (explicit "File formats unavailable")
+  // Check item 2 with empty formats (genuinely format-less download)
   const row2 = preview.children[1];
   const sec2 = row2.children[0].children[1].children[0].children.find(c => c.className === 'library-provenance-secondary');
   assert(sec2, 'row2 secondary details must exist');
   assert.match(sec2.textContent, /Direct download/);
-  assert.match(sec2.textContent, /File formats unavailable/);
+  assert.match(sec2.textContent, /No file formats in purchase metadata/);
+
+  // Check item 3 legacy record predating format extraction
+  const row3 = preview.children[2];
+  const sec3 = row3.children[0].children[1].children[0].children.find(c => c.className === 'library-provenance-secondary');
+  assert(sec3, 'row3 secondary details must exist');
+  assert.match(sec3.textContent, /Direct download/);
+  assert.match(sec3.textContent, /Format details require library rescan/);
+
+  // Check item 4 external key
+  const row4 = preview.children[3];
+  const sec4 = row4.children[0].children[1].children[0].children.find(c => c.className === 'library-provenance-secondary');
+  assert(sec4, 'row4 secondary details must exist');
+  assert.match(sec4.textContent, /External key/);
+  assert.ok(!sec4.textContent.includes('formats'), 'external keys do not show format missing message');
 });
 
 test('Fanatical options: manual media-type override and reset to automatic', async () => {
@@ -342,4 +377,91 @@ test('Fanatical backup/restore: preserves mediaTypeOverrides and rejectedPurchas
   assert.deepEqual(restored.mediaTypeOverrides, overrides);
   assert.deepEqual(restored.rejectedPurchaseItems, rejected);
   assert.equal(restored.fanaticalLibraryItems[0].title, 'Custom Classified Book');
+});
+
+
+test('Fanatical realistic multi-format extraction and preservation across provenance merges and consolidation', async () => {
+  const orderSummary = [{ _id: 'order-nested-1', status: 'COMPLETE' }];
+  const orderDetail = [{
+    _id: 'order-nested-1',
+    status: 'COMPLETE',
+    date: '2026-03-01T00:00:00.000Z',
+    items: [{
+      _id: 'bundle-nested-1',
+      name: 'Ultimate Developer & Artist Bundle',
+      bundles: [{
+        games: [
+          {
+            _id: 'dev_asset_pack',
+            name: 'Modular Sci-Fi Environment Kit',
+            type: 'software',
+            downloads: [
+              { name: 'Unity Package', format: 'Unity Package', url: 'https://cdn.example.invalid/kit.unitypackage' },
+              { name: 'Unreal Project (ZIP)', url: 'https://cdn.example.invalid/uproject.zip' },
+              { name: 'Blender Source (.blend)', url: 'https://cdn.example.invalid/models.blend' }
+            ]
+          },
+          {
+            _id: 'audio_soundtrack',
+            name: 'Synthwave OST Vol. 1',
+            type: 'audio',
+            downloads: [
+              { name: 'Lossless Audio (FLAC)', url: 'https://cdn.example.invalid/ost.flac' },
+              { name: 'High Quality MP3', url: 'https://cdn.example.invalid/ost.mp3' }
+            ]
+          },
+          {
+            _id: 'video_tutorial',
+            name: '3D Art Masterclass',
+            type: 'video',
+            streaming: true,
+            downloads: [
+              { name: '1080p Video (MP4)', url: 'https://cdn.example.invalid/tutorial.mp4' }
+            ]
+          }
+        ]
+      }]
+    }]
+  }];
+
+  const projection = await projectOrderHistory(orderSummary, orderDetail);
+  assert.equal(projection.items.length, 3);
+
+  const kit = projection.items.find(i => i.sourceItemId === 'dev_asset_pack');
+  assert.deepEqual(kit.formats, ['Unity Package', 'blend', 'unitypackage', 'zip']);
+
+  const audio = projection.items.find(i => i.sourceItemId === 'audio_soundtrack');
+  assert.deepEqual(audio.formats, ['flac', 'mp3']);
+
+  const video = projection.items.find(i => i.sourceItemId === 'video_tutorial');
+  assert.deepEqual(video.formats, ['mp4']);
+  assert.equal(video.streaming, true);
+
+  // Test consolidation preserving unioned formats
+  const target = {
+    source: 'fanatical',
+    sourceItemId: 'dev_asset_pack',
+    title: 'Modular Sci-Fi Environment Kit',
+    mediaType: 'software',
+    formats: ['unitypackage', 'blend'],
+    bundle: { title: 'Early Bundle' },
+    purchaseDate: '2026-01-01T00:00:00.000Z'
+  };
+
+  const incoming = {
+    source: 'fanatical',
+    sourceItemId: 'dev_asset_pack',
+    title: 'Modular Sci-Fi Environment Kit',
+    mediaType: 'software',
+    formats: ['zip', 'Unity Package'],
+    bundle: { title: 'Later Bundle' },
+    purchaseDate: '2026-03-01T00:00:00.000Z'
+  };
+
+  const ui = await createOptionsHarness({ fanaticalLibraryItems: [target] });
+  const consolidate = ui.context.LibraryBrowser?.consolidateFanaticalItemInto;
+  assert(consolidate, 'consolidateFanaticalItemInto should be available');
+  const consolidated = consolidate(target, incoming);
+  assert.deepEqual(plain(consolidated.formats), ['Unity Package', 'blend', 'unitypackage', 'zip']);
+  assert.equal(consolidated.purchaseDate, '2026-03-01T00:00:00.000Z');
 });

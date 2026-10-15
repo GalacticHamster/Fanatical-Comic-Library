@@ -10,7 +10,119 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   const safeIdInPage = (value) => /^[a-zA-Z0-9_-]{6,128}$/u.test(String(value ?? '')) ? String(value) : '';
   const safeDateInPage = (value) => typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? value : null;
   const trueKeysInPage = (value) => Object.entries(value && typeof value === 'object' ? value : {}).filter(([, active]) => active === true).map(([key]) => key).sort();
-  const formatsInPage = (downloads) => [...new Set((Array.isArray(downloads) ? downloads : []).flatMap((download) => (Array.isArray(download?.files) ? download.files : []).map((file) => safeTextInPage(file?.format, 32).toLowerCase())).filter(Boolean))].sort();
+  const GENERIC_CATEGORY_OR_DELIVERY = /^(?:audio|video|ebook|book|comic|software|game|download|direct\s+download|web|torrent|bittorrent|stream|streaming|external\s+key|steam\s+key|key)$/iu;
+
+  const normalizeExtInPage = (raw, isExplicitFormatField = false) => {
+    if (!raw || typeof raw !== 'string') return '';
+    const trimmed = raw.trim();
+    if (!trimmed || GENERIC_CATEGORY_OR_DELIVERY.test(trimmed)) return '';
+
+    const mimeMatch = trimmed.match(/^(?:application|video|audio|image)\/([a-z0-9.+_-]+)$/iu);
+    if (mimeMatch) {
+      const sub = mimeMatch[1].toLowerCase();
+      if (sub === 'pdf') return 'pdf';
+      if (sub.includes('epub')) return 'epub';
+      if (sub.includes('cbz') || sub.includes('x-cbz')) return 'cbz';
+      if (sub.includes('cbr') || sub.includes('x-cbr')) return 'cbr';
+      if (sub.includes('mobi')) return 'mobi';
+      if (sub === 'mp4') return 'mp4';
+      if (sub === 'flac') return 'flac';
+      if (sub === 'mpeg' || sub === 'mp3') return 'mp3';
+      if (sub === 'wav' || sub.includes('wave')) return 'wav';
+      if (sub === 'zip') return 'zip';
+      if (sub.includes('octet-stream')) return '';
+    }
+
+    if (/^https?:\/\//iu.test(trimmed) || trimmed.includes('/') || trimmed.includes('\\')) {
+      const queryMatch = trimmed.match(/[?&](?:filename|file|name)=([^&#]+)/iu);
+      if (queryMatch) {
+        const fromQuery = normalizeExtInPage(decodeURIComponent(queryMatch[1]), isExplicitFormatField);
+        if (fromQuery) return fromQuery;
+      }
+      const pathPart = trimmed.split(/[?#]/)[0];
+      const extMatch = pathPart.match(/\.([a-z0-9]{2,16})$/iu);
+      if (extMatch && !GENERIC_CATEGORY_OR_DELIVERY.test(extMatch[1])) {
+        return extMatch[1].toLowerCase();
+      }
+      return '';
+    }
+
+    const parenMatch = trimmed.match(/\((?:[a-z0-9\s_-]*\.)?([a-z0-9]{2,16})\)/iu)
+      || trimmed.match(/\[(?:[a-z0-9\s_-]*\.)?([a-z0-9]{2,16})\]/iu);
+    if (parenMatch) {
+      const cand = parenMatch[1].toLowerCase();
+      if (/^(?:pdf|epub|cbz|cbr|mobi|azw3|djvu|zip|rar|7z|tar|gz|exe|dmg|pkg|deb|rpm|appimage|mp4|mkv|mov|avi|webm|m4v|flv|mp3|flac|wav|m4a|m4b|ogg|opus|blend|unitypackage|uproject|uasset|gmz|yyz)$/iu.test(cand)) {
+        return cand;
+      }
+    }
+
+    const keywordMatch = trimmed.match(/\b(pdf|epub|cbz|cbr|mobi|azw3|djvu|zip|rar|7z|tar\.gz|exe|dmg|pkg|deb|rpm|appimage|mp4|mkv|mov|avi|webm|m4v|mp3|flac|wav|m4a|m4b|ogg|opus|blend|unitypackage)\b/iu);
+    if (keywordMatch) {
+      return keywordMatch[1].toLowerCase();
+    }
+
+    let clean = trimmed.toLowerCase();
+    if (clean.startsWith('.')) clean = clean.slice(1);
+    if (/^[a-z0-9]{2,16}$/iu.test(clean) && !GENERIC_CATEGORY_OR_DELIVERY.test(clean)) {
+      return clean;
+    }
+
+    if (isExplicitFormatField && trimmed.length <= 40 && !GENERIC_CATEGORY_OR_DELIVERY.test(trimmed)) {
+      return trimmed;
+    }
+    return '';
+  };
+
+  const formatsInPage = (leafOrDownloads) => {
+    if (!leafOrDownloads) return [];
+    const formats = new Set();
+    const scanItem = (item) => {
+      if (!item || typeof item !== 'object') return;
+      const f1 = normalizeExtInPage(item.format, true); if (f1) formats.add(f1);
+      const f2 = normalizeExtInPage(item.filetype, true); if (f2) formats.add(f2);
+      const f3 = normalizeExtInPage(item.file_type, true); if (f3) formats.add(f3);
+      const f4 = normalizeExtInPage(item.extension, true); if (f4) formats.add(f4);
+      const f5 = normalizeExtInPage(item.file_extension, true); if (f5) formats.add(f5);
+      const f6 = normalizeExtInPage(item.ext, true); if (f6) formats.add(f6);
+      const f7 = normalizeExtInPage(item.mime_type, true); if (f7) formats.add(f7);
+      const f8 = normalizeExtInPage(item.name, false); if (f8) formats.add(f8);
+      const f9 = normalizeExtInPage(item.filename, false); if (f9) formats.add(f9);
+      const f10 = normalizeExtInPage(item.file_name, false); if (f10) formats.add(f10);
+      if (typeof item.url === 'string') {
+        const f11 = normalizeExtInPage(item.url, false); if (f11) formats.add(f11);
+      }
+      if (Array.isArray(item.files)) item.files.forEach(scanItem);
+      if (Array.isArray(item.items)) item.items.forEach(scanItem);
+      if (Array.isArray(item.downloads)) item.downloads.forEach(scanItem);
+    };
+
+    if (Array.isArray(leafOrDownloads)) {
+      leafOrDownloads.forEach(scanItem);
+    } else if (typeof leafOrDownloads === 'object') {
+      if (Array.isArray(leafOrDownloads.downloads)) leafOrDownloads.downloads.forEach(scanItem);
+      if (leafOrDownloads.download && typeof leafOrDownloads.download === 'object') scanItem(leafOrDownloads.download);
+      if (Array.isArray(leafOrDownloads.files)) leafOrDownloads.files.forEach(scanItem);
+      if (typeof leafOrDownloads.format === 'string') {
+        const f = normalizeExtInPage(leafOrDownloads.format, true); if (f) formats.add(f);
+      }
+      if (Array.isArray(leafOrDownloads.formats)) {
+        for (const fmt of leafOrDownloads.formats) {
+          const f = normalizeExtInPage(fmt, true); if (f) formats.add(f);
+        }
+      }
+      if (leafOrDownloads.metadata && typeof leafOrDownloads.metadata === 'object') {
+        if (typeof leafOrDownloads.metadata.format === 'string') {
+          const f = normalizeExtInPage(leafOrDownloads.metadata.format, true); if (f) formats.add(f);
+        }
+        if (Array.isArray(leafOrDownloads.metadata.formats)) {
+          for (const fmt of leafOrDownloads.metadata.formats) {
+            const f = normalizeExtInPage(fmt, true); if (f) formats.add(f);
+          }
+        }
+      }
+    }
+    return [...formats].sort((a, b) => a.localeCompare(b));
+  };
   const mediaTypeInPage = (value) => {
     const type = safeTextInPage(value).toLowerCase();
     if (type.includes('comic') || ['book', 'ebook', 'manga', 'graphic_novel', 'graphic novel'].includes(type)) return 'book';
@@ -39,6 +151,11 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     const authors = Array.isArray(leaf?.authors) ? leaf.authors : typeof leaf?.author === 'string' ? [leaf.author] : [];
     const names = [...new Set(authors.map(value => safeTextInPage(value)).filter(Boolean))].slice(0, 50);
     if (names.length) catalog.authors = names;
+    const formats = formatsInPage(leaf);
+    const hasDownloads = (Array.isArray(leaf?.downloads) && leaf.downloads.length > 0)
+      || (leaf?.download && typeof leaf.download === 'object')
+      || (Array.isArray(leaf?.files) && leaf.files.length > 0)
+      || Boolean(leaf?.format || (Array.isArray(leaf?.formats) && leaf.formats.length > 0));
     return {
       source: 'fanatical', sourceItemId, title,
       ...(safeTextInPage(leaf?.slug, 300) ? { slug: safeTextInPage(leaf.slug, 300) } : {}),
@@ -49,10 +166,18 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
       ...catalog,
       ...(trueKeysInPage(leaf?.drm).length ? { drm: trueKeysInPage(leaf.drm) } : {}),
       ...(trueKeysInPage(leaf?.platforms ?? leaf?.os).length ? { platforms: trueKeysInPage(leaf.platforms ?? leaf.os) } : {}),
-      ...(formatsInPage(leaf?.downloads).length ? { formats: formatsInPage(leaf.downloads) } : {}),
+      ...(hasDownloads || formats.length > 0 ? { formats } : {}),
       bundle: { sourceItemId: safeIdInPage(parent?._id), title: safeTextInPage(parent?.name), ...(safeTextInPage(parent?.slug, 300) ? { slug: safeTextInPage(parent.slug, 300) } : {}) },
       purchaseDate: safeDateInPage(order?.date),
-      purchaseOrigins: [{ purchaseRef, bundle: { sourceItemId: safeIdInPage(parent?._id), title: safeTextInPage(parent?.name), ...(safeTextInPage(parent?.slug,300) ? {slug:safeTextInPage(parent.slug,300)} : {}) }, purchaseDate: safeDateInPage(order?.date), quantity: 1 }]
+      purchaseOrigins: [{
+        purchaseRef,
+        bundle: { sourceItemId: safeIdInPage(parent?._id), title: safeTextInPage(parent?.name), ...(safeTextInPage(parent?.slug, 300) ? { slug: safeTextInPage(parent.slug, 300) } : {}) },
+        purchaseDate: safeDateInPage(order?.date),
+        quantity: 1,
+        ...(safeTextInPage(leaf?.delivery) ? { delivery: safeTextInPage(leaf.delivery) } : {}),
+        ...(leaf?.streaming ? { streaming: true } : {}),
+        ...(hasDownloads || formats.length > 0 ? { formats } : {})
+      }]
     };
   };
   const fingerprintOrderInPage = async (id) => {
@@ -65,10 +190,39 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     for(const product of products){
       const previous=items.get(product.sourceItemId),origins=new Map();
       for(const origin of [...(previous?.purchaseOrigins??[]),...product.purchaseOrigins]){
-        const key=JSON.stringify([origin.purchaseRef,origin.bundle.sourceItemId]);const saved=origins.get(key);origins.set(key,saved?{...origin,quantity:saved.quantity+origin.quantity}:origin);
+        const key=JSON.stringify([origin.purchaseRef,origin.bundle?.sourceItemId]);
+        const saved=origins.get(key);
+        if (saved) {
+          const combinedFormats = Array.isArray(saved.formats) || Array.isArray(origin.formats)
+            ? [...new Set([...(saved.formats || []), ...(origin.formats || [])])].sort()
+            : undefined;
+          const mergedDelivery = origin.delivery || saved.delivery;
+          const mergedStreaming = Boolean(origin.streaming || saved.streaming);
+          origins.set(key, {
+            ...saved,
+            ...origin,
+            quantity: saved.quantity + origin.quantity,
+            ...(mergedDelivery ? { delivery: mergedDelivery } : {}),
+            ...(mergedStreaming ? { streaming: true } : {}),
+            ...(combinedFormats !== undefined ? { formats: combinedFormats } : {})
+          });
+        } else {
+          origins.set(key, origin);
+        }
       }
       const latest=previous&&Date.parse(previous.purchaseDate)>Date.parse(product.purchaseDate)?previous:product;
-      items.set(product.sourceItemId,{...latest,purchaseOrigins:[...origins.values()]});
+      const combinedItemFormats = Array.isArray(previous?.formats) || Array.isArray(product.formats)
+        ? [...new Set([...(previous?.formats || []), ...(product.formats || [])])].sort()
+        : undefined;
+      const mergedItemDelivery = product.delivery || previous?.delivery;
+      const mergedItemStreaming = Boolean(product.streaming || previous?.streaming);
+      items.set(product.sourceItemId,{
+        ...latest,
+        ...(mergedItemDelivery ? { delivery: mergedItemDelivery } : {}),
+        ...(mergedItemStreaming ? { streaming: true } : {}),
+        ...(combinedItemFormats !== undefined ? { formats: combinedItemFormats } : {}),
+        purchaseOrigins:[...origins.values()]
+      });
     }
     return [...items.values()].sort((a,b)=>a.sourceItemId.localeCompare(b.sourceItemId));
   };
@@ -78,6 +232,15 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
       const id=safeIdInPage(order?._id);if(!id||seen.has(id)||!completeIds.has(id)||order.status!=='COMPLETE')continue;seen.add(id);const purchaseRef=await fingerprintOrderInPage(id);
       for(const parent of Array.isArray(order.items)?order.items:[])for(const group of Array.isArray(parent?.bundles)?parent.bundles:[])for(const leaf of Array.isArray(group?.games)?group.games:[]){
         if (isPromotionalLeaf(leaf)) {
+          const leafFormats = formatsInPage(leaf);
+          const hasDownloads = (Array.isArray(leaf?.downloads) && leaf.downloads.length > 0)
+            || (leaf?.download && typeof leaf.download === 'object')
+            || (Array.isArray(leaf?.files) && leaf.files.length > 0)
+            || Boolean(leaf?.format || (Array.isArray(leaf?.formats) && leaf.formats.length > 0));
+          const hasDrm = trueKeysInPage(leaf?.drm).length > 0;
+          const hasStreaming = Boolean(leaf?.streaming);
+          const delivery = safeTextInPage(leaf?.delivery)
+            || (hasStreaming ? 'streaming' : (hasDownloads || leafFormats.length > 0 ? 'direct-download' : (hasDrm ? 'external-key' : undefined)));
           rejectedList.push({
             sourceItemId: safeIdInPage(leaf?._id) || `fan_rej_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
             title: safeTextInPage(leaf?.name),
@@ -85,8 +248,9 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
             bundle: { sourceItemId: safeIdInPage(parent?._id), title: safeTextInPage(parent?.name), ...(safeTextInPage(parent?.slug, 300) ? { slug: safeTextInPage(parent.slug, 300) } : {}) },
             purchaseDate: safeDateInPage(order?.date),
             reason: 'Unclassified promotional or non-product content',
-            delivery: (Array.isArray(leaf?.downloads) && leaf.downloads.length) ? 'direct-download' : 'external-key',
-            formats: formatsInPage(leaf?.downloads)
+            delivery,
+            ...(hasStreaming ? { streaming: true } : {}),
+            formats: leafFormats
           });
           continue;
         }
