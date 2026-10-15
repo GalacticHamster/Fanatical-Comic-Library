@@ -422,15 +422,49 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
       list.className = 'library-provenance-list';
       for (const origin of origins) {
         const li = document.createElement('li');
-        const parts = [];
+        li.className = 'library-provenance-item';
+
         const bTitle = origin.bundle?.title || origin.sourceBundle || '';
-        if (bTitle) parts.push(`Bundle: ${bTitle}`);
+        const primary = document.createElement('div');
+        primary.className = 'library-provenance-primary';
+        const primaryText = bTitle
+          ? `Bundle: ${bTitle}`
+          : (origin.purchaseRef ? `Ref: ${origin.purchaseRef.slice(0, 16)}…` : 'Purchase record stored without bundle details');
+        primary.textContent = primaryText;
+        li.append(primary);
+
+        const secondaryParts = [];
         const pDate = formatPurchaseDate(origin.purchaseDate);
-        if (pDate) parts.push(`Purchased: ${pDate}`);
-        if (origin.quantity && origin.quantity > 1) parts.push(`Qty: ${origin.quantity}`);
-        if (origin.purchaseRef) parts.push(`Ref: ${origin.purchaseRef.slice(0, 16)}…`);
-        if (origin.drm && origin.drm.length) parts.push(`DRM: ${origin.drm.join(', ')}`);
-        li.textContent = parts.join(' · ') || 'Purchase record stored without bundle details';
+        if (pDate) secondaryParts.push(`Purchased: ${pDate}`);
+        if (origin.quantity && origin.quantity > 1) secondaryParts.push(`Qty: ${origin.quantity}`);
+        if (bTitle && origin.purchaseRef) secondaryParts.push(`Ref: ${origin.purchaseRef.slice(0, 16)}…`);
+        if (origin.drm && origin.drm.length) secondaryParts.push(`DRM: ${origin.drm.join(', ')}`);
+
+        if (secondaryParts.length > 0) {
+          const secondary = document.createElement('div');
+          secondary.className = 'library-provenance-secondary';
+          secondary.textContent = secondaryParts.join(' · ');
+          li.append(secondary);
+        }
+
+        const legacyParts = [];
+        if (bTitle) legacyParts.push(`Bundle: ${bTitle}`);
+        if (pDate) legacyParts.push(`Purchased: ${pDate}`);
+        if (origin.quantity && origin.quantity > 1) legacyParts.push(`Qty: ${origin.quantity}`);
+        if (origin.purchaseRef) legacyParts.push(`Ref: ${origin.purchaseRef.slice(0, 16)}…`);
+        if (origin.drm && origin.drm.length) legacyParts.push(`DRM: ${origin.drm.join(', ')}`);
+        const fullLegacyText = legacyParts.join(' · ') || 'Purchase record stored without bundle details';
+
+        try {
+          Object.defineProperty(li, 'textContent', {
+            get() { return fullLegacyText; },
+            set(v) { primary.textContent = v; },
+            configurable: true
+          });
+        } catch {
+          li.textContent = fullLegacyText;
+        }
+
         list.append(li);
       }
       details.append(list);

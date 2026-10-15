@@ -512,3 +512,47 @@ test('src/ui.css configures library-preview with 4.25rem padding-left to prevent
   const css = fs.readFileSync(new URL('../src/ui.css', import.meta.url), 'utf8');
   assert.match(css, /#library-preview\s*\{[^}]*padding-left:\s*4\.25rem/);
 });
+
+test('expanded purchase history displays primary bundle title and secondary metadata line', async () => {
+  const ui = await optionsHarness({
+    fanaticalLibraryItems: [
+      {
+        source: 'fanatical',
+        sourceItemId: 'p-polish',
+        title: 'Polished Game',
+        mediaType: 'game',
+        bundle: { title: 'Strategy Bundle 2026' },
+        purchaseDate: '2026-05-12T00:00:00Z',
+        purchaseRef: 'fan-order-1234567890abcdef',
+        quantity: 2,
+        drm: ['steam']
+      }
+    ]
+  });
+
+  const preview = ui.get('#library-preview');
+  const row = preview.children[0];
+  const details = row.children[0];
+  const list = details.children[1];
+  assert.equal(list.children.length, 1);
+  const provItem = list.children[0];
+  assert.equal(provItem.className, 'library-provenance-item');
+
+  const primary = provItem.children.find((c) => c.className === 'library-provenance-primary');
+  assert(primary, 'should have primary line');
+  assert.equal(primary.textContent, 'Bundle: Strategy Bundle 2026');
+
+  const secondary = provItem.children.find((c) => c.className === 'library-provenance-secondary');
+  assert(secondary, 'should have secondary line');
+  assert.equal(secondary.textContent, 'Purchased: 2026-05-12 · Qty: 2 · Ref: fan-order-123456… · DRM: steam');
+});
+
+test('src/ui.css configures tabular numbers and comfortable disclosure spacing', () => {
+  const css = fs.readFileSync(new URL('../src/ui.css', import.meta.url), 'utf8');
+  assert.match(css, /#library-preview\s*\{[^}]*font-variant-numeric:\s*tabular-nums/);
+  assert.match(css, /#library-preview\s+li::marker\s*\{[^}]*font-variant-numeric:\s*tabular-nums/);
+  assert.match(css, /\.library-item-summary\s*\{[^}]*margin-left:\s*0\.35rem/);
+  assert.match(css, /\.library-item-summary\s*\{[^}]*padding:\s*0\.15rem\s+0\s+0\.15rem\s+0\.35rem/);
+  assert.match(css, /\.library-provenance-primary\s*\{/);
+  assert.match(css, /\.library-provenance-secondary\s*\{/);
+});
