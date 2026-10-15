@@ -225,6 +225,27 @@
   // Roman numbers after an explicit volume/issue label are unit numbers.
   function presentationTitle(value, kind = 'book') { return global.LibraryMatchingPolicy.presentationTitle(value, kind); }
 
+  function isComicItem(item) {
+    if (!item || typeof item !== 'object') return false;
+    const kind = String(item.mediaType || item.kind || '').toLowerCase();
+    if (kind === 'comic') return true;
+    if (kind !== 'book' && kind !== 'other') return false;
+    if (item.manualMediaType && item.manualMediaType !== 'comic') return false;
+    if (item.manualKind && item.manualKind !== 'comic') return false;
+    const bundles = [item.bundle?.title, item.sourceBundle, ...(Array.isArray(item.purchaseOrigins) ? item.purchaseOrigins.map(p => p.bundle?.title) : [])].filter(Boolean);
+    if (bundles.some(b => /\b(?:comic|comics|manga|graphic\s+novel)s?\b/iu.test(b))) return true;
+    const serialized = JSON.stringify(item);
+    return /\b(?:cbz|cbr)\b/iu.test(serialized);
+  }
+
+  function mediaOverrideKey(item) {
+    if (!item || typeof item !== 'object') return null;
+    if (item.sourceItemId) return item.sourceItemId;
+    if (item.providerItemId) return item.providerItemId;
+    if (item.title) return `manual:${titleKey(item.title)}`;
+    return null;
+  }
+
   function relationTitleParts(value, kind) {
     let title = String(value ?? '').normalize('NFKC').replace(/\s+/gu, ' ').trim();
     const revision = global.LibraryMatchingPolicy.revisionTitleParts(title, kind);
@@ -246,7 +267,7 @@
       title = qualifier[1].trim(); stripEdition();
     }
     const subtitle = /^(.*?)\s*:\s+(.+)$/u.exec(title);
-    return { primary: kind === 'book' ? presentationTitle(subtitle?.[1]?.trim() || title, kind) : normalizeTitle(subtitle?.[1]?.trim() || title), subtitle: Boolean(subtitle),
+    return { primary: (kind === 'book' || kind === 'comic') ? presentationTitle(subtitle?.[1]?.trim() || title, kind) : normalizeTitle(subtitle?.[1]?.trim() || title), subtitle: Boolean(subtitle),
       qualifier: Boolean(qualifier), hasEdition, hasVersion: false };
   }
 
@@ -1222,7 +1243,7 @@
   }
 
   async function storageSet(updates){const response=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'patch',args:[updates]});if(!response?.ok)throw new Error(response?.error??'Settings storage is unavailable.');}
-  global.FanaticalLibrary = { purchaseImportScope, purchaseImportProgress, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, isCompleteBundleCatalogue, isBundleOverlapProduct, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, sendGalacticMatch, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, COMPANION_IDENTITIES, companionBrowser, builtinGalacticId, resolveGalacticId, trustedGalacticSender, companionTargetProblem, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft };
+  global.FanaticalLibrary = { purchaseImportScope, purchaseImportProgress, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, isCompleteBundleCatalogue, isBundleOverlapProduct, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, sendGalacticMatch, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, COMPANION_IDENTITIES, companionBrowser, builtinGalacticId, resolveGalacticId, trustedGalacticSender, companionTargetProblem, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft, isComicItem, mediaOverrideKey };
 }(globalThis));
 
 /* Identical account picker in both companions; all changes use the serialized writer. */

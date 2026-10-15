@@ -17,9 +17,14 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     if (type.includes('audio') && type.includes('book')) return 'audiobook';
     if (type === 'game') return 'game';
     if (type.includes('software') || type.includes('asset')) return 'software';
+    if (type.includes('video') || type.includes('movie') || type.includes('film')) return 'video';
     if (type.includes('learn') || type.includes('course')) return 'elearning';
     if (type.includes('audio')) return 'audio';
-    return 'other';
+    return 'unclassified';
+  };
+  const isPromotionalLeaf = (leaf) => {
+    const name = safeTextInPage(leaf?.name).toLowerCase();
+    return /\b(?:how to redeem|terms and conditions|discount code|coupon|voucher|bonus voucher|wallet top-up)\b/iu.test(name);
   };
   const projectLeafInPage = (leaf, parent, order, purchaseRef) => {
     const sourceItemId = safeIdInPage(leaf?._id); const title = safeTextInPage(leaf?.name);
@@ -38,6 +43,8 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
       source: 'fanatical', sourceItemId, title,
       ...(safeTextInPage(leaf?.slug, 300) ? { slug: safeTextInPage(leaf.slug, 300) } : {}),
       mediaType: mediaTypeInPage(leaf?.display_type ?? leaf?.type),
+      ...(safeTextInPage(leaf?.delivery) ? { delivery: safeTextInPage(leaf.delivery) } : {}),
+      ...(leaf?.streaming ? { streaming: true } : {}),
       ...(Object.keys(externalIds).length ? { externalIds } : {}),
       ...catalog,
       ...(trueKeysInPage(leaf?.drm).length ? { drm: trueKeysInPage(leaf.drm) } : {}),
@@ -66,12 +73,30 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     return [...items.values()].sort((a,b)=>a.sourceItemId.localeCompare(b.sourceItemId));
   };
   if(operation==='project'){
-    const completeIds=new Set((Array.isArray(orderSummaries)?orderSummaries:[]).filter(order=>order?.status==='COMPLETE').map(order=>safeIdInPage(order._id)).filter(Boolean)),products=[],seen=new Set();
+    const completeIds=new Set((Array.isArray(orderSummaries)?orderSummaries:[]).filter(order=>order?.status==='COMPLETE').map(order=>safeIdInPage(order._id)).filter(Boolean)),products=[],seen=new Set(),rejectedList=[];
     for(const order of Array.isArray(orderDetails)?orderDetails:[]){
       const id=safeIdInPage(order?._id);if(!id||seen.has(id)||!completeIds.has(id)||order.status!=='COMPLETE')continue;seen.add(id);const purchaseRef=await fingerprintOrderInPage(id);
-      for(const parent of Array.isArray(order.items)?order.items:[])for(const group of Array.isArray(parent?.bundles)?parent.bundles:[])for(const leaf of Array.isArray(group?.games)?group.games:[]){const product=projectLeafInPage(leaf,parent,order,purchaseRef);if(product)products.push(product);}
+      for(const parent of Array.isArray(order.items)?order.items:[])for(const group of Array.isArray(parent?.bundles)?parent.bundles:[])for(const leaf of Array.isArray(group?.games)?group.games:[]){
+        if (isPromotionalLeaf(leaf)) {
+          rejectedList.push({
+            sourceItemId: safeIdInPage(leaf?._id) || `fan_rej_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            title: safeTextInPage(leaf?.name),
+            sourceBundle: safeTextInPage(parent?.name),
+            bundle: { sourceItemId: safeIdInPage(parent?._id), title: safeTextInPage(parent?.name), ...(safeTextInPage(parent?.slug, 300) ? { slug: safeTextInPage(parent.slug, 300) } : {}) },
+            purchaseDate: safeDateInPage(order?.date),
+            reason: 'Unclassified promotional or non-product content',
+            delivery: (Array.isArray(leaf?.downloads) && leaf.downloads.length) ? 'direct-download' : 'external-key',
+            formats: formatsInPage(leaf?.downloads)
+          });
+          continue;
+        }
+        const product=projectLeafInPage(leaf,parent,order,purchaseRef);
+        if(product)products.push(product);
+      }
     }
-    return {schemaVersion:1,ordersScanned:completeIds.size,items:combineProducts(products)};
+    const result = {schemaVersion:1,ordersScanned:completeIds.size,items:combineProducts(products)};
+    if (rejectedList.length) result.rejectedPurchaseItems = rejectedList;
+    return result;
   }
   let token = '';
   try { token = String(JSON.parse(localStorage.getItem('bsauth') || '{}')?.token || ''); } catch { /* no signed-in token */ }

@@ -44,7 +44,11 @@ export function sanitizeImportResult(value) {
     const projected = {
       source: 'fanatical', sourceItemId, title,
       ...(safeText(candidate?.slug, 300) ? { slug: safeText(candidate.slug, 300) } : {}),
-      mediaType: ['game', 'book', 'audiobook', 'software', 'audio', 'elearning', 'other'].includes(candidate?.mediaType) ? candidate.mediaType : 'other',
+      mediaType: ['game', 'book', 'comic', 'audiobook', 'software', 'audio', 'video', 'elearning', 'unclassified', 'other'].includes(candidate?.mediaType) ? candidate.mediaType : 'other',
+      ...(candidate?.automaticMediaType ? { automaticMediaType: candidate.automaticMediaType } : {}),
+      ...(candidate?.manualMediaType ? { manualMediaType: candidate.manualMediaType } : {}),
+      ...(candidate?.delivery ? { delivery: candidate.delivery } : {}),
+      ...(candidate?.streaming ? { streaming: true } : {}),
       ...(Object.keys(externalIds).length ? { externalIds } : {}),
       ...globalThis.FanaticalLibrary.bibliographicFields(candidate),
       ...globalThis.FanaticalLibrary.contentsMetadata(candidate),
@@ -75,7 +79,16 @@ export function parseLibraryBackup(value) {
   }
   if(value.schemaVersion>=3){if(value.format!=='fanatical-library-backup'||!Array.isArray(value.wishlistItems))throw Error('Invalid recoverable backup.');globalThis.FanaticalLibrary.normalizeWishlist(value.wishlistItems);}
   if(value.schemaVersion>=4)parseHistoricalItems(value.historicalItems,value.profileLabel);
-  for(const item of value.items){if(item.mediaType!==undefined&&!['game','book','audiobook','software','audio','elearning','other'].includes(item.mediaType))throw new Error('Invalid backup media type.');purchaseOrigins(item.purchaseOrigins,true);}
+  for(const item of value.items){if(item.mediaType!==undefined&&!['game','book','comic','audiobook','software','audio','video','elearning','unclassified','other'].includes(item.mediaType))throw new Error('Invalid backup media type.');purchaseOrigins(item.purchaseOrigins,true);}
+  if (value.mediaTypeOverrides !== undefined) {
+    if (typeof value.mediaTypeOverrides !== 'object' || Array.isArray(value.mediaTypeOverrides) || value.mediaTypeOverrides === null) throw new Error('Invalid backup media type overrides.');
+    for (const [, v] of Object.entries(value.mediaTypeOverrides)) {
+      if (typeof v !== 'string' || !['game','book','comic','audiobook','software','audio','video','elearning','unclassified','other'].includes(v)) throw new Error('Invalid backup media type override value.');
+    }
+  }
+  if (value.rejectedPurchaseItems !== undefined) {
+    if (!Array.isArray(value.rejectedPurchaseItems) || value.rejectedPurchaseItems.length > 50000) throw new Error('Invalid backup rejected items.');
+  }
   return sanitizeImportResult(value).items;
 }
 
@@ -117,7 +130,7 @@ export function parseHistoricalItems(value, profileLabel) {
   });
 }
 
-export function createLibraryBackup(items, summary, exportedAt = new Date().toISOString(), profileLabel='', profileArchives=[],wishlistItems=[],historicalItems=[]) {
+export function createLibraryBackup(items, summary, exportedAt = new Date().toISOString(), profileLabel='', profileArchives=[],wishlistItems=[],historicalItems=[],mediaTypeOverrides={},rejectedPurchaseItems=[]) {
   // Scan metadata is informational only: restore never trusts its skip history.
   const safeSummary = summary && ['full', 'quick'].includes(summary.scanMode) ? {
     importedAt: safeDate(summary.importedAt), scanMode: summary.scanMode,
@@ -125,7 +138,9 @@ export function createLibraryBackup(items, summary, exportedAt = new Date().toIS
     addedProducts: count(summary.addedProducts), ownedLeafProducts: count(summary.ownedLeafProducts),
     historyCoverage: safeText(summary.historyCoverage)
   } : null;
-  const scoped={format:'fanatical-library-backup',schemaVersion:4,wishlistItems:globalThis.FanaticalLibrary.normalizeWishlist(wishlistItems),items:sanitizeImportResult({items}).items,profileLabel,profileArchives,historicalItems:parseHistoricalItems(historicalItems,profileLabel)};
+  const safeOverrides = (mediaTypeOverrides && typeof mediaTypeOverrides === 'object' && !Array.isArray(mediaTypeOverrides)) ? mediaTypeOverrides : {};
+  const safeRejected = Array.isArray(rejectedPurchaseItems) ? rejectedPurchaseItems : [];
+  const scoped={format:'fanatical-library-backup',schemaVersion:4,wishlistItems:globalThis.FanaticalLibrary.normalizeWishlist(wishlistItems),items:sanitizeImportResult({items}).items,profileLabel,profileArchives,historicalItems:parseHistoricalItems(historicalItems,profileLabel),mediaTypeOverrides:safeOverrides,rejectedPurchaseItems:safeRejected};
   parseLibraryBackup(scoped);
   const safeArchives=backupRestoreState(scoped.items,scoped).fanaticalProfileArchives;
   return { format:'fanatical-library-backup', ...scoped, exportedAt: safeDate(exportedAt), summary: safeSummary, profileArchives:safeArchives };
@@ -139,12 +154,14 @@ export function backupRestoreState(items, backup={}) {
   });
   return { fanaticalLibraryItems: items, fanaticalImportSummary: null, fanaticalScannedOrderFingerprints: [], fanaticalLastScanAttempt: null, fanaticalProfileLabel:backup.schemaVersion>=2?backup.profileLabel:'', fanaticalProfileArchives:profileArchives,
     fanaticalHistoricalItems:backup.schemaVersion>=4?parseHistoricalItems(backup.historicalItems,backup.profileLabel):[],
+    ...(backup.mediaTypeOverrides && typeof backup.mediaTypeOverrides === 'object' && !Array.isArray(backup.mediaTypeOverrides) ? { mediaTypeOverrides: backup.mediaTypeOverrides } : {}),
+    ...(Array.isArray(backup.rejectedPurchaseItems) ? { rejectedPurchaseItems: backup.rejectedPurchaseItems } : {}),
     ...(backup.schemaVersion>=3?{fanaticalWishlistItems:globalThis.FanaticalLibrary.normalizeWishlist(backup.wishlistItems)}:{}) };
 }
 
 export function createSyncStore(area){
   let tail=Promise.resolve();const key='fanaticalSyncControl';
-  const defaults={fanaticalLibraryItems:[],fanaticalScannedOrderFingerprints:[],fanaticalProfileLabel:'',fanaticalProfileArchives:[],fanaticalHistoricalItems:[],fanaticalImportSummary:null,fanaticalLastScanAttempt:null};
+  const defaults={fanaticalLibraryItems:[],fanaticalScannedOrderFingerprints:[],fanaticalProfileLabel:'',fanaticalProfileArchives:[],fanaticalHistoricalItems:[],fanaticalImportSummary:null,fanaticalLastScanAttempt:null,mediaTypeOverrides:{},rejectedPurchaseItems:[]};
   async function operate(operation,args){
     function archive(state){
       const fingerprints=state.fanaticalScannedOrderFingerprints;
@@ -217,7 +234,22 @@ export function createSyncStore(area){
       if(operation==='failure'){await area.set({fanaticalLastScanAttempt:{status:'incomplete',scanMode:control.fullScan?'full':'quick',attemptedAt:new Date().toISOString()},[key]:null});return true;}
       if(control.fullScan&&updates.fanaticalImportSummary?.scanMode!=='full')throw new Error('This profile requires a full scan.');
       const state=await area.get(defaults);const archives=[...state.fanaticalProfileArchives];
-      const incoming=parseLibraryBackup({schemaVersion:1,items:updates.fanaticalLibraryItems});
+      const parsedIncoming=parseLibraryBackup({schemaVersion:1,items:updates.fanaticalLibraryItems});
+      const overrides = state.mediaTypeOverrides ?? {};
+      const incoming = parsedIncoming.map(item => {
+        const override = overrides[item.sourceItemId] || (item.title && overrides[`manual:${globalThis.FanaticalLibrary.titleKey(item.title)}`]);
+        if (override) {
+          return { ...item, mediaType: override, manualMediaType: override, automaticMediaType: item.automaticMediaType || item.mediaType || 'unclassified' };
+        }
+        return item;
+      });
+      const prevRejected = state.rejectedPurchaseItems ?? [];
+      const nextRejected = [...prevRejected];
+      for (const rej of updates.rejectedPurchaseItems || []) {
+        if (!nextRejected.some(r => r.sourceItemId === rej.sourceItemId || (r.title === rej.title && r.bundle?.sourceItemId === rej.bundle?.sourceItemId))) {
+          nextRejected.push(rej);
+        }
+      }
       const now=new Date().toISOString(),sameProfile=state.fanaticalProfileLabel===control.label;
       const history=new Map((sameProfile?parseHistoricalItems(state.fanaticalHistoricalItems,control.label):[]).map(entry=>[entry.item.sourceItemId,entry]));
       if(control.changing){const prior=archive(state);for(let n=archives.length-1;n>=0;n--)if(archives[n].profileLabel===prior.profileLabel||archives[n].profileLabel===control.label)archives.splice(n,1);archives.push(prior);if(archives.length>100)throw new Error('Too many archived profiles; export a backup first.');}
@@ -228,10 +260,10 @@ export function createSyncStore(area){
         if(!observed.has(item.sourceItemId)&&!history.has(item.sourceItemId))history.set(item.sourceItemId,{profileLabel:control.label,missingSince:now,item});
       }
       for(const id of observed)history.delete(id);
-      await area.set({...(!state.fanaticalProfileLabel?await globalThis.GalacticPurchaseSync?.renamePatch(area,'',control.label):{}),...updates,fanaticalLibraryItems:incoming,fanaticalHistoricalItems:[...history.values()],fanaticalProfileLabel:control.label,fanaticalProfileArchives:archives,[key]:null});return true;
+      await area.set({...(!state.fanaticalProfileLabel?await globalThis.GalacticPurchaseSync?.renamePatch(area,'',control.label):{}),...updates,fanaticalLibraryItems:incoming,fanaticalHistoricalItems:[...history.values()],fanaticalProfileLabel:control.label,fanaticalProfileArchives:archives,rejectedPurchaseItems:nextRejected,[key]:null});return true;
     }
     if(operation==='backup'){
-      const state=await area.get({...defaults,fanaticalImportSummary:null,fanaticalWishlistItems:[]});return createLibraryBackup(state.fanaticalLibraryItems,state.fanaticalImportSummary,undefined,state.fanaticalProfileLabel,state.fanaticalProfileArchives,state.fanaticalWishlistItems,state.fanaticalHistoricalItems);
+      const state=await area.get({...defaults,fanaticalImportSummary:null,fanaticalWishlistItems:[]});return createLibraryBackup(state.fanaticalLibraryItems,state.fanaticalImportSummary,undefined,state.fanaticalProfileLabel,state.fanaticalProfileArchives,state.fanaticalWishlistItems,state.fanaticalHistoricalItems,state.mediaTypeOverrides,state.rejectedPurchaseItems);
     }
     if(operation==='wishlist'){
       const [action,value]=args,F=globalThis.FanaticalLibrary,stored=await area.get({fanaticalWishlistItems:[]}),current=F.normalizeWishlist(stored.fanaticalWishlistItems);if(!['add','remove','replace'].includes(action))throw Error('Unsupported wishlist action.');
@@ -242,6 +274,87 @@ export function createSyncStore(area){
     }
     if(operation==='clear'){
       await area.remove(['galacticPurchaseAccountIds','galacticPurchaseSync',...Object.keys(defaults),'fanaticalImportSummary','fanaticalLastScanAttempt',key]);return true;
+    }
+    if (operation === 'setMediaOverride') {
+      const [targetItem, targetKind] = args;
+      const validKinds = new Set(['game', 'book', 'comic', 'audiobook', 'software', 'audio', 'video', 'elearning', 'unclassified', 'other']);
+      if (!validKinds.has(targetKind)) throw new Error('Unsupported media type override.');
+      const state = await area.get(defaults);
+      const overrideKey = globalThis.FanaticalLibrary.mediaOverrideKey(targetItem);
+      if (!overrideKey) throw new Error('Cannot determine media override key.');
+      const overrides = { ...(state.mediaTypeOverrides ?? {}), [overrideKey]: targetKind };
+      const matchItem = it => (it.sourceItemId && targetItem.sourceItemId && it.sourceItemId === targetItem.sourceItemId)
+        || (targetItem.sourceItemId && it.sourceItemId === targetItem.sourceItemId)
+        || (globalThis.FanaticalLibrary.titleKey(it.title) === globalThis.FanaticalLibrary.titleKey(targetItem.title));
+      const updateItem = it => {
+        if (!matchItem(it)) return it;
+        const automaticMediaType = it.automaticMediaType || it.mediaType || 'unclassified';
+        return { ...it, mediaType: targetKind, automaticMediaType, manualMediaType: targetKind };
+      };
+      const items = (state.fanaticalLibraryItems ?? []).map(updateItem);
+      await area.set({ mediaTypeOverrides: overrides, fanaticalLibraryItems: items });
+      return true;
+    }
+    if (operation === 'resetMediaOverride') {
+      const [targetItem] = args;
+      const state = await area.get(defaults);
+      const overrideKey = globalThis.FanaticalLibrary.mediaOverrideKey(targetItem);
+      const overrides = { ...(state.mediaTypeOverrides ?? {}) };
+      if (overrideKey) delete overrides[overrideKey];
+      if (targetItem.sourceItemId) delete overrides[targetItem.sourceItemId];
+      const matchItem = it => (it.sourceItemId && targetItem.sourceItemId && it.sourceItemId === targetItem.sourceItemId)
+        || (globalThis.FanaticalLibrary.titleKey(it.title) === globalThis.FanaticalLibrary.titleKey(targetItem.title));
+      const resetItem = it => {
+        if (!matchItem(it)) return it;
+        const automaticMediaType = it.automaticMediaType || 'unclassified';
+        const { manualMediaType, ...rest } = it;
+        return { ...rest, mediaType: automaticMediaType, automaticMediaType };
+      };
+      const items = (state.fanaticalLibraryItems ?? []).map(resetItem);
+      await area.set({ mediaTypeOverrides: overrides, fanaticalLibraryItems: items });
+      return true;
+    }
+    if (operation === 'recoverRejectedItem') {
+      const [rejectedRecord, targetKind] = args;
+      const validKinds = new Set(['game', 'book', 'comic', 'audiobook', 'software', 'audio', 'video', 'elearning', 'unclassified', 'other']);
+      if (!validKinds.has(targetKind)) throw new Error('Unsupported media type.');
+      const state = await area.get(defaults);
+      const rejected = (state.rejectedPurchaseItems ?? []).filter(r => !(r.sourceItemId === rejectedRecord.sourceItemId || (r.title === rejectedRecord.title && r.bundle?.sourceItemId === rejectedRecord.bundle?.sourceItemId)));
+      const sourceItemId = rejectedRecord.sourceItemId && !rejectedRecord.sourceItemId.startsWith('fan_rej_')
+        ? rejectedRecord.sourceItemId
+        : `recovered_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const newItem = {
+        source: 'fanatical',
+        sourceItemId,
+        title: rejectedRecord.title,
+        mediaType: targetKind,
+        automaticMediaType: 'unclassified',
+        manualMediaType: targetKind,
+        bundle: rejectedRecord.bundle || { sourceItemId: '', title: rejectedRecord.sourceBundle || '' },
+        purchaseDate: rejectedRecord.purchaseDate || null,
+        ...(rejectedRecord.delivery ? { delivery: rejectedRecord.delivery } : {}),
+        ...(Array.isArray(rejectedRecord.formats) && rejectedRecord.formats.length ? { formats: rejectedRecord.formats } : {}),
+        purchaseOrigins: rejectedRecord.purchaseOrigins || [{
+          bundle: rejectedRecord.bundle || { sourceItemId: '', title: rejectedRecord.sourceBundle || '' },
+          purchaseDate: rejectedRecord.purchaseDate || null,
+          quantity: 1
+        }]
+      };
+      const existing = state.fanaticalLibraryItems ?? [];
+      const updated = sanitizeImportResult({ items: [...existing, newItem] }).items;
+      const overrides = { ...(state.mediaTypeOverrides ?? {}), [sourceItemId]: targetKind };
+      await area.set({ rejectedPurchaseItems: rejected, fanaticalLibraryItems: updated, mediaTypeOverrides: overrides });
+      return true;
+    }
+    if (operation === 'dismissRejectedItem') {
+      const [recordOrAll] = args;
+      const state = await area.get(defaults);
+      let rejected = [];
+      if (recordOrAll !== 'all') {
+        rejected = (state.rejectedPurchaseItems ?? []).filter(r => !(r.sourceItemId === recordOrAll.sourceItemId || (r.title === recordOrAll.title && r.bundle?.sourceItemId === recordOrAll.bundle?.sourceItemId)));
+      }
+      await area.set({ rejectedPurchaseItems: rejected });
+      return true;
     }
     if(operation==='patch'){
       const updates=args[0];if(!updates||Object.keys(updates).some(name=>!['galacticLibraryExtensionId','fanaticalShowDiagnostics','fanaticalShowNewItemsOnly','fanaticalCatalogueFilters','fanaticalSummaryPreferences','galacticHamsterAppearance'].includes(name)))throw new Error('Unsupported settings patch.');

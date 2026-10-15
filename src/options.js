@@ -95,6 +95,19 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     return latest;
   }
 
+  function mediaTypeLabel(type) {
+    switch (type) {
+      case 'comic': return 'Comic';
+      case 'book': return 'Book';
+      case 'game': return 'Game';
+      case 'software': return 'Software';
+      case 'audiobook': return 'Audiobook';
+      case 'video': return 'Video';
+      case 'unclassified': return 'Unclassified';
+      default: return type ? (type.charAt(0).toUpperCase() + type.slice(1)) : 'Other';
+    }
+  }
+
   function formatPurchaseDate(timestamp) {
     if (!timestamp) return '';
     try {
@@ -313,8 +326,17 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     if (media) {
       const targetMedia = media.toLowerCase();
       result = result.filter((item) => {
-        const kind = typeof item === 'string' ? 'game' : (item.mediaType || item.kind || 'game');
-        return kind.toLowerCase() === targetMedia;
+        const kind = (typeof item === 'string' ? 'other' : (item.mediaType || item.kind || 'unclassified')).toLowerCase();
+        if (targetMedia === 'book') {
+          return kind === 'book' || kind === 'comic';
+        }
+        if (targetMedia === 'comic') {
+          return kind === 'comic' || FanaticalLibrary.isComicItem(item);
+        }
+        if (targetMedia === 'unclassified') {
+          return kind === 'unclassified' || kind === 'other';
+        }
+        return kind === targetMedia;
       });
     }
 
@@ -440,6 +462,25 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
         if (bTitle && origin.purchaseRef) secondaryParts.push(`Ref: ${origin.purchaseRef.slice(0, 16)}…`);
         if (origin.drm && origin.drm.length) secondaryParts.push(`DRM: ${origin.drm.join(', ')}`);
 
+        if (origin.delivery === 'streaming' || item.delivery === 'streaming' || item.streaming) {
+          secondaryParts.push('Streaming');
+        } else if (origin.delivery === 'direct-download' || item.delivery === 'direct-download') {
+          secondaryParts.push('Direct download');
+        } else if (origin.delivery === 'external-key' || item.delivery === 'external-key') {
+          secondaryParts.push('External key');
+        } else if (origin.delivery) {
+          secondaryParts.push(origin.delivery);
+        }
+
+        const formats = Array.isArray(origin.formats) && origin.formats.length > 0
+          ? origin.formats
+          : (Array.isArray(item.formats) && item.formats.length > 0 ? item.formats : []);
+        if (formats.length > 0) {
+          secondaryParts.push(`Formats: ${formats.map(f => f.startsWith('.') ? f : '.' + f).join(', ')}`);
+        } else if (origin.delivery === 'direct-download' || item.delivery === 'direct-download' || (item.mediaType === 'unclassified' || item.kind === 'unclassified')) {
+          secondaryParts.push('File formats unavailable');
+        }
+
         if (secondaryParts.length > 0) {
           const secondary = document.createElement('div');
           secondary.className = 'library-provenance-secondary';
@@ -474,6 +515,80 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
       empty.textContent = 'No bundle or purchase record stored.';
       details.append(empty);
     }
+
+    const classificationRow = document.createElement('div');
+    classificationRow.className = 'library-classification-row';
+
+    const itemKind = typeof item === 'string' ? 'other' : (item.mediaType || item.kind || 'unclassified');
+    const automaticKind = typeof item === 'string' ? 'other' : (item.automaticMediaType || item.mediaType || 'unclassified');
+    const isOverridden = Boolean(typeof item === 'object' && (item.manualMediaType || item.manualKind || (item.automaticMediaType && item.mediaType !== item.automaticMediaType)));
+
+    const badge = document.createElement('span');
+    badge.className = 'library-media-badge';
+    badge.setAttribute('data-media-type', itemKind);
+    badge.textContent = mediaTypeLabel(itemKind);
+
+    const note = document.createElement('span');
+    note.className = 'library-classification-note';
+    if (isOverridden) {
+      note.textContent = `User override (automatic: ${mediaTypeLabel(automaticKind)})`;
+    } else {
+      note.textContent = `Automatic: ${mediaTypeLabel(automaticKind)}`;
+    }
+
+    const select = document.createElement('select');
+    select.className = 'library-classification-select';
+    select.setAttribute('aria-label', `Change classification for ${title}`);
+
+    const optionsList = [
+      { value: 'comic', label: 'Comic' },
+      { value: 'book', label: 'Book' },
+      { value: 'game', label: 'Game' },
+      { value: 'software', label: 'Software' },
+      { value: 'audiobook', label: 'Audiobook' },
+      { value: 'video', label: 'Video' },
+      { value: 'unclassified', label: 'Unclassified' }
+    ];
+
+    for (const opt of optionsList) {
+      const optEl = document.createElement('option');
+      optEl.value = opt.value;
+      optEl.textContent = opt.label;
+      if (opt.value === itemKind) optEl.selected = true;
+      select.append(optEl);
+    }
+
+    select.addEventListener('change', async (e) => {
+      e.stopPropagation();
+      const newKind = select.value;
+      try {
+        await mutate('setMediaOverride', item, newKind);
+        await refresh();
+      } catch (err) {
+        alert(`Failed to override media type: ${err.message}`);
+      }
+    });
+
+    classificationRow.append(badge, note, select);
+
+    if (isOverridden) {
+      const resetBtn = document.createElement('button');
+      resetBtn.type = 'button';
+      resetBtn.className = 'library-reset-classification-btn secondary';
+      resetBtn.textContent = 'Reset to automatic';
+      resetBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          await mutate('resetMediaOverride', item);
+          await refresh();
+        } catch (err) {
+          alert(`Failed to reset media type: ${err.message}`);
+        }
+      });
+      classificationRow.append(resetBtn);
+    }
+
+    details.append(classificationRow);
 
     row.append(details);
 
@@ -616,9 +731,114 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     $('#show-diagnostics').checked = Boolean(diagnostics);
     const display=await chrome.storage.local.get({fanaticalSummaryPreferences:{}}),prefs=FanaticalLibrary.normalizeSummaryPreferences(display.fanaticalSummaryPreferences);$('#summary-minimized').checked=prefs.minimized;$('#summary-position').value=prefs.position;
     const wishes=await chrome.storage.local.get({fanaticalWishlistItems:[]});wishlist=FanaticalLibrary.normalizeWishlist(wishes.fanaticalWishlistItems);renderWishlist();
-    const counts = new Map();
-    for (const item of items) counts.set(item.mediaType || 'other', (counts.get(item.mediaType || 'other') || 0) + 1);
-    if (counts.size) $('#library-count').textContent += ` ${[...counts].sort().map(([kind, total]) => `${total} ${kind}`).join(', ')}.`;
+    const { rejectedPurchaseItems = [], mediaTypeOverrides = {} } = await chrome.storage.local.get({ rejectedPurchaseItems: [], mediaTypeOverrides: {} });
+    const overrideCount = Object.keys(mediaTypeOverrides).length;
+    const comics = items.filter((item) => item.mediaType === 'comic' || FanaticalLibrary.isComicItem(item)).length;
+    const books = items.filter((item) => (item.mediaType === 'book' || !item.mediaType) && !FanaticalLibrary.isComicItem(item)).length;
+    const games = items.filter((item) => item.mediaType === 'game').length;
+    const software = items.filter((item) => item.mediaType === 'software').length;
+    const audiobooks = items.filter((item) => item.mediaType === 'audiobook').length;
+    const videos = items.filter((item) => item.mediaType === 'video').length;
+    const unclassified = items.filter((item) => item.mediaType === 'unclassified' || item.mediaType === 'other').length;
+
+    const diagnosticsEl = document.querySelector('#library-classification-diagnostics');
+    if (diagnosticsEl) {
+      diagnosticsEl.replaceChildren();
+      const summaryList = document.createElement('div');
+      summaryList.className = 'library-diagnostics-pills';
+      const pills = [
+        { label: 'Comics', count: comics },
+        { label: 'Books', count: books },
+        { label: 'Games', count: games },
+        { label: 'Software', count: software },
+        { label: 'Audiobooks', count: audiobooks },
+        { label: 'Videos', count: videos },
+        { label: 'Unclassified', count: unclassified },
+        { label: 'Unimported / Rejected', count: rejectedPurchaseItems.length }
+      ];
+      if (overrideCount > 0) pills.push({ label: 'Manual overrides', count: overrideCount });
+
+      for (const p of pills) {
+        const span = document.createElement('span');
+        span.className = 'library-diag-pill';
+        span.textContent = `${p.label}: ${p.count}`;
+        summaryList.append(span);
+      }
+      diagnosticsEl.append(summaryList);
+    }
+
+    const rejectedCountSpan = document.querySelector('#library-rejected-count');
+    const rejectedEmpty = document.querySelector('#library-rejected-empty');
+    const rejectedActions = document.querySelector('#library-rejected-actions');
+    const rejectedList = document.querySelector('#library-rejected-list');
+
+    if (rejectedCountSpan) rejectedCountSpan.textContent = String(rejectedPurchaseItems.length);
+    if (rejectedEmpty) rejectedEmpty.hidden = rejectedPurchaseItems.length > 0;
+    if (rejectedActions) rejectedActions.hidden = rejectedPurchaseItems.length === 0;
+
+    if (rejectedList) {
+      rejectedList.replaceChildren();
+      for (const rec of rejectedPurchaseItems) {
+        const li = document.createElement('li');
+        li.className = 'library-rejected-item';
+
+        const titleSpan = document.createElement('strong');
+        titleSpan.textContent = rec.title;
+        const metaSpan = document.createElement('span');
+        metaSpan.className = 'library-rejected-meta';
+        const formatsText = Array.isArray(rec.formats) && rec.formats.length > 0
+          ? `Formats: ${rec.formats.map(f => f.startsWith('.') ? f : '.' + f).join(', ')}`
+          : (rec.delivery === 'direct-download' ? 'File formats unavailable' : '');
+        const deliveryText = rec.delivery === 'streaming' ? 'Streaming' : (rec.delivery === 'direct-download' ? 'Direct download' : (rec.delivery === 'external-key' ? 'External key' : ''));
+        const parts = [
+          rec.sourceBundle || rec.bundle?.title ? `Bundle: ${rec.sourceBundle || rec.bundle?.title}` : '',
+          deliveryText,
+          formatsText,
+          rec.reason || 'Unverified content'
+        ].filter(Boolean);
+        metaSpan.textContent = ` (${parts.join(' · ')})`;
+
+        const recoverSelect = document.createElement('select');
+        recoverSelect.className = 'library-recover-select';
+        recoverSelect.setAttribute('aria-label', `Select category to recover ${rec.title}`);
+        for (const cat of ['book', 'comic', 'game', 'software', 'audiobook', 'video', 'unclassified']) {
+          const opt = document.createElement('option');
+          opt.value = cat;
+          opt.textContent = mediaTypeLabel(cat);
+          recoverSelect.append(opt);
+        }
+
+        const recoverBtn = document.createElement('button');
+        recoverBtn.type = 'button';
+        recoverBtn.className = 'library-recover-btn secondary';
+        recoverBtn.textContent = 'Recover';
+        recoverBtn.addEventListener('click', async () => {
+          try {
+            await mutate('recoverRejectedItem', rec, recoverSelect.value);
+            await refresh();
+          } catch (err) {
+            alert(`Failed to recover item: ${err.message}`);
+          }
+        });
+
+        const dismissBtn = document.createElement('button');
+        dismissBtn.type = 'button';
+        dismissBtn.className = 'library-dismiss-btn secondary';
+        dismissBtn.textContent = 'Dismiss';
+        dismissBtn.addEventListener('click', async () => {
+          try {
+            await mutate('dismissRejectedItem', rec);
+            await refresh();
+          } catch (err) {
+            alert(`Failed to dismiss item: ${err.message}`);
+          }
+        });
+
+        li.append(titleSpan, metaSpan, ' ', recoverSelect, ' ', recoverBtn, dismissBtn);
+        rejectedList.append(li);
+      }
+    }
+
     renderLibraryBrowser(items);
   }
 
@@ -710,6 +930,16 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
   $('#export-catalog').addEventListener('click',async()=>{
     if(libraryBusy)return;setLibraryBusy(true);
     try{const saved=await chrome.storage.local.get({fanaticalLibraryItems:[]}),catalog=createTitleCatalog(saved.fanaticalLibraryItems),link=document.createElement('a');link.href=URL.createObjectURL(new Blob([JSON.stringify(catalog,null,2)],{type:'application/json'}));link.download='fanatical-title-catalog.json';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),0);$('#local-status').textContent='Exported catalog titles and identity metadata only; this is not a recoverable ownership backup.';}catch{$('#local-status').textContent='Could not export the title catalog.';}finally{setLibraryBusy(false);}
+  });
+
+  document.querySelector('#library-dismiss-all-rejected')?.addEventListener('click', async () => {
+    if (!confirm('Dismiss all unimported/rejected items? You can recover them in a future rescan if needed.')) return;
+    try {
+      await mutate('dismissRejectedItem', 'all');
+      await refresh();
+    } catch (err) {
+      alert(`Failed to dismiss rejected items: ${err.message}`);
+    }
   });
 
   $('#reset').addEventListener('click', async () => {
