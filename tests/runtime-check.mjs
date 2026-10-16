@@ -63,6 +63,11 @@ try{
     assert.equal((await evaluate('chrome.runtime.sendMessage('+JSON.stringify(installed.id)+',{type:"PING",apiVersion:1})',hbPage)).ok,false);
     const request={type:'MATCH_ITEMS',apiVersion:1,items:[{requestId:'same',title:'Native creative software',mediaType:'software',excludeProviders:['humble','fanatical']}]},expression='chrome.runtime.sendMessage('+JSON.stringify(paired.id)+','+JSON.stringify(request)+')';
     const hbMatch=await evaluate(expression,hbPage),fanMatch=await evaluate(expression,options);assert.deepEqual(hbMatch.results,fanMatch.results);
+    const {seedConsoleCompanionLibrary,checkConsoleCompanionResults}=await import(pathToFileURL(join(centralRoot,'tests/fixtures/console-companion-native.mjs')));
+    await evaluate('('+seedConsoleCompanionLibrary.toString()+')()',centralPage);
+    assert(await evaluate('('+checkConsoleCompanionResults.toString()+')(message=>chrome.runtime.sendMessage('+JSON.stringify(paired.id)+',message),FanaticalLibrary)',options));
+    assert(await evaluate('('+checkConsoleCompanionResults.toString()+')(message=>chrome.runtime.sendMessage('+JSON.stringify(paired.id)+',message))',hbPage));
+    console.log('PASS installed Chrome: console provenance/ownership through GL to both companions, FAN response validator/resolver, wishlist-only and provider exclusions');
     await evaluate('(async()=>{const S=await import("./src/lib/storage.js");await S.saveAllowedExternalClientIds([]);return true;})()',centralPage);
     for(const page of [hbPage,options])assert.equal((await evaluate(expression,page)).ok,false);
     console.log('PASS installed Chrome: all three packaged extensions, matching parity, GL status in both companions, HB-to-FAN rejection and custom-ID revocation');

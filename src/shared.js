@@ -857,7 +857,7 @@
   }
   async function queryGalacticItems(requests, send, timeoutMs = GALACTIC_REQUEST_TIMEOUT_MS) {
     const results=new Map(),failed=new Set(),failures=new Set();
-    const record=row=>row&&typeof row==='object'&&['steam','gog','epic','amazon-games','audible','kindle','amazon-video','fandango-at-home','kobo','fanatical','humble'].includes(row.provider)&&typeof row.title==='string'&&row.title.trim()&&row.title.length<=500&&['owned','claimed','unknown','subscription','rental','borrowed'].includes(row.ownership)&&(row.relationship===undefined||['same-work','same-edition','contains'].includes(row.relationship));
+    const record=row=>row&&typeof row==='object'&&['steam','gog','epic','amazon-games','audible','kindle','amazon-video','fandango-at-home','kobo','fanatical','humble','nintendo','playstation','xbox'].includes(row.provider)&&typeof row.title==='string'&&row.title.trim()&&row.title.length<=500&&['owned','claimed','unknown','subscription','rental','borrowed','returned','revoked','expired'].includes(row.ownership)&&(row.relationship===undefined||['same-work','same-edition','contains'].includes(row.relationship));
     const entries=value=>Array.isArray(value)&&value.length<=2000&&value.every(entry=>entry&&typeof entry.series==='string'&&typeof entry.number==='string'&&Array.isArray(entry.evidence??[])&&(entry.evidence??[]).every(record));
     for(const batch of galacticBatches(requests)){
       let timer,reason='Connection unavailable';
