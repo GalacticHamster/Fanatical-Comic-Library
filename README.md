@@ -247,7 +247,7 @@ signed-in flows still need the manual checks below.
 - Confirm a signed-out import reports a sign-in/session error without exposing
   token data.
 - Pair Galactic Library; verify an exact external match reads **Owned
-  elsewhere â€” Provider**, never **Owned**.
+  elsewhere — Provider**, never **Owned**.
 - Verify that disabling/removing the paired ID leaves local matching functional.
 - Compare a deluxe edition with an owned base game sharing its Steam App ID;
   confirm **Possible** and the owned-title/package explanation. If explicit
