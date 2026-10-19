@@ -7,6 +7,8 @@
   const catalogueState = { items: null, filters: null, rendering: false };
   let observer = null;
   let diagnosticsEnabled = false;
+  let routeUrl = location.href, routeRevision = 0, pendingOrderImport = null;
+  let disposeOrderPanel = () => {};
 
   function updateDiagnostics(parent, lines, entries = []) {
     let details = parent.querySelector('[data-fanatical-library-diagnostics]');
@@ -330,7 +332,10 @@
   }
 
   function ensureOrderImporter() {
-    if (document.querySelector('#fanatical-library-importer') || !document.body) return;
+    if (!isOrderHistoryPage() || document.querySelector('#fanatical-library-importer') || !document.body) return;
+    disposeOrderPanel();
+    const generation=routeRevision;
+    const active=()=>generation===routeRevision&&isOrderHistoryPage()&&panel.isConnected;
     const panel = document.createElement('section');
     panel.id = 'fanatical-library-importer';
     panel.className = 'fanatical-library-importer';
@@ -344,49 +349,58 @@
     const status = document.createElement('output'); status.setAttribute('aria-live', 'polite');
     const profileControls=document.createElement('div'); profileControls.className='library-import-profile';
     profileControls.innerHTML='<label>Account nickname <input data-profile-label maxlength="100" placeholder="e.g. personal"></label><label><input type="checkbox" data-profile-confirm> The signed-in account matches this nickname</label><label><input type="checkbox" data-profile-switch> Save a new account on full rescan</label>';
-    chrome.storage.local.get({fanaticalProfileLabel:''}).then(saved=>{const input=profileControls.querySelector('[data-profile-label]');if(!input.value)input.value=saved.fanaticalProfileLabel;}).catch(()=>{});
+    chrome.storage.local.get({fanaticalProfileLabel:''}).then(saved=>{const input=profileControls.querySelector('[data-profile-label]');if(active()&&!input.value)input.value=saved.fanaticalProfileLabel;}).catch(()=>{});
     const intro=document.createElement('div'); intro.className='library-import-description';
     const help=document.createElement('details');help.innerHTML='<summary>How account nicknames work</summary><p>Choose a local nickname, such as personal. It does not sign you in or detect your account. Only the active account is checked for ownership. Use Saved accounts below to switch back to a saved snapshot, then Import new purchases to refresh it. Rename account keeps its purchases and scan history. For a new account, sign in on the website, enter a new nickname, select Save a new account, and rescan all purchases once.</p>';
     intro.append(heading,' ',description,help);
     const footer=document.createElement('div');footer.className='library-import-footer';footer.append(status,actions);
     panel.append(intro,profileControls,footer);
     document.body.prepend(panel);
-    LibraryAccountProfiles.mount(intro,{request:async(operation,...args)=>{const result=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation,args});if(!result?.ok)throw Error(result?.error??'Saved accounts are unavailable.');return result.result;},keys:['fanaticalProfileLabel','fanaticalProfileArchives'],onActiveChange:(label,previous)=>{const input=profileControls.querySelector('[data-profile-label]');if(previous===undefined&&input.value)return;const changed=input.value!==label;input.value=label;if(changed){profileControls.querySelector('[data-profile-confirm]').checked=false;if(previous!==undefined)status.textContent='Active account: '+(label||'Not yet named')+'. Import new purchases checks for updates.';}profileControls.querySelector('[data-profile-switch]').checked=false;}});
+    const accounts=LibraryAccountProfiles.mount(intro,{request:async(operation,...args)=>{if(!active())throw Error('Open Orders to manage this account.');const result=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation,args});if(!result?.ok)throw Error(result?.error??'Saved accounts are unavailable.');return result.result;},keys:['fanaticalProfileLabel','fanaticalProfileArchives'],onActiveChange:(label,previous)=>{if(!active())return;const input=profileControls.querySelector('[data-profile-label]');if(previous===undefined&&input.value)return;const changed=input.value!==label;input.value=label;if(changed){profileControls.querySelector('[data-profile-confirm]').checked=false;if(previous!==undefined)status.textContent='Active account: '+(label||'Not yet named')+'. Import new purchases checks for updates.';}profileControls.querySelector('[data-profile-switch]').checked=false;}});
     profileControls.querySelector('[data-profile-label]').addEventListener('input',()=>{profileControls.querySelector('[data-profile-confirm]').checked=false;});
     const buttons = [quick, full];
-    for (const button of buttons) button.addEventListener('click', async () => {
-      const fullScan = button.dataset.importMode === 'all';
-      if (fullScan && !confirm('Full scan every completed Fanatical purchase? This can take longer.')) return;
-      buttons.forEach((control) => { control.disabled = true; });
-      status.textContent = 'Loading your purchase list\u2026';
-      const progressId = [...crypto.getRandomValues(new Uint8Array(16))].map(value=>value.toString(16).padStart(2,'0')).join('');
-      const onProgress = event => {
-        if (event.source !== window || event.origin !== location.origin || event.data?.type !== 'FANATICAL_IMPORT_PROGRESS' || event.data.progressId !== progressId) return;
-        const message = F.purchaseImportProgress(event.data.progress);
-        if (message) status.textContent = message;
+    let removeProgress=()=>{};
+    disposeOrderPanel=()=>{removeProgress();accounts.destroy?.();panel.remove();};
+    const watch=promise=>{
+      buttons.forEach(control=>{control.disabled=true;});
+      promise.then(response=>{
+        if(!active())return;
+        status.textContent=response?.ok?importerResult(response.summary,response.summary.scanMode==='full'):(response?.error??'Import failed.');
+        buttons.forEach(control=>{control.disabled=false;});
+      });
+    };
+    if(pendingOrderImport){status.textContent='An import is still running. Saved progress is kept when you leave Orders.';watch(pendingOrderImport);}
+    for (const button of buttons) button.addEventListener('click', () => {
+      if(!active()||pendingOrderImport)return;
+      const fullScan=button.dataset.importMode==='all';
+      if(fullScan&&!confirm('Full scan every completed Fanatical purchase? This can take longer.'))return;
+      status.textContent='Loading your purchase list\u2026';
+      const progressId=[...crypto.getRandomValues(new Uint8Array(16))].map(value=>value.toString(16).padStart(2,'0')).join('');
+      const onProgress=event=>{
+        if(!active()||event.source!==window||event.origin!==location.origin||event.data?.type!=='FANATICAL_IMPORT_PROGRESS'||event.data.progressId!==progressId)return;
+        const message=F.purchaseImportProgress(event.data.progress);if(message)status.textContent=message;
       };
       window.addEventListener('message',onProgress);
-      try {
-        const response = await chrome.runtime.sendMessage({ type: 'FANATICAL_IMPORT_PURCHASES', fullScan,progressId,profileLabel:profileControls.querySelector('[data-profile-label]').value,confirmed:profileControls.querySelector('[data-profile-confirm]').checked,switchProfile:profileControls.querySelector('[data-profile-switch]').checked });
-        status.textContent = response?.ok ? importerResult(response.summary, fullScan||response.summary.scanMode==='full') : (response?.error ?? 'Import failed.');
-      } catch {
-        status.textContent = 'Import failed. Refresh this signed-in Fanatical Orders page and try again.';
-      } finally {
-        window.removeEventListener('message',onProgress);
-        buttons.forEach((control) => { control.disabled = false; });
-      }
+      removeProgress=()=>window.removeEventListener('message',onProgress);
+      // The worker owns the atomic import. Navigation detaches its UI, not its save.
+      const operation=Promise.resolve().then(()=>chrome.runtime.sendMessage({type:'FANATICAL_IMPORT_PURCHASES',fullScan,progressId,profileLabel:profileControls.querySelector('[data-profile-label]').value,confirmed:profileControls.querySelector('[data-profile-confirm]').checked,switchProfile:profileControls.querySelector('[data-profile-switch]').checked}))
+        .then(response=>response?.ok?{...response,summary:{...response.summary,scanMode:fullScan?'full':response.summary.scanMode}}:response)
+        .catch(()=>({ok:false,error:'Import failed. Open the signed-in Fanatical Orders page and try again.'}));
+      pendingOrderImport=operation;
+      operation.then(()=>{removeProgress();if(pendingOrderImport===operation)pendingOrderImport=null;});
+      watch(operation);
     });
   }
 
   const parse = F.parseBundle;
 
   async function loadPublicBundle(current) {
-    const pageUrl = location.href;
+    const pageUrl = location.href, revision=state.revision;
     if (state.url === pageUrl && state.parsed) return state.parsed;
     const response = await chrome.runtime.sendMessage({ type: 'FANATICAL_GET_PUBLIC_BUNDLE', path: current.endpoint });
     if (!response?.ok) throw new Error(response?.error ?? 'Fanatical bundle data is unavailable.');
     const parsed = parse(response.bundle, current.kind);
-    if (pageUrl === location.href) { state.panelView=null;state.planOpen=false;state.wishOpen=false;state.offerWishPage=0; state.parsed = parsed; state.url = pageUrl; state.capabilityId=null;state.galactic.clear(); state.requests.clear(); state.failed.clear(); }
+    if (pageUrl === location.href && revision===state.revision) { state.panelView=null;state.planOpen=false;state.wishOpen=false;state.offerWishPage=0; state.parsed = parsed; state.url = pageUrl; state.capabilityId=null;state.galactic.clear(); state.requests.clear(); state.failed.clear(); }
     return parsed;
   }
 
@@ -1255,7 +1269,7 @@ function restoreSummaryState(panel, state) {
         }));
       }
     } catch (error) {
-      showPanel(`Fanatical Library could not load this bundle: ${String(error?.message ?? 'unknown error')}`, true);
+      if(revision===state.revision&&pageUrl===location.href&&route())showPanel(`Fanatical Library could not load this bundle: ${String(error?.message ?? 'unknown error')}`, true);
     } finally {
       const rerender = state.pendingRender || revision !== state.revision || uiRevision !== (state.uiRevision ?? 0) || pageUrl !== location.href;
       if (!rerender) state.keepSummaryDuringRetry = false;
@@ -1268,24 +1282,23 @@ function restoreSummaryState(panel, state) {
     }
   }
 
-  if (isOrderHistoryPage()) {
-    ensureOrderImporter();
-    let importerTimer;
-    new MutationObserver(() => {
-      if (document.querySelector('#fanatical-library-importer')) return;
-      clearTimeout(importerTimer);
-      importerTimer = setTimeout(ensureOrderImporter, 100);
-    }).observe(document.documentElement, { childList: true, subtree: true });
-    return;
-  }
-
   const schedule = (force = false) => {
+    if(routeUrl!==location.href){
+      routeUrl=location.href;routeRevision++;state.revision++;state.panelView=null;
+      clearTimeout(state.timer);disposeOrderPanel();disposeOrderPanel=()=>{};
+      restorePickMixReflow();state.parsed=null;state.url='';state.summaryDirty=true;
+      state.galactic.clear();state.requests.clear();state.failed.clear();state.capabilityId=null;
+      document.body.classList.remove('fanatical-library-show-new-only');
+      document.querySelectorAll('#fanatical-library-summary, #fanatical-library-evidence, [data-fanatical-library-for], [data-fanatical-library-title-for]').forEach(node=>node.remove());
+    }
     if (isCataloguePage()) { clearTimeout(state.timer); state.timer = setTimeout(renderCatalogue, 120); return; }
     document.querySelectorAll('[data-fanatical-library-catalogue-for]').forEach((badge) => badge.remove());
     document.querySelectorAll('.fanatical-library-catalogue-card').forEach((card) => card.classList.remove('fanatical-library-catalogue-card'));
     document.querySelectorAll('.fanatical-library-catalogue-filtered').forEach((slot) => slot.classList.remove('fanatical-library-catalogue-filtered'));
     document.querySelector('#fanatical-library-catalogue-controls')?.remove();
     document.querySelector('#fanatical-library-catalogue-diagnostics')?.remove();
+    if(isOrderHistoryPage()){clearTimeout(state.timer);ensureOrderImporter();return;}
+    if (!route()) {clearTimeout(state.timer);return;}
     if (!force && state.parsed && state.url === location.href && !cardsNeedAnnotation()) return;
     // Do not lose a storage/UI update when its timer fires during an await.
     if (state.rendering) { state.pendingRender = true; return; }
@@ -1312,6 +1325,13 @@ function restoreSummaryState(panel, state) {
     if (state.parsed?.kind !== 'pick-mix' || signal.target.closest('[data-fanatical-library-summary], #fanatical-library-evidence, [data-fanatical-library-for]')) return;
     if (signal.target.closest('article.PickAndMixCard')) { state.summaryDirty = true; schedule(true); }
   });
+  globalThis.addEventListener?.('popstate',()=>schedule(true));
+  globalThis.addEventListener?.('hashchange',()=>schedule(true));
+  globalThis.navigation?.addEventListener?.('currententrychange',()=>schedule(true));
+  // Content scripts use an isolated world: page history method patches are not
+  // reliable here. DOM observation plus this cheap URL-only check covers
+  // pushState/replaceState even when the website does not mutate the DOM.
+  globalThis.setInterval?.(()=>{if(routeUrl!==location.href)schedule(true);},250);
   F.renderSummary = renderSummary;
   F.updateSummary = updateSummary;
   F.render = render;

@@ -1279,7 +1279,7 @@
   global.FanaticalLibrary = { purchaseImportScope, purchaseImportProgress, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, isCompleteBundleCatalogue, isBundleOverlapProduct, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, sendGalacticMatch, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, COMPANION_IDENTITIES, companionBrowser, builtinGalacticId, resolveGalacticId, galacticAvailability, galacticPermissionDenied, trustedGalacticSender, companionTargetProblem, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft, isComicItem, mediaOverrideKey };
 }(globalThis));
 
-/* Identical account picker in both companions; all changes use the serialized writer. */
+/* Account picker; all changes use the serialized writer. */
 (function(global){
   function mount(host,{request,keys,onActiveChange=()=>{}}){
     if(!host?.ownerDocument)return {refresh:async()=>{}};
@@ -1313,8 +1313,9 @@
       try{await request('renameProfile',{profileLabel:label,newLabel:next,expectedActiveLabel:data.activeLabel,confirmed:true});await refresh();list.value=next;name.value=next;confirmed.checked=false;status.textContent='Renamed '+label+' to '+next+'. Purchases and scan history were kept; no scan was started.';}
       catch(error){status.textContent=error.message;await refresh();}finally{busy=false;controls();}
     });
-    chrome.storage.onChanged?.addListener((changes,area)=>{if(area==='local'&&keys.some(key=>changes[key]))refresh();});
-    refresh();return {refresh};
+    const onStorage=(changes,area)=>{if(area==='local'&&keys.some(key=>changes[key]))refresh();};
+    chrome.storage.onChanged?.addListener(onStorage);
+    refresh();return {refresh,destroy(){revision++;chrome.storage.onChanged?.removeListener?.(onStorage);}};
   }
   global.LibraryAccountProfiles={mount};
 }(globalThis));

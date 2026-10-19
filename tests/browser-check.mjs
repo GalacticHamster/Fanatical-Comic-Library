@@ -12,6 +12,8 @@ const firefox=process.argv.includes('--firefox');
 const slowCentral=process.argv.includes('--slow-central');
 const themeMode=process.argv.includes('--theme'),themeWidth=process.argv.includes('--tiny')?420:process.argv.includes('--narrow')?560:1200;
 const lifecycle=process.argv.includes('--lifecycle');
+const navigation=process.argv.includes('--navigation');
+const glPack=navigation?await(await import('../../GalacticLibrary/scripts/release.mjs')).createRelease(undefined,undefined,firefox?'firefox':'chrome'):null;
 const packaged=process.argv.includes('--release')?await createRelease(undefined,undefined,firefox?'firefox':'chrome'):null;
 const readRuntime=name=>process.env.FAN_TEST_CONTENT_REF&&name==='src/content.js'
   ?execFileSync('git',['show',process.env.FAN_TEST_CONTENT_REF+':'+name],{cwd:root,windowsHide:true,encoding:'utf8',maxBuffer:4*1024*1024})
@@ -347,6 +349,9 @@ const server = http.createServer((request, response) => {
   if (url === '/lifecycle-fixture.js') return send('text/javascript',fs.readFileSync(new URL('./lifecycle-fixture.js',import.meta.url),'utf8'));
   if(url==='/theme-check.js')return send('text/javascript',fs.readFileSync(new URL('./theme-overlay-checks.js',import.meta.url),'utf8'));
   if (url === '/lifecycle-check.js') return send('text/javascript',common+presentationChecks+fs.readFileSync(new URL('./lifecycle-checks.js',import.meta.url),'utf8'));
+  if(url.startsWith('/gl/'))return send('text/javascript',glPack.files.get(url.slice(4))?.toString('utf8')??'');
+  if(url==='/navigation-fixture.js')return send('text/javascript','globalThis.navigationCards='+JSON.stringify(cards('bundle-product-card'))+';'+fs.readFileSync(new URL('./navigation-fixture.js',import.meta.url),'utf8'));
+  if(url==='/navigation-check.js')return send('text/javascript',fs.readFileSync(new URL('./navigation-checks.js',import.meta.url),'utf8'));
   if (url === '/mock.js') return send('text/javascript', mock);
   if (url === '/options-check.js') return send('text/javascript', optionsChecks);
   if (url === '/bundle-check.js') return send('text/javascript', bundleChecks);
@@ -363,7 +368,7 @@ const server = http.createServer((request, response) => {
     const html = readRuntime('src/options.html').replace('<head>', '<head><base href="/src/">').replace('<script src="shared.js">', '<script src="/mock.js"></script><script src="shared.js">').replace('</body>', '<script type="module" src="/options-check.js"></script></body>');
     return send('text/html', html);
   }
-  if (url === '/en/orders') return send('text/html', '<!doctype html><html><head><link rel="stylesheet" href="/src/theme.css"><link rel="stylesheet" href="/src/content.css"><link rel="stylesheet" href="/src/theme-overlays.css"></head><body><main>Mock orders</main><script src="/mock.js"></script><script src="/src/theme.js"></script><script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/order-check.js"></script></body></html>');
+  if (url === '/en/orders') return send('text/html', `<!doctype html><html><head><link rel="stylesheet" href="/src/theme.css"><link rel="stylesheet" href="/src/content.css"><link rel="stylesheet" href="/src/theme-overlays.css"></head><body><main>Mock orders</main><script src="/mock.js"></script>${navigation?'<script src="/navigation-fixture.js"></script>':''}<script src="/src/theme.js"></script><script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script>${navigation?'<script src="/gl/src/providers/floating-panel.js"></script><script src="/gl/src/providers/fanatical.js"></script><script src="/gl/src/providers/fanatical-content.js"></script><script type="module" src="/navigation-check.js"></script>':'<script type="module" src="/order-check.js"></script>'}</body></html>`);
   if(url==='/en/bundle/test-empty')return send('text/html','<!doctype html><html><head><link rel="stylesheet" href="/src/theme.css"><link rel="stylesheet" href="/src/content.css"><link rel="stylesheet" href="/src/theme-overlays.css"></head><body><script src="/mock.js"></script><script src="/src/theme.js"></script><script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/empty-check.js"></script></body></html>');
   if (url === '/en/bundle/test-comics' || url === '/en/bundle/books' || url === '/en/pick-and-mix/test-mix' || url.endsWith('/test-editions') || url.endsWith('/test-contents')) {
     const isCatalogue = url.endsWith('/books');
@@ -376,7 +381,7 @@ const server = http.createServer((request, response) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 try {
   const allRoutes = ['/options', '/en/bundle/test-comics', '/en/pick-and-mix/test-mix', '/en/bundle/books', '/en/bundle/test-editions', '/en/pick-and-mix/test-editions', '/en/orders', '/en/bundle/test-contents', '/en/pick-and-mix/test-contents','/en/bundle/test-empty'];
-  const selectedRoutes=process.argv.slice(2).filter(arg=>!['--release','--firefox','--slow-central','--lifecycle','--theme','--narrow','--tiny'].includes(arg));const routes=selectedRoutes.length?selectedRoutes:themeMode?['/en/bundle/test-comics','/en/bundle/test-contents']:lifecycle?['/en/bundle/test-contents','/en/bundle/test-editions']:slowCentral?['/en/bundle/test-comics','/en/pick-and-mix/test-mix']:allRoutes;
+  const selectedRoutes=process.argv.slice(2).filter(arg=>!['--release','--firefox','--slow-central','--lifecycle','--navigation','--theme','--narrow','--tiny'].includes(arg));const routes=selectedRoutes.length?selectedRoutes:navigation?['/en/orders']:themeMode?['/en/bundle/test-comics','/en/bundle/test-contents']:lifecycle?['/en/bundle/test-contents','/en/bundle/test-editions']:slowCentral?['/en/bundle/test-comics','/en/pick-and-mix/test-mix']:allRoutes;
   if (routes.some(route => !allRoutes.includes(route))) throw new Error('Unknown browser fixture route');
   for (const [index, route] of routes.entries()) {
     let stopped=Promise.resolve();

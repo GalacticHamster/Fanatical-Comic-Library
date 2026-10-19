@@ -1,0 +1,45 @@
+const checks=[];
+const check=(ok,label)=>{if(!ok)throw Error(label);checks.push(label);};
+const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const until=async predicate=>{for(let n=0;n<200;n++){if(predicate())return;await pause(20);}throw Error('Navigation did not settle: '+predicate);};
+const fan=()=>document.querySelector('#fanatical-library-importer'),gl=()=>document.querySelector('#galactic-library-fanatical-importer');
+const summary=()=>document.querySelector('[data-fanatical-library-summary]');
+const orders=async()=>{await until(()=>fan()&&gl());check(document.querySelectorAll('#fanatical-library-importer').length===1&&document.querySelectorAll('#galactic-library-fanatical-importer').length===1,'Exactly one banner and one GL popup on Orders');};
+const navigate=(path,method='pushState',dom=true)=>{history[method]({},'',path);if(dom)document.querySelector('main').innerHTML=path.includes('/bundle/')?navigationCards:'Unrelated website page';};
+const glClick=()=>navigationShadows.get(gl()).querySelector('button[data-mode]').click();
+try{
+ await orders();
+ navigationHoldFan=true;fan().querySelector('[data-profile-label]').value='Fixture';fan().querySelector('[data-profile-confirm]').checked=true;fan().querySelector('[data-import-mode="new"]').click();
+ await until(()=>globalThis.navigationReleaseFan);
+ centralDelayMs=300;navigate('/en/bundle/test-comics');
+ await until(()=>summary()?.querySelector('.fanatical-library-galactic-pending'));
+ check(!fan()&&!gl(),'Orders to bundle removes both import interfaces before GL enrichment completes');
+ await until(()=>summary()&&!summary().querySelector('.fanatical-library-galactic-pending')&&document.querySelector('.fanatical-library-owned-elsewhere-badge'));
+ check(document.querySelectorAll('[data-fanatical-library-for]').length===4,'Bundle overlay initializes with local ownership and GL enrichment without reload');
+ navigate('/en/orders');await orders();
+ check(fan().querySelector('[data-import-mode]').disabled&&fan().textContent.includes('still running'),'Returning during an existing FAN import waits instead of starting another import');
+ navigate('/en/bundle/test-comics');await until(()=>summary()&&document.querySelector('.fanatical-library-owned-elsewhere-badge'));
+ navigationReleaseFan();await until(()=>navigationCompletedFan===1);await pause(50);
+ check(!fan()&&!gl(),'A completed detached FAN import does not recreate import UI');
+ navigate('/en/orders','replaceState');await orders();
+ check(!fan().querySelector('[data-import-mode]').disabled,'Returning Orders is usable after the existing background import finishes');
+ navigationHoldGl=true;glClick();await until(()=>globalThis.navigationReleaseGl);
+ navigate('/en/account');await until(()=>!fan()&&!gl()&&!summary());
+ check(true,'Orders to unrelated page removes import and bundle UI');
+ navigate('/en/orders','pushState',false);await orders(); // URL-only history transition.
+ const fresh=gl();navigationReleaseGl();await pause(100);
+ check(navigationCommits===0&&gl()===fresh,'Stale GL scan cannot commit through a replacement panel or recreate a detached popup');
+ glClick();await until(()=>navigationCommits===1);
+ check(true,'Fresh GL import succeeds after returning to Orders');
+ navigationHoldBundle=true;navigate('/en/bundle/test-comics');await until(()=>globalThis.navigationRejectBundle);
+ navigate('/en/account','replaceState');await until(()=>!summary()&&!gl()&&!fan());
+ navigate('/en/orders');await orders();navigationRejectBundle();await pause(100);
+ check(!summary(),'Late bundle failure cannot recreate a bundle panel over Orders');
+ navigate('/en/bundle/test-comics');await until(()=>summary()&&document.querySelector('.fanatical-library-owned-elsewhere-badge'));
+ check(!fan()&&!gl()&&document.querySelectorAll('[data-fanatical-library-summary]').length===1,'Rapid orders/bundle transitions settle to one correct bundle overlay');
+ navigate('/en/account');await until(()=>!summary());history.back();await until(()=>summary()&&document.querySelector('.fanatical-library-owned-elsewhere-badge'));
+ check(!fan()&&!gl(),'Browser Back/popstate initializes the bundle overlay');
+ navigate('/en/orders');await orders();fan().remove();gl().remove();await orders();
+ check(navigationCompletedFan===1&&navigationCommits===1,'UI remounts do not start duplicate imports');
+ await fetch('/result?route=/en/orders',{method:'POST',body:JSON.stringify({ok:true,scenario:'SPA navigation, pending imports, stale callbacks, both packaged panels and bundle enrichment',checks})});
+}catch(error){await fetch('/result?route=/en/orders',{method:'POST',body:JSON.stringify({ok:false,error:error.stack,checks})});}
