@@ -330,3 +330,7 @@ Galactic Library availability is checked before an external ownership lookup. Wh
 Fanatical single-page navigation initializes the Orders importer and bundle summary independently. Leaving Orders removes import controls; an already started background import can finish safely. Returning Orders reconnects its controls to that pending operation. Bundle and account changes invalidate older rendering callbacks without changing saved purchases. Navigation detection uses browser navigation events, DOM observation, and a lightweight URL fallback for isolated content scripts.
 
 With the adjacent GalacticLibrary checkout, run `node tests/browser-check.mjs --release --navigation` (and repeat with `--firefox`) to check both packaged import panels during single-page navigation and pending imports. The fixture uses disposable data, not signed-in accounts.
+
+## Support development
+
+Enjoying Galactic Hamster's free, open-source tools? If you'd like to support continued development, you can [buy us a coffee on Ko-fi](https://ko-fi.com/galactichamster). Donations are entirely optional.
