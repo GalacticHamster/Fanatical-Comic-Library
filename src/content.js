@@ -746,7 +746,8 @@ function restoreSummaryState(panel, state) {
     const list=document.createElement('ul');for(const row of rows){const li=document.createElement('li');li.textContent=`${row.item.title} — ${row.relation==='match'?'Wishlist match':'Related wishlist item'}`;list.append(li);const host=cardFor(row.item)?.querySelector('.cover-container');if(host){const marker=document.createElement('span');marker.className='fanatical-library-wish-marker';marker.textContent=row.relation==='match'?'♥ Wishlist':'♡ Related wish';host.append(marker);}}details.append(list);summary.append(details);
   }
 
-  function renderSummary(parsed, matches, localItems) {
+  function renderSummary(parsed, matches, localItems, options = {}) {
+    const isPending = Boolean(options?.pendingGalactic);
     const counts = { owned: 0, elsewhere: 0, partial: 0, possible: 0, new: 0, unchecked: 0 };
     for (const match of matches) {
       if (match.state === 'owned') counts.owned++;
@@ -761,8 +762,17 @@ function restoreSummaryState(panel, state) {
     const element = panel();
     const title=document.createElement('strong'); title.textContent='Bundle ownership'; element.append(title);
     const heading=document.createElement('strong'); heading.className='fanatical-library-summary-counts';
-    heading.textContent=`Owned ${counts.owned} · Owned elsewhere ${counts.elsewhere} · New ${counts.new} · Partial ${counts.partial} · Possible ${counts.possible}${counts.unchecked?` · Check incomplete ${counts.unchecked}`:''}`; element.append(heading);
-    const countHelp=document.createElement('p');countHelp.className='library-ui-muted';countHelp.textContent='Possible needs review; Partial overlaps some known contents. New means no match in available data.';element.append(countHelp);
+    if (isPending) {
+      heading.textContent = `Preliminary: Owned ${counts.owned} · Not owned locally ${counts.new}${counts.partial ? ` · Partial ${counts.partial}` : ''}${counts.possible ? ` · Possible ${counts.possible}` : ''}`;
+    } else {
+      heading.textContent = `Owned ${counts.owned} · Owned elsewhere ${counts.elsewhere} · New ${counts.new} · Partial ${counts.partial} · Possible ${counts.possible}${counts.unchecked ? ` · Check incomplete ${counts.unchecked}` : ''}`;
+    }
+    element.append(heading);
+    const countHelp=document.createElement('p');countHelp.className='library-ui-muted';
+    countHelp.textContent = isPending
+      ? 'Preliminary local checks. Galactic Library is checking linked libraries for additional ownership.'
+      : 'Possible needs review; Partial overlaps some known contents. New means no match in available data.';
+    element.append(countHelp);
     const advanced=document.createElement('details'); advanced.className='fanatical-library-advanced'; advanced.dataset.section='advanced';
     const advancedHeading=document.createElement('summary'); advancedHeading.textContent='Advanced'; advanced.append(advancedHeading);
     appendContentsSummary(advanced, parsed, matches);
@@ -778,9 +788,21 @@ function restoreSummaryState(panel, state) {
     const legend = document.createElement('div'); legend.className = 'fanatical-library-legend';
     for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partial'], ['possible', 'Possible'], ['unchecked', 'Check incomplete']]) { const chip = document.createElement('span'); chip.className = `fanatical-library-legend-${state}`; chip.textContent = label; legend.append(chip); }
     element.append(legend);
-    if (state.galacticEnabled) {
-      const galactic = document.createElement('p'); galactic.className = 'fanatical-library-galactic-status '+(state.failed.size || state.capabilityFailed?'library-ui-warning':'library-ui-muted'); galactic.textContent = state.failed.size || state.capabilityFailed ? 'Galactic Library: check incomplete. Local results are retained.' : state.galactic.size?'Galactic Library: checked linked libraries.':'Galactic Library: linked; no central checks completed on this page.'; galactic.title = 'Checks catalog and contents evidence with local Galactic Library. Central Fanatical copies are excluded; rescan local orders if the snapshots disagree.'; element.append(galactic);
-      if (state.failed.size || state.capabilityFailed) {
+    if (state.galacticEnabled || isPending) {
+      const galactic = document.createElement('p');
+      if (isPending) {
+        galactic.className = 'library-ui-muted fanatical-library-galactic-status fanatical-library-galactic-pending';
+        const bullet = document.createElement('span');
+        bullet.className = 'fanatical-library-pending-bullet';
+        bullet.textContent = '●';
+        galactic.append(bullet, ' Checking Galactic Library…');
+      } else {
+        galactic.className = 'fanatical-library-galactic-status '+(state.failed.size || state.capabilityFailed?'library-ui-warning':'library-ui-muted');
+        galactic.textContent = state.failed.size || state.capabilityFailed ? 'Galactic Library: check incomplete. Local results are retained.' : state.galactic.size?'Galactic Library: checked linked libraries.':'Galactic Library: linked; no central checks completed on this page.';
+      }
+      galactic.title = 'Checks catalog and contents evidence with local Galactic Library. Central Fanatical copies are excluded; rescan local orders if the snapshots disagree.';
+      element.append(galactic);
+      if (!isPending && (state.failed.size || state.capabilityFailed)) {
         const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'fanatical-library-download fanatical-library-retry-galactic'; retry.textContent = 'Retry Galactic Library checks';
         retry.addEventListener('click', () => {
           if (retry.disabled) return;
@@ -795,7 +817,7 @@ function restoreSummaryState(panel, state) {
         element.append(retry);
       }
     }
-    if (!state.galacticEnabled) { const status=document.createElement('p'); status.className='library-ui-muted';status.textContent='Galactic Library: not linked — local library only.'; element.append(status); }
+    if (!state.galacticEnabled && !isPending) { const status=document.createElement('p'); status.className='library-ui-muted fanatical-library-galactic-status';status.textContent='Galactic Library: not linked — local library only.'; element.append(status); }
     appendWishlistNotice(element, parsed);
     appendNewOnlyFilter(element);
     let tierDownload = null;
@@ -803,8 +825,13 @@ function restoreSummaryState(panel, state) {
       const { tiers } = F.standardTierCoverage(parsed, matches);
       const list = document.createElement('ul'); list.className = 'fanatical-library-tier-list';
       tiers.forEach(({ price, total, confirmedNew }, index) => {
-        const priceText = price !== null ? `$${(price / 100).toFixed(2)} tier` : `Tier ${index + 1}`; const perNew = confirmedNew && price !== null ? ` · $${(price / 100 / confirmedNew).toFixed(2)}/new` : '';
-        const line = document.createElement('li'); line.textContent = `${priceText}: ${confirmedNew} new / ${total}${perNew}`; list.append(line);
+        const priceText = price !== null ? `$${(price / 100).toFixed(2)} tier` : `Tier ${index + 1}`;
+        if (isPending) {
+          const line = document.createElement('li'); line.textContent = `${priceText}: ${confirmedNew} not owned locally / ${total}`; list.append(line);
+        } else {
+          const perNew = confirmedNew && price !== null ? ` · $${(price / 100 / confirmedNew).toFixed(2)}/new` : '';
+          const line = document.createElement('li'); line.textContent = `${priceText}: ${confirmedNew} new / ${total}${perNew}`; list.append(line);
+        }
       });
       element.append(list);
       tierDownload = document.createElement('button'); tierDownload.type = 'button'; tierDownload.className = 'fanatical-library-download'; tierDownload.textContent = 'Download complete item list'; tierDownload.addEventListener('click', () => downloadTierList(parsed, matches));
@@ -818,17 +845,21 @@ function restoreSummaryState(panel, state) {
         const priceText = Number.isFinite(price) ? `$${(price / 100).toFixed(2)} tier` : `${tier.quantity}-item tier`;
         const perItem = Number.isFinite(price) && tier.quantity ? ` · $${(price / 100 / tier.quantity).toFixed(2)}/item` : '';
         const row = document.createElement('li');
-        row.textContent = `${priceText}: choose ${tier.quantity} item${tier.quantity === 1 ? '' : 's'} from ${availableProducts.length} available (${availableNew} confirmed new)${perItem}`;
+        if (isPending) {
+          row.textContent = `${priceText}: choose ${tier.quantity} item${tier.quantity === 1 ? '' : 's'} from ${availableProducts.length} available (${availableNew} not owned locally)${perItem}`;
+        } else {
+          row.textContent = `${priceText}: choose ${tier.quantity} item${tier.quantity === 1 ? '' : 's'} from ${availableProducts.length} available (${availableNew} confirmed new)${perItem}`;
+        }
         tierList.append(row);
       }
       element.append(tierList);
       tierDownload = document.createElement('button'); tierDownload.type = 'button'; tierDownload.className = 'fanatical-library-download'; tierDownload.textContent = 'Download complete item list'; tierDownload.addEventListener('click', () => downloadTierList(parsed, matches));
     }
-    if (detail || rates) { const extra = document.createElement('div'); extra.textContent = `${detail}${rates ? ` USD: ${rates}.` : ''}`; element.append(extra); }
-    for (const [state, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partial'], ['possible', 'Possible matches'], ['unchecked', 'Check incomplete']]) {
-      const entries = parsed.products.filter((_product, index) => (state === 'owned-elsewhere' ? matches[index].state === 'owned-elsewhere' : matches[index].state === state));
+    if (detail || rates) { const extra = document.createElement('div'); extra.className = 'fanatical-library-extra'; extra.textContent = `${detail}${rates ? ` USD: ${rates}.` : ''}`; element.append(extra); }
+    for (const [stateKey, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', isPending ? 'Not owned locally' : 'New'], ['partial', 'Partial'], ['possible', 'Possible matches'], ['unchecked', 'Check incomplete']]) {
+      const entries = parsed.products.filter((_product, index) => (stateKey === 'owned-elsewhere' ? matches[index].state === 'owned-elsewhere' : matches[index].state === stateKey));
       if (!entries.length) continue;
-      const detailList = document.createElement('details'); detailList.className = 'fanatical-library-title-list'; detailList.dataset.section=state; const title = document.createElement('summary'); title.textContent = `${label} (${entries.length})`; detailList.append(title); const list = document.createElement('ol'); alphabetize(entries).forEach((product) => {
+      const detailList = document.createElement('details'); detailList.className = 'fanatical-library-title-list'; detailList.dataset.section=stateKey; const title = document.createElement('summary'); title.textContent = `${label} (${entries.length})`; detailList.append(title); const list = document.createElement('ol'); alphabetize(entries).forEach((product) => {
         const match = matches[parsed.products.findIndex((candidate) => candidate.sourceItemId === product.sourceItemId)];
         const row = document.createElement('li');
         const view=F.presentation.row(product, match);
@@ -843,6 +874,173 @@ function restoreSummaryState(panel, state) {
     if (tierDownload) element.append(tierDownload);
     appendSummaryControls(element);
     restoreSummaryState(element,state.panelView);
+  }
+
+  function updateSummary(parsed, matches, localItems) {
+    const summary = document.querySelector('[data-fanatical-library-summary]');
+    if (!summary || !summary.isConnected || !summary.classList.contains('fanatical-library-summary')) {
+      renderSummary(parsed, matches, localItems);
+      return;
+    }
+    summary.removeAttribute('aria-busy');
+    const savedState = captureSummaryState(summary);
+
+    const counts = { owned: 0, elsewhere: 0, partial: 0, possible: 0, new: 0, unchecked: 0 };
+    for (const match of matches) {
+      if (match.state === 'owned') counts.owned++;
+      else if (match.state === 'owned-elsewhere') counts.elsewhere++;
+      else if (match.state === 'partial') counts.partial++;
+      else if (match.state === 'possible') counts.possible++;
+      else if (match.state === 'unchecked') counts.unchecked++;
+      else counts.new++;
+    }
+
+    // 1. Update counts headline & countHelp
+    const headline = summary.querySelector('.fanatical-library-summary-counts');
+    if (headline) {
+      headline.textContent = `Owned ${counts.owned} · Owned elsewhere ${counts.elsewhere} · New ${counts.new} · Partial ${counts.partial} · Possible ${counts.possible}${counts.unchecked ? ` · Check incomplete ${counts.unchecked}` : ''}`;
+    }
+    const countHelp = summary.querySelector('.fanatical-library-summary-counts + p');
+    if (countHelp) {
+      countHelp.textContent = 'Possible needs review; Partial overlaps some known contents. New means no match in available data.';
+    }
+
+    // 2. Update galactic status row
+    let galactic = summary.querySelector('.fanatical-library-galactic-status');
+    if (galactic) {
+      galactic.classList.remove('fanatical-library-galactic-pending');
+      if (state.galacticEnabled) {
+        galactic.className = 'fanatical-library-galactic-status ' + (state.failed.size || state.capabilityFailed ? 'library-ui-warning' : 'library-ui-muted');
+        galactic.textContent = state.failed.size || state.capabilityFailed
+          ? 'Galactic Library: check incomplete. Local results are retained.'
+          : state.galactic.size ? 'Galactic Library: checked linked libraries.' : 'Galactic Library: linked; no central checks completed on this page.';
+        galactic.title = 'Checks catalog and contents evidence with local Galactic Library. Central Fanatical copies are excluded; rescan local orders if the snapshots disagree.';
+
+        const existingRetry = summary.querySelector('.fanatical-library-retry-galactic');
+        if (state.failed.size || state.capabilityFailed) {
+          if (!existingRetry) {
+            const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'fanatical-library-download fanatical-library-retry-galactic'; retry.textContent = 'Retry Galactic Library checks';
+            retry.addEventListener('click', () => {
+              if (retry.disabled) return;
+              retry.disabled = true;
+              summary.setAttribute('aria-busy', 'true');
+              state.keepSummaryDuringRetry = true;
+              if (state.capabilityFailed) state.capabilityId = null;
+              state.revision++; state.summaryDirty = true;
+              schedule(true);
+            });
+            galactic.after(retry);
+          } else {
+            existingRetry.disabled = false;
+          }
+        } else if (existingRetry) {
+          existingRetry.remove();
+        }
+      } else {
+        galactic.className = 'library-ui-muted fanatical-library-galactic-status';
+        galactic.textContent = 'Galactic Library: not linked — local library only.';
+      }
+    }
+
+    // 3. Update tier list
+    const tierList = summary.querySelector('.fanatical-library-tier-list');
+    if (tierList) {
+      if (parsed.kind === 'standard' && parsed.groups.length) {
+        const { tiers } = F.standardTierCoverage(parsed, matches);
+        const tierRows = [];
+        tiers.forEach(({ price, total, confirmedNew }, index) => {
+          const priceText = price !== null ? `$${(price / 100).toFixed(2)} tier` : `Tier ${index + 1}`;
+          const perNew = confirmedNew && price !== null ? ` · $${(price / 100 / confirmedNew).toFixed(2)}/new` : '';
+          tierRows.push(`${priceText}: ${confirmedNew} new / ${total}${perNew}`);
+        });
+        const existingLis = tierList.querySelectorAll('li');
+        if (existingLis.length === tierRows.length) {
+          existingLis.forEach((li, idx) => { li.textContent = tierRows[idx]; });
+        } else {
+          tierList.replaceChildren(...tierRows.map(text => { const li = document.createElement('li'); li.textContent = text; return li; }));
+        }
+      } else if (parsed.kind === 'pick-mix' && parsed.tiers.length) {
+        const availableProducts = parsed.products.filter((product) => product.availability.regionAvailable && !product.availability.soldOut);
+        const availableNew = availableProducts.filter((product) => matches[parsed.products.findIndex((candidate) => candidate.sourceItemId === product.sourceItemId)]?.state === 'new').length;
+        const tierRows = [];
+        for (const tier of [...parsed.tiers].sort((left, right) => Number(left.price?.USD ?? Number.MAX_SAFE_INTEGER) - Number(right.price?.USD ?? Number.MAX_SAFE_INTEGER))) {
+          const price = Number(tier.price?.USD);
+          const priceText = Number.isFinite(price) ? `$${(price / 100).toFixed(2)} tier` : `${tier.quantity}-item tier`;
+          const perItem = Number.isFinite(price) && tier.quantity ? ` · $${(price / 100 / tier.quantity).toFixed(2)}/item` : '';
+          tierRows.push(`${priceText}: choose ${tier.quantity} item${tier.quantity === 1 ? '' : 's'} from ${availableProducts.length} available (${availableNew} confirmed new)${perItem}`);
+        }
+        const existingLis = tierList.querySelectorAll('li');
+        if (existingLis.length === tierRows.length) {
+          existingLis.forEach((li, idx) => { li.textContent = tierRows[idx]; });
+        } else {
+          tierList.replaceChildren(...tierRows.map(text => { const li = document.createElement('li'); li.textContent = text; return li; }));
+        }
+      }
+    }
+
+    // 4. Update extra (pick-mix available unowned)
+    const extra = summary.querySelector('.fanatical-library-extra');
+    const detail = parsed.kind === 'pick-mix' ? ` Available unowned: ${matches.filter((match, i) => match.state === 'new' && parsed.products[i].availability.regionAvailable && !parsed.products[i].availability.soldOut).length}. Selected (page UI): ${selectedCount(parsed.products)}.` : '';
+    const rates = parsed.kind === 'pick-mix' ? parsed.tiers.map((tier) => Number.isFinite(tier.price?.USD) ? `${tier.quantity}: $${(tier.price.USD / 100 / tier.quantity).toFixed(2)}/item` : '').filter(Boolean).join(' · ') : '';
+    if (extra && (detail || rates)) {
+      extra.textContent = `${detail}${rates ? ` USD: ${rates}.` : ''}`;
+    }
+
+    // 5. Update title breakdown lists (preserving open state)
+    for (const detail of summary.querySelectorAll('.fanatical-library-title-list')) {
+      detail.remove();
+    }
+    const insertBeforeEl = summary.querySelector('.fanatical-library-advanced') || summary.querySelector('.fanatical-library-download');
+    for (const [stateKey, label] of [['owned', 'Owned'], ['owned-elsewhere', 'Owned elsewhere'], ['new', 'New'], ['partial', 'Partial'], ['possible', 'Possible matches'], ['unchecked', 'Check incomplete']]) {
+      const entries = parsed.products.filter((_product, index) => (stateKey === 'owned-elsewhere' ? matches[index].state === 'owned-elsewhere' : matches[index].state === stateKey));
+      if (!entries.length) continue;
+      const detailList = document.createElement('details'); detailList.className = 'fanatical-library-title-list'; detailList.dataset.section = stateKey;
+      if (savedState?.open?.includes(stateKey)) detailList.open = true;
+      const title = document.createElement('summary'); title.textContent = `${label} (${entries.length})`; detailList.append(title);
+      const list = document.createElement('ol');
+      alphabetize(entries).forEach((product) => {
+        const match = matches[parsed.products.findIndex((candidate) => candidate.sourceItemId === product.sourceItemId)];
+        const row = document.createElement('li');
+        const view = F.presentation.row(product, match);
+        row.append(document.createTextNode(product.title + (view.providers.length ? ' — ' + view.providers.join(', ') : '') + (view.fraction ? ' — ' + view.fraction : '')));
+        if (view.why) {
+          const inspect = document.createElement('button'); inspect.type = 'button'; inspect.className = 'fanatical-library-inspect'; inspect.textContent = 'Why?'; inspect.setAttribute('aria-label', 'Why ' + product.title); inspect.addEventListener('click', () => showEvidence(match, inspect)); row.append(' ', inspect);
+        }
+        appendRelatedTitles(row, match);
+        appendWishlistControl(row, product);
+        list.append(row);
+      });
+      detailList.append(list);
+      if (insertBeforeEl) insertBeforeEl.before(detailList);
+      else summary.append(detailList);
+    }
+
+    // 6. Update advanced section (preserving open state)
+    let advanced = summary.querySelector('.fanatical-library-advanced');
+    if (advanced) advanced.remove();
+    advanced = document.createElement('details'); advanced.className = 'fanatical-library-advanced'; advanced.dataset.section = 'advanced';
+    const advancedHeading = document.createElement('summary'); advancedHeading.textContent = 'Advanced'; advanced.append(advancedHeading);
+    appendContentsSummary(advanced, parsed, matches);
+    if (parsed.products.length) advanced.append(F.createPurchasePlanning(parsed, matches, state));
+    appendReadingSummary(advanced, matches);
+    if (advanced.children.length > 1 || diagnosticsEnabled) {
+      const downloadBtn = summary.querySelector('.fanatical-library-download:not(.fanatical-library-retry-galactic)');
+      if (downloadBtn) downloadBtn.before(advanced);
+      else summary.append(advanced);
+    }
+
+    // 7. Update tier download button click handler
+    const existingDownload = summary.querySelector('button.fanatical-library-download:not(.fanatical-library-retry-galactic)');
+    if (existingDownload) {
+      const freshDownload = document.createElement('button');
+      freshDownload.type = 'button';
+      freshDownload.className = 'fanatical-library-download';
+      freshDownload.textContent = 'Download complete item list';
+      freshDownload.addEventListener('click', () => downloadTierList(parsed, matches));
+      existingDownload.replaceWith(freshDownload);
+    }
+
+    restoreSummaryState(summary, savedState);
   }
 
   function appendContentsSummary(summary, parsed, matches) {
@@ -911,6 +1109,7 @@ function restoreSummaryState(panel, state) {
 
   async function render() {
     if (state.rendering) return; const current = route(); if (!current) return;
+    const hadExistingSummary = Boolean(document.querySelector('.fanatical-library-summary'));
     const hasStableSummary = !state.summaryDirty && state.url === location.href && Boolean(document.querySelector('[data-fanatical-library-summary]'));
     state.rendering = true;
     const revision = state.revision; const pageUrl = location.href;
@@ -934,10 +1133,54 @@ function restoreSummaryState(panel, state) {
       const allProducts = F.flattenProducts(parsed.products);
       const reading = F.readingTargets(parsed.products);
       const identityProducts=F.isCompleteBundleCatalogue(parsed)?parsed.products.filter(product=>F.classify(product,stored.fanaticalLibraryItems).state==='owned'&&!F.offerContents(product).entries.length):[];
-      await queryGalactic([...allProducts.filter(product => F.classify(product, stored.fanaticalLibraryItems).state !== 'owned'),...identityProducts, ...reading.queries.map(query => query.item)], stored.galacticLibraryExtensionId);
-      if (revision !== state.revision || uiRevision !== (state.uiRevision ?? 0) || pageUrl !== location.href) return;
+
+      // Phase 1: Local classification & immediate rendering
+      const isPendingGalactic = Boolean(F.isExtensionId(F.resolveGalacticId(stored.galacticLibraryExtensionId, chrome.runtime)));
+      state.galacticEnabled = isPendingGalactic;
       const ownedOffers = parsed.products.filter(product => F.classify(product, stored.fanaticalLibraryItems).state === 'owned');
       const localUnits = F.localContents([...stored.fanaticalLibraryItems, ...ownedOffers]);
+      const localMatches = parsed.products.map(product => F.resolveProduct(product, stored.fanaticalLibraryItems, localUnits, () => null, 0, state.history));
+
+      parsed.products.forEach((product, index) => {
+        const card = cardFor(product); if (!card) return;
+        let badge;
+        badge = F.upsertBadge(card, product.sourceItemId, localMatches[index], card.querySelector('.cover-container') ?? card, () => showEvidence(localMatches[index], badge));
+        upsertCardTitle(card, product, localMatches[index]);
+      });
+      if (parsed.kind === 'pick-mix') {
+        if (!state.showNewOnly) sortPickMixCards();
+      } else sortStandardBundleCards();
+
+      if (!hadExistingSummary) {
+        renderSummary(parsed, localMatches, stored.fanaticalLibraryItems, { pendingGalactic: isPendingGalactic });
+      } else if (isPendingGalactic && state.summaryDirty) {
+        const galacticStatus = document.querySelector('#fanatical-library-summary .fanatical-library-galactic-status');
+        if (galacticStatus) {
+          galacticStatus.className = 'library-ui-muted fanatical-library-galactic-status fanatical-library-galactic-pending';
+          const bullet = document.createElement('span');
+          bullet.className = 'fanatical-library-pending-bullet';
+          bullet.textContent = '●';
+          galacticStatus.replaceChildren(bullet, ' Checking Galactic Library…');
+        }
+      }
+      applyNewOnlyFilter();
+
+      if (!isPendingGalactic) {
+        if (hadExistingSummary) {
+          const summaryFingerprint = JSON.stringify([parsed, localMatches, stored.fanaticalLibraryItems, state.wishlist, state.reading, state.readingLimits, state.galacticStatus, diagnosticsEnabled]);
+          if (state.summaryDirty || summaryFingerprint !== state.summaryFingerprint || !document.querySelector('[data-fanatical-library-summary]')) {
+            renderSummary(parsed, localMatches, stored.fanaticalLibraryItems);
+            state.summaryFingerprint = summaryFingerprint;
+            state.summaryDirty = false;
+          }
+        }
+        return;
+      }
+
+      // Phase 2: Galactic Library Query & Merge
+      await queryGalactic([...allProducts.filter(product => F.classify(product, stored.fanaticalLibraryItems).state !== 'owned'),...identityProducts, ...reading.queries.map(query => query.item)], stored.galacticLibraryExtensionId);
+      if (revision !== state.revision || uiRevision !== (state.uiRevision ?? 0) || pageUrl !== location.href) return;
+
       const matches = parsed.products.map((product) => status(product, stored.fanaticalLibraryItems, localUnits));
       F.presentation.reconcileBundle(parsed.products.map((item,index)=>({item,match:matches[index],identityContext:identityProducts.includes(item)?externalResult(item):null,
         contextIncomplete:identityProducts.includes(item)&&state.galacticEnabled&&Boolean(externalResult(item)?.lookupIncomplete),overlapProtected:F.isBundleOverlapProduct(item)})), {complete:F.isCompleteBundleCatalogue(parsed)});
@@ -949,21 +1192,21 @@ function restoreSummaryState(panel, state) {
         badge = F.upsertBadge(card, product.sourceItemId, matches[index], card.querySelector('.cover-container') ?? card, () => showEvidence(matches[index], badge));
         upsertCardTitle(card, product, matches[index]);
       });
-      // While New-only is active, the visible Pick & Mix rows live in our
-      // temporary reflow grid. Sorting that transient grid would also pull
-      // the hidden original rows into it, so they would be removed along
-      // with the temporary grid when the filter is switched off.
       if (parsed.kind === 'pick-mix') {
         if (!state.showNewOnly) sortPickMixCards();
       } else sortStandardBundleCards();
-      // A stable shell is safe to keep visible during the await, but its
-      // applicability belongs to the completed analysis, not the old render.
+
       const summaryFingerprint = JSON.stringify([parsed, matches, stored.fanaticalLibraryItems, state.wishlist, state.reading, state.readingLimits, state.galacticStatus, diagnosticsEnabled]);
-      if (state.summaryDirty || summaryFingerprint !== state.summaryFingerprint || !document.querySelector('[data-fanatical-library-summary]')) {
+      const existingSummary = document.querySelector('[data-fanatical-library-summary]');
+      if (!hadExistingSummary && existingSummary?.classList.contains('fanatical-library-summary')) {
+        updateSummary(parsed, matches, stored.fanaticalLibraryItems);
+        state.summaryFingerprint = summaryFingerprint;
+        state.summaryDirty = false;
+      } else if (state.summaryDirty || summaryFingerprint !== state.summaryFingerprint || !document.querySelector('[data-fanatical-library-summary]')) {
         renderSummary(parsed, matches, stored.fanaticalLibraryItems);
         state.summaryFingerprint = summaryFingerprint;
+        state.summaryDirty = false;
       }
-      state.summaryDirty = false;
       applyNewOnlyFilter();
       const summary = document.querySelector('[data-fanatical-library-summary]');
       if (summary && !diagnosticsEnabled) summary.querySelector('[data-fanatical-library-diagnostics]')?.remove();
@@ -1041,6 +1284,10 @@ function restoreSummaryState(panel, state) {
     if (state.parsed?.kind !== 'pick-mix' || signal.target.closest('[data-fanatical-library-summary], #fanatical-library-evidence, [data-fanatical-library-for]')) return;
     if (signal.target.closest('article.PickAndMixCard')) { state.summaryDirty = true; schedule(true); }
   });
+  F.renderSummary = renderSummary;
+  F.updateSummary = updateSummary;
+  F.render = render;
+  F.state = state;
   schedule();
 }());
 

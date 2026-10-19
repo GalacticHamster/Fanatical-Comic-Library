@@ -4,6 +4,8 @@
   const summary=()=>document.querySelector('.fanatical-library-summary');
   try{
     await until(()=>summary()?.querySelector('.fanatical-library-summary-controls'));
+    assert(Boolean(summary().querySelector('.fanatical-library-galactic-pending')),'local summary renders immediately while Galactic Library is pending');
+    await until(()=>summary()&&!summary().querySelector('.fanatical-library-galactic-pending'));
     assert(!document.querySelector('.fanatical-library-unchecked-badge'),'A valid slow GL response was turned into Check incomplete');
     assert(document.querySelector('.fanatical-library-owned-badge')&&document.querySelector('.fanatical-library-owned-elsewhere-badge'),'Slow central ownership erased local purchases or failed to show external ownership');
     assertBadgesVisible();
