@@ -14,3 +14,10 @@ chrome.storage.local.get=async defaults=>{
   if(globalThis.lifecycleBlockRead){globalThis.lifecycleBlockRead=false;await new Promise(resolve=>{globalThis.lifecycleReleaseRead=resolve;});}
   return snapshot;
 };
+
+// A built-in routing ID does not mean GL is installed in this fixture.
+const lifecycleOriginalSend=chrome.runtime.sendMessage;
+chrome.runtime.sendMessage=(target,message)=>{
+ if(typeof target==='string'&&!values.galacticLibraryExtensionId)return Promise.reject(Error('Could not establish connection. Receiving end does not exist.'));
+ return lifecycleOriginalSend(target,message);
+};

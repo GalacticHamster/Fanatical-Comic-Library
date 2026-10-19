@@ -395,6 +395,19 @@
     state.galacticEnabled = F.isExtensionId(extensionId);
     if (!state.galacticEnabled) { state.galacticStatus = 'Not configured.'; return; }
     const revision=state.revision,pageUrl=location.href;
+    const availabilityScope = JSON.stringify([extensionId,revision,pageUrl]);
+    const availability = state.galacticAvailability?.scope === availabilityScope
+      ? state.galacticAvailability.value : await F.galacticAvailability(message => chrome.runtime.sendMessage(extensionId, message));
+    if (revision !== state.revision || pageUrl !== location.href) return;
+    if (availability.state !== 'failed') state.galacticAvailability = {scope:availabilityScope,value:availability};
+    state.galacticConnectionState = availability.state;
+    if (availability.state === 'unavailable' || availability.state === 'unlinked') {
+      state.galacticEnabled = false;
+      state.galactic.clear(); state.failed.clear(); state.lookupFailures.clear();
+      state.softwareSupported = false; state.capabilityFailed = false; state.capabilityId = null;
+      state.galacticStatus = 'Not linked; local library only.';
+      return;
+    }
     if(state.capabilityId!==extensionId&&products.some(product=>product.mediaType==='software')){
       state.capabilityId=extensionId;state.softwareSupported=false;state.capabilityFailed=false;
       try{const capabilities=await F.galacticCapabilities(message=>chrome.runtime.sendMessage(extensionId,message));if(revision!==state.revision||pageUrl!==location.href)return;state.softwareSupported=capabilities.mediaTypes.includes('software');}catch{if(revision!==state.revision||pageUrl!==location.href)return;state.capabilityFailed=true;}
@@ -402,8 +415,23 @@
     const requests = [...new Map(F.galacticRequestItems(products,state.softwareSupported).map(request => { request.requestId = requestId(request); return [request.requestId, request]; })).values()].filter(request => !state.galactic.has(request.requestId));
     if(state.capabilityFailed&&!requests.length){state.galacticStatus='Check incomplete: capability check failed; software ownership is unresolved.';return;}
     if (!requests.length && !state.galactic.size) { state.galacticStatus = 'No unresolved supported items to check; pairing has not been tested on this page.'; return; }
-    const lookup = await F.queryGalacticItems(requests, message => F.sendGalacticMatch(request=>chrome.runtime.sendMessage(extensionId,request),message));
+    let permissionRevoked = false;
+    const lookup = await F.queryGalacticItems(requests, message => {
+      if (availability.state === 'failed') throw Error(availability.error);
+      return F.sendGalacticMatch(async request=>{
+        const response=await chrome.runtime.sendMessage(extensionId,request);
+        if (F.galacticPermissionDenied(response)) permissionRevoked=true;
+        return response;
+      },message);
+    });
     if (revision !== state.revision || pageUrl !== location.href) return;
+    if (permissionRevoked) {
+      state.galacticEnabled=false; state.galacticConnectionState='unlinked';
+      state.galacticAvailability={scope:availabilityScope,value:{state:'unlinked'}};
+      state.galactic.clear();state.failed.clear();state.lookupFailures.clear();
+      state.galacticStatus='Not linked; local library only.';
+      return;
+    }
     for (const [id, result] of lookup.results) { state.galactic.set(id, result); state.failed.delete(id); }
     for (const id of lookup.failed) state.failed.add(id);
     state.lookupFailures=lookup.failures;

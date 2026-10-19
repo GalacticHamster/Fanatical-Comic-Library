@@ -11,8 +11,8 @@ export function fixture(records, media, offered, central = null, historical = []
   vm.createContext(context);
   for (const file of fanatical ? ['src/shared.js'] : ['shared.js', 'collection-mappings.js', 'ownership.js', 'content.js'])
     vm.runInContext(readSource(file), context, { filename: file });
-  context.records = records.map(record => ({ ...record, [fanatical ? 'mediaType' : 'kind']: record.media ?? media }));
-  context.historical = historical.map(record => ({ ...record, ...(fanatical && record.sourceBundle ? {bundle:{title:record.sourceBundle}} : {}), [fanatical ? 'mediaType' : 'kind']: record.media ?? media }));
+  context.records = records.map(record => ({ ...record, [fanatical ? 'mediaType' : 'kind']: record.media ?? record[fanatical ? 'mediaType' : 'kind'] ?? media }));
+  context.historical = historical.map(record => ({ ...record, ...(fanatical && record.sourceBundle ? {bundle:{title:record.sourceBundle}} : {}), [fanatical ? 'mediaType' : 'kind']: record.media ?? record[fanatical ? 'mediaType' : 'kind'] ?? media }));
   context.offered = { ...offered, [fanatical ? 'mediaType' : 'kind']: media, lookupTitle: offered.title, tier: { label: '$5 tier', price: 5 } };
   context.centralResult = central instanceof Error ? { matches: [], lookupIncomplete: true } : central;
   if (!fanatical) {

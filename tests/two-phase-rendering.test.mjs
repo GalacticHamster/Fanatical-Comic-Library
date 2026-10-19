@@ -609,3 +609,28 @@ test('two-phase rendering: stale GL response after revision change is rejected w
   // Verify that headline was NOT updated by the stale response
   assert.match(headline.textContent, /^Preliminary:/, 'Stale GL response does not overwrite UI with settled results');
 });
+
+for(const firefox of [false,true])for(const scenario of ['absent','disabled','unlinked','revoked','success','failed','unknown transport','malformed'])test('GL actual render availability lifecycle: '+(firefox?'Firefox ':'Chrome ')+scenario,async()=>{
+ const {context:c,doc}=createHarness(),F=c.FanaticalLibrary;
+ c.chrome.runtime.getURL=()=>firefox?'moz-extension://fixture/':'chrome-extension://fixture/';
+ c.chrome.storage.local.get=async defaults=>({...defaults,galacticLibraryExtensionId:''});
+ c.chrome.runtime.sendMessage=async(first,second)=>{
+  const m=second||first;
+  if(m.type==='FANATICAL_GET_PUBLIC_BUNDLE')return {ok:true,bundle:{_id:'fixture',name:'Fixture',slug:'test-bundle',bundles:[{price:{USD:500},games:[{_id:'p1',name:'Unpurchased game',slug:'p1',type:'game',availability:{regionAvailable:true,soldOut:false}}]}]}};
+  if(['absent','disabled'].includes(scenario))throw Error('Could not establish connection. Receiving end does not exist.');
+  if(scenario==='unlinked')return {ok:false,error:'This extension is not allowed to use the Galactic Library API.'};
+  if(scenario==='unknown transport')throw Error('Unexpected transport failure');
+  if(scenario==='malformed')return {ok:true,apiVersion:99};
+  if(m.type==='PING')return {ok:true,apiVersion:1};
+  if(scenario==='revoked')return {ok:false,error:'This extension is not allowed to use the Galactic Library API.'};
+  if(scenario==='failed')throw Error('Could not establish connection. Receiving end does not exist.');
+  return {ok:true,apiVersion:1,results:m.items.map(({requestId})=>({requestId,matches:[]}))};
+ };
+ await F.render();
+ const failed=['failed','unknown transport','malformed'].includes(scenario);
+ assert.equal(F.state.failed.size,failed?1:0);
+ assert.equal(F.state.galacticEnabled,!['absent','disabled','unlinked','revoked'].includes(scenario));
+ const headline=doc.querySelector('.fanatical-library-summary-counts').textContent;
+ assert.match(headline,failed?/Check incomplete 1/:/New 1/);
+ assert.doesNotMatch(headline,/Preliminary/);
+});

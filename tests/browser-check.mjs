@@ -61,6 +61,7 @@ globalThis.chrome = {runtime:{getManifest:()=>({name:'Fanatical Library'}),onMes
   }
   if(message.type==='GET_STATUS')return {ok:true,apiVersion:1,ready:true,capabilities:{mediaTypes:['game','book','audiobook','software'],reviewedContents:true,entitlementReminders:true}};
   if(message.type==='GET_REMINDERS')return {ok:true,apiVersion:1,total:51,nextOffset:message.offset===0?50:null,reminders:Array.from({length:51},(_,n)=>({reminderRef:'opaque-reminder-'+n,itemRef:'opaque-item-'+n,title:'Reminder '+n,provider:'fanatical',mediaType:'game',kind:n===50?'key-expiry':'activation',dueAt:n===50?'2026-10-10T12:00:00Z':null,severity:n===50?'due-soon':'information'})).slice(message.offset,message.offset+message.limit)};
+  if(message.type==='PING'&&centralMode==='absent')throw Error('Could not establish connection. Receiving end does not exist.');
   if(message.type==='PING')return {ok:true,apiVersion:1,appVersion:'0.1.0'};
   if(message.type==='FANATICAL_IMPORT_PURCHASES'){
     const scope={fullScan:message.fullScan,scanHistoryMissing:scanScenario==='restore',total:scanScenario==='empty'?0:1,skipped:scanScenario==='empty'?26:0};
@@ -145,9 +146,10 @@ try {
   filter.click();await wait();assert(visibleCards().length===2,'Owned cards not hidden');
   filter.click();await wait();assert(visibleCards().length===4,'Owned cards not restored');
   assert(document.querySelectorAll('[data-fanatical-library-for]').length===4,'Badges changed after filter toggles');
-  centralMode='none';await chrome.storage.local.remove('galacticLibraryExtensionId');for(let n=0;n<100&&document.querySelector('.fanatical-library-owned-elsewhere-badge');n++)await new Promise(resolve=>setTimeout(resolve,30));
+  centralMode='absent';await chrome.storage.local.remove('galacticLibraryExtensionId');for(let n=0;n<100&&document.querySelector('.fanatical-library-owned-elsewhere-badge');n++)await new Promise(resolve=>setTimeout(resolve,30));
   assert(!document.querySelector('.fanatical-library-owned-elsewhere-badge'),'Empty central lookup retained external ownership');
   assert(document.querySelectorAll('.fanatical-library-new-badge').length===3,'External card did not return to local matching');
+  assert(!document.querySelector('.fanatical-library-summary-counts').textContent.includes('Check incomplete'),'Unavailable GL must leave local results final');
   if(!location.pathname.includes('pick-and-mix')) assert(document.querySelector('.fanatical-library-tier-list').textContent.includes('new /'),'Simple still reports tier value after ownership changes');
   await chrome.storage.local.set({fanaticalShowDiagnostics:false});await wait();
   assert(!diagnostics(),'Diagnostics did not turn off');

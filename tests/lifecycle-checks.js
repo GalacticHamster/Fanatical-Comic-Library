@@ -3,7 +3,7 @@
   const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   const until=async predicate=>{for(let n=0;n<300;n++){if(predicate())return;await pause(20);}throw Error('Lifecycle did not settle');};
   const panel=()=>document.querySelector('.fanatical-library-summary');
-  const settled=()=>panel()?.querySelector('.fanatical-library-summary-controls');
+  const settled=()=>panel()?.querySelector('.fanatical-library-summary-controls')&&!panel().querySelector('.fanatical-library-galactic-pending');
   const local=lifecycleBook?{source:'fanatical',sourceItemId:'owned-issue-123456',title:'Saga #1',mediaType:'book',run:'2020',language:'en'}:{source:'fanatical',sourceItemId:'edition-base-123456',title:'Space Adventure',mediaType:'game',externalIds:{steamAppId:'42'}};
   try{
     await until(()=>globalThis.lifecycleReleaseRead);
