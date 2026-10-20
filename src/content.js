@@ -1196,12 +1196,19 @@ function restoreSummaryState(panel, state) {
       const localUnits = F.localContents([...stored.fanaticalLibraryItems, ...ownedOffers]);
       const localMatches = parsed.products.map(product => F.resolveProduct(product, stored.fanaticalLibraryItems, localUnits, () => null, 0, state.history));
 
-      parsed.products.forEach((product, index) => {
-        const card = cardFor(product); if (!card) return;
-        let badge;
-        badge = F.upsertBadge(card, product.sourceItemId, localMatches[index], ownershipBadgeHost(card), () => showEvidence(localMatches[index], badge));
-        upsertCardTitle(card, product, localMatches[index]);
-      });
+      const paintLocalCards = (missingOnly = false) => {
+        let changed = false;
+        for (const [index, product] of parsed.products.entries()) {
+          const card = cardFor(product); if (!card) continue;
+          if (missingOnly && card.querySelector('[data-fanatical-library-for]')?.dataset.fanaticalLibraryFor === product.sourceItemId) continue;
+          let badge;
+          badge = F.upsertBadge(card, product.sourceItemId, localMatches[index], ownershipBadgeHost(card), () => showEvidence(localMatches[index], badge));
+          upsertCardTitle(card, product, localMatches[index]);
+          changed = true;
+        }
+        return changed;
+      };
+      paintLocalCards();
       if (parsed.kind === 'pick-mix') {
         if (!state.showNewOnly) sortPickMixCards();
       } else sortStandardBundleCards();
@@ -1233,7 +1240,29 @@ function restoreSummaryState(panel, state) {
       }
 
       // Phase 2: Galactic Library Query & Merge
-      await queryGalactic([...allProducts.filter(product => {const local=F.classify(product,stored.fanaticalLibraryItems);return local.state!=='owned'||F.presentation.gamePurchase(product,local);}),...identityProducts, ...reading.queries.map(query => query.item)], stored.galacticLibraryExtensionId);
+      // Observe native hydration while GL is pending. Repair only absent/recycled
+      // badges from the ready local snapshot; do not repeat reads or GL queries.
+      state.paintPendingCards = () => {
+        if (revision !== state.revision || pageUrl !== location.href) return;
+        observer?.disconnect();
+        try {
+          if (paintLocalCards(true)) {
+            if (parsed.kind === 'pick-mix') { if (!state.showNewOnly) sortPickMixCards(); }
+            else sortStandardBundleCards();
+            applyNewOnlyFilter();
+          }
+        }
+        finally { observer?.observe(document.documentElement, { childList: true, subtree: true }); }
+      };
+      observer?.observe(document.documentElement, { childList: true, subtree: true });
+      state.pendingRenderRevision = revision;
+      const superseded = new Promise(resolve => { state.cancelPendingRender = resolve; });
+      await Promise.race([
+        queryGalactic([...allProducts.filter(product => {const local=F.classify(product,stored.fanaticalLibraryItems);return local.state!=='owned'||F.presentation.gamePurchase(product,local);}),...identityProducts, ...reading.queries.map(query => query.item)], stored.galacticLibraryExtensionId),
+        superseded
+      ]);
+      state.paintPendingCards = null; state.cancelPendingRender = null;
+      observer?.disconnect();
       if (revision !== state.revision || uiRevision !== (state.uiRevision ?? 0) || pageUrl !== location.href) return;
 
       const matches = parsed.products.map((product) => status(product, stored.fanaticalLibraryItems, localUnits));
@@ -1287,6 +1316,7 @@ function restoreSummaryState(panel, state) {
     } finally {
       const rerender = state.pendingRender || revision !== state.revision || uiRevision !== (state.uiRevision ?? 0) || pageUrl !== location.href;
       if (!rerender) state.keepSummaryDuringRetry = false;
+      state.paintPendingCards = null; state.cancelPendingRender = null;
       state.rendering = false;
       observer?.observe(document.documentElement, { childList: true, subtree: true });
       if (rerender) {
@@ -1299,6 +1329,7 @@ function restoreSummaryState(panel, state) {
   const schedule = (force = false) => {
     if(routeUrl!==location.href){
       routeUrl=location.href;routeRevision++;state.revision++;state.panelView=null;
+      state.cancelPendingRender?.();
       clearTimeout(state.timer);disposeOrderPanel();disposeOrderPanel=()=>{};
       restorePickMixReflow();state.parsed=null;state.url='';state.summaryDirty=true;
       state.galactic.clear();state.requests.clear();state.failed.clear();state.capabilityId=null;
@@ -1315,10 +1346,13 @@ function restoreSummaryState(panel, state) {
     if (!route()) {clearTimeout(state.timer);return;}
     if (!force && state.parsed && state.url === location.href && !cardsNeedAnnotation()) return;
     // Do not lose a storage/UI update when its timer fires during an await.
-    if (state.rendering) { state.pendingRender = true; return; }
+    if (state.rendering) { state.pendingRender = true; if (state.pendingRenderRevision !== state.revision) state.cancelPendingRender?.(); return; }
     clearTimeout(state.timer); state.timer = setTimeout(render, 120);
   };
-  observer = new MutationObserver(() => schedule());
+  observer = new MutationObserver(() => {
+    if (state.paintPendingCards && routeUrl === location.href) { state.paintPendingCards(); return; }
+    schedule();
+  });
   observer.observe(document.documentElement, { childList: true, subtree: true });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
