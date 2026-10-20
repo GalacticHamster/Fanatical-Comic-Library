@@ -162,3 +162,6 @@
 :is(#fanatical-library-summary, #fanatical-library-evidence) .library-ui-candidate p { margin:4px 0 0!important; }
 :is(#fanatical-library-summary, #fanatical-library-evidence) .library-ui-candidate strong { display:block; }
 :is(#fanatical-library-summary, #fanatical-library-evidence) :is(h2,p,strong,summary) { overflow-wrap:anywhere; }
+
+/* Native bundle hover overlays sit at layer 5; keep sibling badges visible. */
+:is(.bundle-game-card, .bundle-product-card, .PickAndMixCard).fanatical-library-badge-host > [data-fanatical-library-for] { z-index:6; }

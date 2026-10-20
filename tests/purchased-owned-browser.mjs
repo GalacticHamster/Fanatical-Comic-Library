@@ -2,6 +2,8 @@
 import fs from 'node:fs';import path from 'node:path';import os from 'node:os';import http from 'node:http';import assert from 'node:assert/strict';
 import {spawn,execFileSync} from 'node:child_process';import {setTimeout as pause} from 'node:timers/promises';
 import {chromePipe,firefoxMarionette,freePort} from './match-browser-protocol.mjs';
+import {hoverCardMarkup,hoverCardCss,checkHoverCards} from './hover-card-fixture.mjs';
+const hoverCards=process.argv.includes('--hover-cards');
 const root=path.resolve(import.meta.dirname,'..'),hb=fs.existsSync(path.join(root,'ownership.js')),firefox=process.argv.includes('--firefox');
 const title='Synthetic Space Adventure',external='Independent External Game',fresh='Unpurchased New Game';
 const products=[title,external,fresh,'Cat Quest III','Portal 2'].map((name,i)=>({_id:'ownership-product-'+i+'-123456',name,type:'game'}));
@@ -13,7 +15,7 @@ const mock=`globalThis.badgeRequests=[];globalThis.badgeWrites=0;globalThis.badg
 const listeners=[];const values={libraryItems:${JSON.stringify(saved)},fanaticalLibraryItems:${JSON.stringify(saved)},purchaseSummaries:[],customCollectionMappings:[],fanaticalScannedOrderFingerprints:[],galacticLibraryExtensionId:'b'.repeat(32)};
 globalThis.badgeInitial=JSON.stringify([values.libraryItems,values.fanaticalLibraryItems]);
 const platform=title=>({provider:'steam',title,ownership:'owned',relationship:'same-edition',confidence:1,itemRef:'opaque-item',evidence:{}});
-globalThis.chrome={runtime:{id:'a'.repeat(32),getManifest:()=>({}),onMessage:{addListener(){}},sendMessage:async(first,second)=>{
+globalThis.chrome={runtime:{id:'a'.repeat(32),getManifest:()=>({name:'Fanatical Library'}),onMessage:{addListener(){}},sendMessage:async(first,second)=>{
  const m=second||first;badgeRequests.push(m);
  if(m.type==='PING')return {ok:true,apiVersion:1};if(m.type==='GET_STATUS')return {ok:true,apiVersion:1,capabilities:{mediaTypes:['game','book','audiobook']}};
  if(m.type==='GET_REMINDERS')return {ok:true,apiVersion:1,reminders:[],total:0,nextOffset:null};
@@ -40,7 +42,7 @@ globalThis.badgeDataIntact=()=>JSON.stringify([values.libraryItems,values.fanati
 const files=hb?['theme.js','shared.js','collection-mappings.js','ownership.js','content.js']:['src/theme.js','src/shared.js','src/planning.js','src/planning-ui.js','src/content.js'];
 const css=hb?'content.css':'src/content.css',urlPath=hb?'/games/ownership':'/en/bundle/ownership';
 const server=http.createServer((req,res)=>{
- if(req.url===urlPath){res.setHeader('content-type','text/html; charset=utf-8');res.end('<!doctype html><html><head><link rel="stylesheet" href="/'+css+'"></head><body><h1>Synthetic Games Bundle</h1><main><section data-tier="5">'+products.map((p,i)=>hb?'<article class="product" data-index="'+i+'"><img class="item-image" alt="'+p.name+'"><h3>'+p.name+'</h3></article>':'<article class="bundle-product-card" data-index="'+i+'"><div class="cover-container"><img alt="'+p.name+'"></div><h3 class="card-product-name">'+p.name+'</h3></article>').join('')+'</section></main><script id="webpack-bundle-page-data" type="application/json">'+JSON.stringify(page)+'</script><script src="/mock.js"></script>'+files.map(f=>'<script src="/'+f+'"></script>').join('')+'</body></html>');return;}
+ if(req.url===urlPath){res.setHeader('content-type','text/html; charset=utf-8');res.end('<!doctype html><html><head>'+(hoverCards?'<link rel="stylesheet" href="/src/theme.css"><link rel="stylesheet" href="/src/theme-overlays.css"><style>'+hoverCardCss+'</style>':'')+'<link rel="stylesheet" href="/'+css+'"></head><body><h1>Synthetic Games Bundle</h1><main><section data-tier="5">'+products.map((p,i)=>hoverCards?hoverCardMarkup(p,i):hb?'<article class="product" data-index="'+i+'"><img class="item-image" alt="'+p.name+'"><h3>'+p.name+'</h3></article>':'<article class="bundle-product-card" data-index="'+i+'"><div class="cover-container"><img alt="'+p.name+'"></div><h3 class="card-product-name">'+p.name+'</h3></article>').join('')+'</section></main><script id="webpack-bundle-page-data" type="application/json">'+JSON.stringify(page)+'</script><script src="/mock.js"></script>'+files.map(f=>'<script src="/'+f+'"></script>').join('')+'</body></html>');return;}
  if(req.url==='/mock.js'){res.setHeader('content-type','text/javascript');res.end(mock);return;}
  const f=path.resolve(root,'.'+req.url);if(!f.startsWith(root+path.sep)||!fs.existsSync(f)){res.writeHead(404).end();return;}res.setHeader('content-type',f.endsWith('.css')?'text/css':'text/javascript');res.end(fs.readFileSync(f));
 });
@@ -52,6 +54,7 @@ try{
  const binary=candidates.filter(Boolean).find(value=>fs.existsSync(value));if(!binary)throw Error('Set '+(firefox?'FIREFOX_BIN':'CHROME_BIN')+' to run the disposable UI check.');
  if(firefox){const port=await freePort();fs.writeFileSync(path.join(profile,'user.js'),'user_pref("marionette.port", '+port+');\nuser_pref("browser.shell.checkDefaultBrowser", false);\n');child=spawn(binary,['--headless','--no-remote','--profile',profile,'--marionette','--remote-allow-system-access','about:blank'],{windowsHide:true,stdio:['ignore','pipe','pipe']});driver=await firefoxMarionette(port);await driver.send('WebDriver:NewSession',{capabilities:{alwaysMatch:{browserName:'firefox'}}});}
  else{child=spawn(binary,['--headless=new','--no-first-run','--no-default-browser-check','--disable-background-networking','--user-data-dir='+profile,'--remote-debugging-pipe','about:blank'],{windowsHide:true,stdio:['ignore','pipe','pipe','pipe','pipe']});driver=chromePipe(child);const targets=await driver.send('Target.getTargets');session=(await driver.send('Target.attachToTarget',{targetId:targets.targetInfos.find(x=>x.type==='page').targetId,flatten:true})).sessionId;}
+ if(hoverCards){if(firefox)await driver.send('WebDriver:SetWindowRect',{width:1400,height:1000});else await driver.send('Emulation.setDeviceMetricsOverride',{width:1400,height:1000,deviceScaleFactor:1,mobile:false},session);}
  child.stdout?.resume();child.stderr?.resume();const url='http://127.0.0.1:'+server.address().port+urlPath;
  if(firefox)await driver.send('WebDriver:Navigate',{url});else await driver.send('Page.navigate',{url},session);
  const evaluate=async expression=>{if(firefox){const r=await driver.send('WebDriver:ExecuteScript',{script:'return '+expression,args:[]});return r.value??r;}const r=await driver.send('Runtime.evaluate',{expression,returnByValue:true},session);if(r.exceptionDetails)throw Error(r.exceptionDetails.exception?.description||r.exceptionDetails.text);return r.result.value;};
@@ -71,5 +74,14 @@ try{
  await evaluate('document.querySelector('+JSON.stringify(selector(0))+').click()');await wait('Boolean(document.querySelector("dialog[open]"))');const details=await evaluate('document.querySelector("dialog").textContent');
  check(details.includes('independently confirms ownership')&&details.includes('Steam'),'Explanation includes independent platform evidence');check(details.includes('Purchased key'),'Original key purchase evidence remains separate');
  check(await evaluate('badgeDataIntact()'),'No saved purchase observations changed');check(await evaluate('badgeWrites')===0,'No storage writes for badge reconciliation');
+ if(hoverCards){
+  const pointer=async(x,y,click=false)=>{
+   if(firefox)await driver.send('WebDriver:PerformActions',{actions:[{type:'pointer',id:'hover-mouse',parameters:{pointerType:'mouse'},actions:[{type:'pointerMove',duration:0,origin:'viewport',x:Math.round(x),y:Math.round(y)},...(click?[{type:'pointerDown',button:0},{type:'pointerUp',button:0}]:[])]}]});
+   else {await driver.send('Input.dispatchMouseEvent',{type:'mouseMoved',x,y},session);if(click){await driver.send('Input.dispatchMouseEvent',{type:'mousePressed',x,y,button:'left',clickCount:1},session);await driver.send('Input.dispatchMouseEvent',{type:'mouseReleased',x,y,button:'left',clickCount:1},session);}}
+   await pause(120);
+  };
+  const hoverChecks=await checkHoverCards({evaluate,pointer,check});
+  check(hoverChecks>0,'Hover-specific assertions ran');
+ }
  console.log(JSON.stringify({browser:firefox?'Firefox':'Chrome',companion:hb?'HB':'FAN',checks,passed:true}));
 }finally{child?.kill();await pause(300);await new Promise(resolve=>server.close(resolve));const target=path.resolve(profile),base=path.resolve(os.tmpdir());if(!target.startsWith(base+path.sep)||!path.basename(target).startsWith('purchased-owned-ui-'))throw Error('Unsafe disposable profile cleanup');fs.rmSync(target,{recursive:true,force:true,maxRetries:5,retryDelay:200});}

@@ -479,8 +479,12 @@
     return match;
   }
 
+  const productCardSelector = 'article.bundle-product-card, article.bundle-game-card, article.PickAndMixCard';
   function cardContainer(anchor) {
     if (!anchor) return null;
+    // Titles/links can live inside a hover-only overlay; keep the whole card.
+    const productCard = anchor.closest?.(productCardSelector);
+    if (productCard) return productCard;
     let imageFallback = null;
     for (let node = anchor; node && node !== document.body; node = node.parentElement) {
       const className = String(node.className ?? '');
@@ -492,9 +496,14 @@
     return imageFallback ?? anchor.parentElement;
   }
 
+  function ownershipBadgeHost(card) {
+    // Native hover overlays cover the image. Use a stable sibling above them.
+    return card.querySelector(':scope > .overlay-container > .card-overlay') ? card : card.querySelector('.cover-container') ?? card;
+  }
+
   function cardFor(product) {
     const wanted = F.titleKey(product.title);
-    const directCard = [...document.querySelectorAll('article.bundle-product-card, article.PickAndMixCard')].find((card) => {
+    const directCard = [...document.querySelectorAll(productCardSelector)].find((card) => {
       const title = card.querySelector('.card-product-name')?.textContent;
       const alt = card.querySelector('img[alt]')?.alt;
       return F.titleKey(title) === wanted || F.titleKey(alt) === wanted;
@@ -1190,7 +1199,7 @@ function restoreSummaryState(panel, state) {
       parsed.products.forEach((product, index) => {
         const card = cardFor(product); if (!card) return;
         let badge;
-        badge = F.upsertBadge(card, product.sourceItemId, localMatches[index], card.querySelector('.cover-container') ?? card, () => showEvidence(localMatches[index], badge));
+        badge = F.upsertBadge(card, product.sourceItemId, localMatches[index], ownershipBadgeHost(card), () => showEvidence(localMatches[index], badge));
         upsertCardTitle(card, product, localMatches[index]);
       });
       if (parsed.kind === 'pick-mix') {
@@ -1235,7 +1244,7 @@ function restoreSummaryState(panel, state) {
       parsed.products.forEach((product, index) => {
         const card = cardFor(product); if (!card) return;
         let badge;
-        badge = F.upsertBadge(card, product.sourceItemId, matches[index], card.querySelector('.cover-container') ?? card, () => showEvidence(matches[index], badge));
+        badge = F.upsertBadge(card, product.sourceItemId, matches[index], ownershipBadgeHost(card), () => showEvidence(matches[index], badge));
         upsertCardTitle(card, product, matches[index]);
       });
       if (parsed.kind === 'pick-mix') {
