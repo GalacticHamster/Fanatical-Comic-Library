@@ -741,7 +741,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     const scope=await chrome.storage.local.get({fanaticalProfileLabel:'',fanaticalProfileArchives:[],fanaticalHistoricalItems:[]});
     $('#library-count').textContent = `Active account nickname: ${scope.fanaticalProfileLabel||'Not yet named'}. ${scope.fanaticalProfileArchives.length} other saved accounts (selectable above; excluded from active matching). ${items.length} unique item${items.length === 1 ? '' : 's'} stored locally.`;
     const missing=scope.fanaticalHistoricalItems.filter(entry=>entry.profileLabel===scope.fanaticalProfileLabel).length;
-    if(missing) $('#library-count').textContent += ' '+missing+' previously recorded products are missing from the current snapshot; these warn as Check ownership and do not prove ownership.';
+    if(missing) $('#library-count').textContent += ' '+missing+' previously recorded products were not found in the latest scan; these warn as Check ownership and do not prove ownership.';
     $('#history-note').textContent = `${attempt?.status === 'incomplete' ? 'Last scan incomplete: complete order-history coverage could not be confirmed. Previous purchases and the last successful scan were kept. ' : ''}${summary?.historyCoverage ?? 'No order-history coverage has been checked yet.'}`;
     if (diagnostics && summary?.coverage) $('#history-note').textContent += ` ${summary.coverage.retries} retries; at most ${summary.coverage.concurrency} concurrent detail requests.`;
     $('#galactic-id').value = extensionId;
@@ -896,11 +896,30 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     const id = FanaticalLibrary.resolveGalacticId($('#galactic-id').value,chrome.runtime); const button = $('#test-galactic'); const status = $('#galactic-status');
     const problem=FanaticalLibrary.companionTargetProblem(id,chrome.runtime);if(problem){status.textContent=problem;return;}
     button.disabled = true; status.textContent = 'Testing Galactic Library link…';
-    try{
-      const capabilities=await FanaticalLibrary.testGalacticLink(message=>chrome.runtime.sendMessage(id,message));
-      status.textContent=`Connected to Galactic Library${capabilities.appVersion?' '+capabilities.appVersion:''}. ${capabilities.advertised?'Media: '+(capabilities.mediaTypes.join(', ')||'none')+'; reviewed contents '+(capabilities.reviewedContents?'supported':'unavailable')+'; entitlement reminders '+(capabilities.entitlementReminders?'supported':'unavailable')+'.':'Capabilities not advertised; newer features remain unconfirmed.'}`;
-    }catch(error){status.textContent='Could not connect: '+error.message+' Enable or update Galactic Library and check Advanced pairing if using an unpacked build. A receiver manifest may restrict custom IDs; failed transport does not prove it is uninstalled.';}finally{button.disabled=false;}
-
+    try {
+      const capabilities = await FanaticalLibrary.testGalacticLink(message => chrome.runtime.sendMessage(id, message));
+      status.textContent = 'Connected to Galactic Library. You can now check bundle items against your other saved libraries.';
+      const details = document.createElement('details');
+      details.className = 'settings-help';
+      const summary = document.createElement('summary');
+      summary.textContent = 'Show technical details';
+      const info = document.createElement('p');
+      info.textContent = `Galactic Library ${capabilities.appVersion || 'connected'}. ${capabilities.advertised ? 'Media: ' + (capabilities.mediaTypes.join(', ') || 'none') + '; reviewed contents ' + (capabilities.reviewedContents ? 'supported' : 'unavailable') + '; entitlement reminders ' + (capabilities.entitlementReminders ? 'supported' : 'unavailable') + '.' : 'Capabilities not advertised; newer features remain unconfirmed.'}`;
+      details.append(summary, info);
+      status.append(details);
+    } catch (error) {
+      status.textContent = "Could not connect to Galactic Library. Make sure it's installed and enabled, then try Check connection again.";
+      const details = document.createElement('details');
+      details.className = 'settings-help';
+      const summary = document.createElement('summary');
+      summary.textContent = 'Show technical details';
+      const err = document.createElement('p');
+      err.textContent = `Error: ${error.message}. Enable or update Galactic Library and check Advanced pairing if using an unpacked build. A receiver manifest may restrict custom IDs; failed transport does not prove it is uninstalled.`;
+      details.append(summary, err);
+      status.append(details);
+    } finally {
+      button.disabled = false;
+    }
   });
 
   $('#remove-galactic').addEventListener('click', async () => {

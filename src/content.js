@@ -448,8 +448,11 @@
     }
     for (const [id, result] of lookup.results) { state.galactic.set(id, result); state.failed.delete(id); }
     for (const id of lookup.failed) state.failed.add(id);
-    state.lookupFailures=lookup.failures;
-    state.galacticStatus = state.capabilityFailed?'Incomplete: software capability check failed.':state.failed.size ? `Check incomplete: ${state.failed.size} ownership checks failed; these items may already be owned. ${[...state.lookupFailures].join("; ")}.` : `Available. ${state.galactic.size} items checked; not found means not found in synced libraries.`;
+    state.galacticStatus = state.capabilityFailed
+      ? 'Check incomplete: software capability check failed; local results are still shown.'
+      : state.failed.size
+        ? `Check incomplete: ${state.failed.size} ownership check${state.failed.size === 1 ? '' : 's'} failed; these items may already be owned. Try again.`
+        : `Available. ${state.galactic.size} items checked; not found means not found in synced libraries.`;
   }
 
   function requestId(request) {
@@ -464,7 +467,8 @@
   }
   function status(product, localItems, localUnits) {
     // Extra exact-owned queries are context only; preserve the existing local result.
-    const contextOnly=F.classify(product,localItems).state==='owned'&&!F.offerContents(product).entries.length;
+    const local=F.classify(product,localItems);
+    const contextOnly=local.state==='owned'&&!F.offerContents(product).entries.length&&!F.presentation.gamePurchase(product,local);
     const lookup=query=>contextOnly&&query===product?(state.galacticEnabled?{matches:[],lookupIncomplete:true}:null):externalResult(query);
     const result = lookup(product);
     const match = F.resolveProduct(product, localItems, localUnits, lookup, 0, state.history);
@@ -741,14 +745,14 @@ function restoreSummaryState(panel, state) {
     const review = document.createElement('button'); review.type = 'button'; review.textContent = 'Review in Galactic Library';
     const output = document.createElement('p'); output.setAttribute('role', 'status');
     review.addEventListener('click', () => openCentralReview(review, output));
-    const refresh = document.createElement('button'); refresh.type = 'button'; refresh.textContent = 'Refresh central evidence';
+    const refresh = document.createElement('button'); refresh.type = 'button'; refresh.textContent = 'Recheck Galactic Library';
     refresh.addEventListener('click', () => { dialog.close(); refreshCentralEvidence(); });
     if(match.externalResult||match.lookupIncomplete||match.contentsLookupIncomplete||match.state==='owned-elsewhere')dialog.append(review,refresh,output); document.body.append(dialog); dialog.showModal();
   }
 
   async function openCentralReview(button, output) {
     button.disabled = true;
-    try { const response = await chrome.runtime.sendMessage({ type: 'FANATICAL_OPEN_GALACTIC_REVIEW' }); output.textContent = response?.ok ? 'Opened Galactic Library. Use Ownership evidence, Contents, or Duplicate review, then refresh this comparison.' : response?.error || 'Open Galactic Library from its toolbar icon to review evidence.'; }
+    try { const response = await chrome.runtime.sendMessage({ type: 'FANATICAL_OPEN_GALACTIC_REVIEW' }); output.textContent = response?.ok ? 'Galactic Library opened. Review the item there, then return here and recheck.' : response?.error || 'Open Galactic Library from its toolbar icon to review evidence.'; }
     catch { output.textContent = 'Open Galactic Library from its toolbar icon to review evidence.'; }
     finally { button.disabled = false; }
   }
@@ -1123,7 +1127,7 @@ function restoreSummaryState(panel, state) {
       if(state.readingLimits?.limited){const note=document.createElement('p');note.textContent='Comparison bounded to 100 series, 2,000 units per series and 20,000 units total. Unchecked ranges need review.';details.append(note);}
       for(const row of rows){
         const section=document.createElement('details');section.dataset.section='series-'+row.label;
-        const heading=document.createElement('summary');heading.textContent=`${row.label}: ${row.coverage.owned}/${row.coverage.total} full units confirmed covered`;section.append(heading);
+        const heading=document.createElement('summary');heading.textContent=`${row.label}: ${row.coverage.owned}/${row.coverage.total} issues/volumes confirmed in your library`;section.append(heading);
         const confirmed=new Set(row.coverage.covered.map(F.contentKey)),possible=new Set(row.coverage.possibleCovered.map(F.contentKey));
         const ordered=[...row.entries].sort((a,b)=>Number(F.numberKey(a.number))-Number(F.numberKey(b.number))||titleCollator.compare(a.number,b.number));
         for(const [label,entries]of [['Compared range',ordered],['Offered here',ordered.filter(entry=>row.offeredKeys.has(F.contentKey(entry)))],['Owned elsewhere',row.coverage.covered.filter(entry=>entry.evidence?.some(record=>record.provider!=='fanatical'))],['Missing in compared range',ordered.filter(entry=>!confirmed.has(F.contentKey(entry))&&!possible.has(F.contentKey(entry))&&!row.lookupIncomplete)]])if(entries.length){const note=document.createElement('p');note.textContent=`${label}: ${conciseUnitNumbers(entries)}`;section.append(note);}
@@ -1137,8 +1141,8 @@ function restoreSummaryState(panel, state) {
     const details=document.createElement('details');details.className='fanatical-library-reminders';details.dataset.section='galactic';
     const heading=document.createElement('summary');heading.textContent='Galactic Library details';details.append(heading);
     const status=document.createElement('p');status.className=state.failed.size || state.capabilityFailed?'library-ui-warning':'library-ui-muted';status.textContent=state.galacticStatus;details.append(status);
-    const hint=document.createElement('p');hint.className='library-ui-muted';hint.textContent='Retry checks missing or failed results. Refresh fetches fresh central evidence, including successful checks. Local evidence is retained.';details.append(hint);
-    const refresh=document.createElement('button');refresh.type='button';refresh.textContent='Refresh central evidence';refresh.className='fanatical-library-download';refresh.addEventListener('click',refreshCentralEvidence);details.append(refresh);
+    const hint=document.createElement('p');hint.className='library-ui-muted';hint.textContent='Retry checks missing or failed results. Recheck queries Galactic Library again, including successful checks. Local evidence is retained.';details.append(hint);
+    const refresh=document.createElement('button');refresh.type='button';refresh.textContent='Recheck Galactic Library';refresh.className='fanatical-library-download';refresh.addEventListener('click',refreshCentralEvidence);details.append(refresh);
     if(state.failed.size||state.capabilityFailed){const retry=document.createElement('button');retry.type='button';retry.textContent='Retry Galactic Library checks';retry.addEventListener('click',()=>document.querySelector('.fanatical-library-retry-galactic')?.click());details.append(retry);}
     const review=document.createElement('button');review.type='button';review.textContent='Review in Galactic Library';review.className='fanatical-library-download';const output=document.createElement('p');output.setAttribute('role','status');review.addEventListener('click',()=>openCentralReview(review,output));details.append(review,output);
     const reminders=F.centralReminders([...matches,...rows]);
@@ -1220,7 +1224,7 @@ function restoreSummaryState(panel, state) {
       }
 
       // Phase 2: Galactic Library Query & Merge
-      await queryGalactic([...allProducts.filter(product => F.classify(product, stored.fanaticalLibraryItems).state !== 'owned'),...identityProducts, ...reading.queries.map(query => query.item)], stored.galacticLibraryExtensionId);
+      await queryGalactic([...allProducts.filter(product => {const local=F.classify(product,stored.fanaticalLibraryItems);return local.state!=='owned'||F.presentation.gamePurchase(product,local);}),...identityProducts, ...reading.queries.map(query => query.item)], stored.galacticLibraryExtensionId);
       if (revision !== state.revision || uiRevision !== (state.uiRevision ?? 0) || pageUrl !== location.href) return;
 
       const matches = parsed.products.map((product) => status(product, stored.fanaticalLibraryItems, localUnits));
@@ -1261,6 +1265,7 @@ function restoreSummaryState(panel, state) {
           `Local library records compared: ${stored.fanaticalLibraryItems.length}.`,
           `Matches: ${[...counts].map(([kind, total]) => `${kind} ${total}`).join('; ')}.`,
           `Galactic Library: ${state.galacticStatus}`,
+          ...(state.lookupFailures?.size ? [`Lookup errors: ${[...state.lookupFailures].join('; ')}`] : []),
           'Sorting: natural alphabetical title across the displayed cards.',
           `Last comparison: ${Math.round(performance.now() - startedAt)} ms.`
         ], [...parsed.products].sort((a, b) => titleCollator.compare(a.title, b.title)).map((product) => {
