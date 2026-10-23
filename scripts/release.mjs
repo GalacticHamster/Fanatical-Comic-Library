@@ -7,7 +7,7 @@ export const projectRoot=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 export function crc32(bytes){let crc=0xffffffff;for(const byte of bytes){crc^=byte;for(let bit=0;bit<8;bit++)crc=crc&1?0xedb88320^(crc>>>1):crc>>>1;}return (crc^0xffffffff)>>>0;}
 function validPath(path){return typeof path==='string'&&path.length<240&&!path.includes('\\')&&!path.startsWith('/')&&path===posix.normalize(path)&&!path.split('/').some(part=>part==='..'||part==='.'||!part)&&/^[a-zA-Z0-9_./-]+$/u.test(path);}
-function runtimePath(path){return path==='manifest.json'||path.startsWith('src/')&&['.js','.mjs','.html','.css','.png'].includes(extname(path));}
+function runtimePath(path){return /^icons\/icon(?:16|32|48|128)\.png$/u.test(path)||path==='manifest.json'||path.startsWith('src/')&&['.js','.mjs','.html','.css','.png'].includes(extname(path));}
 function dependency(files,owner,path,root=false){
   if(path==='')return;
   if(root){if(!validPath(path)||!files.has(path))throw new Error(`Missing ${owner==='manifest.json'?'manifest runtime':'runtime'} dependency: ${owner} -> ${path}`);return;}
@@ -20,6 +20,13 @@ export function validateRuntime(files){
   const manifest=JSON.parse(files.get('manifest.json'));
   if(manifest.manifest_version!==3||!/^(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){0,3}$/u.test(manifest.version)||manifest.version.split('.').some(part=>Number(part)>65535))throw new Error('Invalid extension manifest/version.');
   for(const path of [manifest.background?.service_worker,...(manifest.background?.scripts??[]),manifest.background?.page,manifest.options_page,manifest.action?.default_popup,...Object.values(manifest.icons??{}),...Object.values(manifest.action?.default_icon??{})])if(path)dependency(files,'manifest.json',path,true);
+  for(const group of [manifest.icons,manifest.action?.default_icon]){
+    if(!group||typeof group!=='object')continue;
+    for(const [size,path]of Object.entries(group)){
+      const bytes=files.get(path),dimension=Number(size);
+      if(!Number.isInteger(dimension)||dimension<1||!bytes||bytes.length<24||bytes.subarray(0,8).toString('hex')!=='89504e470d0a1a0a'||bytes.subarray(12,16).toString()!=='IHDR'||bytes.readUInt32BE(16)!==dimension||bytes.readUInt32BE(20)!==dimension)throw Error(`Invalid manifest icon PNG or dimensions: ${path}`);
+    }
+  }
   for(const entry of manifest.content_scripts??[])for(const path of [...(entry.js??[]),...(entry.css??[])])dependency(files,'manifest.json',path,true);
   for(const entry of manifest.web_accessible_resources??[])for(const path of entry.resources??[])dependency(files,'manifest.json',path,true);
   for(const [path,bytes]of files){

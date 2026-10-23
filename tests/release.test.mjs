@@ -6,6 +6,17 @@ import {tmpdir} from 'node:os';
 import {execFileSync} from 'node:child_process';
 import {createRelease,readRuntimeZip,validateRuntime} from '../scripts/release.mjs';
 
+test('extension and toolbar icons are genuine size-matched local artwork in both artifacts',async()=>{
+ for(const target of ['chrome','firefox']){
+  const release=await createRelease(undefined,undefined,target),manifest=JSON.parse(release.files.get('manifest.json'));
+  for(const group of [manifest.icons,manifest.action.default_icon]){assert.deepEqual(Object.keys(group),['16','32','48','128']);for(const [size,path]of Object.entries(group)){assert.equal(path,`icons/icon${size}.png`);const bytes=release.files.get(path);assert.equal(bytes.readUInt32BE(16),Number(size));assert.equal(bytes.readUInt32BE(20),Number(size));}}
+  const broken=new Map(release.files);broken.set('icons/icon32.png',Buffer.from('not an icon'));assert.throws(()=>validateRuntime(broken),/Invalid manifest icon/);
+  const mismatched=new Map(release.files);mismatched.set('icons/icon32.png',release.files.get('icons/icon48.png'));assert.throws(()=>validateRuntime(mismatched),/Invalid manifest icon/);
+  const missing=new Map(release.files);missing.delete('icons/icon16.png');assert.throws(()=>validateRuntime(missing),/Missing manifest runtime/);
+  assert(!release.files.has('icons/icon256.png')&&!release.files.has('icons/icon512-source-extract.png'));
+ }
+});
+
 async function cleanup(directory){const target=resolve(directory),base=resolve(tmpdir());if(!target.startsWith(base+sep)||!target.slice(base.length+1).startsWith('fan-release-test-'))throw Error('Unsafe cleanup.');await rm(target,{recursive:true,force:true});}
 test('shipped runtime ZIP is deterministic, dependency-complete, syntax-valid and excludes personal data',async()=>{
   const first=await createRelease(),second=await createRelease();assert.deepEqual(first.zip,second.zip);assert.deepEqual(first.report,second.report);assert(first.files.has('src/order-importer.mjs'));assert(!first.files.has('src/projection.mjs'));assert(![...first.files.keys()].some(path=>/recon|backup|README|tests|docs|scripts|package.json/i.test(path)));
