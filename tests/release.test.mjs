@@ -38,3 +38,15 @@ test('runtime allowlist rejects a junction that leaves the project',async()=>{
 test('Firefox package uses a stable ID and module event page with identical validated runtime',async()=>{const chrome=await createRelease(),first=await createRelease(undefined,undefined,'firefox'),second=await createRelease(undefined,undefined,'firefox');assert.deepEqual(first.zip,second.zip);assert.deepEqual([...first.files.keys()],[...chrome.files.keys()]);const manifest=JSON.parse(first.files.get('manifest.json'));assert.equal(manifest.background.service_worker,undefined);assert.deepEqual(manifest.background.scripts,['src/service-worker.js']);assert.equal(manifest.background.type,'module');assert.equal(manifest.browser_specific_settings.gecko.id,'fanatical-library@galactichamster.com');for(const [name,bytes]of first.files)if(name!=='manifest.json')assert.deepEqual(bytes,chrome.files.get(name));const missing=new Map(first.files);missing.delete('src/service-worker.js');assert.throws(()=>validateRuntime(missing),/Missing manifest runtime dependency/);await assert.rejects(createRelease(undefined,undefined,'invalid'),/Unknown release target/);});
 
 test('both generated artifacts retain store identity configuration without new permissions or manifest wildcard',async()=>{for(const target of ['chrome','firefox']){const release=await createRelease(undefined,undefined,target),manifest=JSON.parse(release.files.get('manifest.json')),shared=release.files.get('src/shared.js').toString();for(const id of ['bjjpfofmcmiipeghcbhdfjedpldmkcii','pdknncacndkicpogbebdfanniibnnpic','ieoobffekgbfjfoiheejkfihneooiadb'])assert(shared.includes(id));assert.equal(manifest.externally_connectable,undefined);assert.equal(manifest.key,undefined);assert.deepEqual(manifest.permissions,['storage','scripting','alarms']);assert.deepEqual(manifest.host_permissions,['https://www.fanatical.com/*']);}});
+
+test('both packaged extension pages explicitly reuse the approved 16px manifest favicon',async()=>{
+ for(const target of ['chrome','firefox']){
+  const release=await createRelease(undefined,undefined,target),files=readRuntimeZip(release.zip),manifest=JSON.parse(files.get('manifest.json'));
+  for(const page of [manifest.options_page,manifest.action.default_popup]){
+   const links=[...files.get(page).toString().matchAll(/<link\b[^>]*rel="icon"[^>]*>/gu)];assert.equal(links.length,1);
+   const link=links[0][0],href=link.match(/href="([^"]+)"/u)[1],asset=new URL(href,'https://package.invalid/'+page).pathname.slice(1);
+   assert.equal(asset,manifest.icons['16']);assert(link.includes('image/png')&&link.includes('16x16'));assert(files.has(asset));
+   const bytes=files.get(asset);assert.equal(bytes.readUInt32BE(16),16);assert.equal(bytes.readUInt32BE(20),16);
+  }
+ }
+});

@@ -12,6 +12,8 @@
     "runtime-check:central": "node tests/runtime-check.mjs --central",
     "package:firefox": "node scripts/package-release.mjs --firefox",
     "check:package:firefox": "node scripts/package-release.mjs --firefox --check",
-    "browser-check:firefox": "node tests/browser-check.mjs --release --firefox"
+    "browser-check:firefox": "node tests/browser-check.mjs --release --firefox",
+    "test:tab-icons": "node tests/tab-icons.mjs",
+    "test:tab-icons:firefox": "node tests/tab-icons.mjs --firefox"
   }
 }
