@@ -9,7 +9,7 @@ import {inflateRawSync} from 'node:zlib';
 import {setTimeout as pause} from 'node:timers/promises';
 import {chromePipe,firefoxMarionette,freePort} from './native-protocol.mjs';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..'),firefox=process.argv.includes('--firefox');
-const sourceManifest=JSON.parse(await readFile(join(root,'manifest.json'),'utf8')),repo=sourceManifest.name==='Humble Comic Library'?'hb':sourceManifest.name==='Fanatical Library'?'fan':'gl';
+const sourceManifest=JSON.parse(await readFile(join(root,'manifest.json'),'utf8')),repo=sourceManifest.name==='Humble Library'||sourceManifest.name==='Humble Comic Library'?'hb':sourceManifest.name==='Fanatical Library'?'fan':'gl';
 const temp=await mkdtemp(join(tmpdir(),'gh-tab-icon-'));let child,driver,exited,session,handle,base;
 function unzip(zip){const files=new Map();const end=zip.lastIndexOf(Buffer.from('504b0506','hex'));let at=zip.readUInt32LE(end+16);for(let n=0;n<zip.readUInt16LE(end+10);n++){assert.equal(zip.readUInt32LE(at),0x02014b50);const method=zip.readUInt16LE(at+10),size=zip.readUInt32LE(at+20),len=zip.readUInt16LE(at+28),extra=zip.readUInt16LE(at+30),comment=zip.readUInt16LE(at+32),local=zip.readUInt32LE(at+42),name=zip.subarray(at+46,at+46+len).toString();const start=local+30+zip.readUInt16LE(local+26)+zip.readUInt16LE(local+28);files.set(name,method===8?inflateRawSync(zip.subarray(start,start+size)):zip.subarray(start,start+size));at+=46+len+extra+comment;}return files;}
 try{
