@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Galactic Hamster / Galactic Hamster LLC
 /* Chrome MV3 entry point. The only main-world execution is the strict importer. */
 import { safeId, validateScanResult, createSyncStore, mergeLibraryItems } from './library-data.mjs';
 import './theme.js';
