@@ -1,5 +1,7 @@
 [
   "manifest.json",
+  "LICENSE",
+  "NOTICE",
   "src/shared.js",
   "src/service-worker.js",
   "src/order-importer.mjs",
