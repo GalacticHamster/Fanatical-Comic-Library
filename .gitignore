@@ -1,6 +1,11 @@
 node_modules/
 dist/
 *.log
+*.zip
+
+# Personal library exports and backups
+*library-export*.json
+*-backup*.json
 
 # Disposable matching UI captures
 audit-artifacts/
