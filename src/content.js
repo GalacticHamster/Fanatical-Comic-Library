@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 Galactic Hamster / Galactic Hamster LLC
+// Copyright (C) 2026 Galactic Hamster
 (function fanaticalPageOverlay() {
   'use strict';
   const F = globalThis.FanaticalLibrary;
