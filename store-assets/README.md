@@ -3,8 +3,8 @@
 The five screenshots in `screenshots/` are 1280x800 images ready for the
 Chrome Web Store listing:
 
-- `00-fanatical-library-promo.jpg` — the bundle summary picture with humble 
-  library banner.
+- `00-fanatical-library-promo.jpg` — the bundle summary picture with Fanatical
+  Library banner.
 - `01-bundle-summary.jpg` — ownership labels, tier value, new-items filter,
   and buy recommendation.
 - `02-catalogue-filters.jpg` — catalogue sorting, purchase labels, and
@@ -18,5 +18,6 @@ Chrome Web Store listing:
 It is a faithful crop-and-scale of `promo/fanatical-library-promo.jpg`.
 
 These are listing assets, not extension runtime files. Upload them separately
-in the Chrome Web Store dashboard; `scripts/package-release.ps1` deliberately
-excludes this directory from the extension ZIP.
+in the Chrome Web Store dashboard; `scripts/package-release.mjs` (run via
+`npm run package`) deliberately excludes this directory from the extension ZIP.
+
