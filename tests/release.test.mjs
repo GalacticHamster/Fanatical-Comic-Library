@@ -27,6 +27,10 @@ test('shipped runtime ZIP is deterministic, dependency-complete, syntax-valid an
     for(const path of ['../private.js','recon.txt','fanatical-library-export.json'])await assert.rejects(createRelease(root,[...first.files.keys(),path]),/allowlist/);
     await assert.rejects(createRelease(root,[...first.files.keys()].filter(path=>path!=='src/order-importer.mjs')),/Missing runtime dependency/);
     await assert.rejects(createRelease(root,[...first.files.keys()].filter(path=>path!=='src/content.js')),/Missing manifest runtime/);
+    await assert.rejects(createRelease(root,[...first.files.keys()].filter(path=>path!=='LICENSE')),/Missing required runtime file: LICENSE/);
+    await assert.rejects(createRelease(root,[...first.files.keys()].filter(path=>path!=='NOTICE')),/Missing required runtime file: NOTICE/);
+    const noLicense=new Map(first.files);noLicense.delete('LICENSE');assert.throws(()=>validateRuntime(noLicense),/Missing required runtime file: LICENSE/);
+    const noNotice=new Map(first.files);noNotice.delete('NOTICE');assert.throws(()=>validateRuntime(noNotice),/Missing required runtime file: NOTICE/);
     const broken=Buffer.from(first.zip);broken[50]^=1;assert.throws(()=>readRuntimeZip(broken),/ZIP/);
     for(const path of first.files.keys())if(['.js','.mjs'].includes(extname(path)))execFileSync(process.execPath,['--check',join(root,path)],{windowsHide:true,stdio:'pipe'});
   }finally{await cleanup(root);}
