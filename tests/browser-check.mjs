@@ -244,7 +244,7 @@ try {
   await wait();
   const panel=document.querySelector('#fanatical-library-importer');
   assert(panel,'Orders importer missing');
-  assert(panel.children.length===3&&panel.querySelector('.library-import-profile').children.length===3,'Importer controls are not grouped into three rows');
+  assert(panel.children.length===3&&panel.querySelector('.library-import-profile details')&&!panel.querySelector('.library-import-profile details').open,'Advanced account controls must start collapsed');
   assert(panel.querySelector('.library-import-footer').contains(panel.querySelector('output')),'Importer status is outside the button footer');
   assert(panel.querySelector('[data-import-mode="new"]').textContent==='Import new purchases'&&panel.querySelector('[data-import-mode="all"]').textContent==='Rescan all purchases','Importer button wording differs');
   const quick=panel.querySelector('[data-import-mode="new"]');const full=panel.querySelector('[data-import-mode="all"]');const status=panel.querySelector('output');

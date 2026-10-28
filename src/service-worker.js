@@ -38,9 +38,10 @@ async function activeFanaticalTab() {
   return tab;
 }
 
-async function importPurchases({ fullScan = false, profileLabel='', confirmed=false, switchProfile=false, progressId='', tab:requestedTab } = {}) {
+async function importPurchases({ fullScan = false, profileLabel='', confirmed=false, switchProfile=false, progressId='', useSavedAccount=false, tab:requestedTab } = {}) {
   const tab=requestedTab??await activeFanaticalTab();
-  const scan=await syncStore.execute('begin',[{fullScan,profileLabel,confirmed,switchProfile},tab.id]);
+  const account=useSavedAccount?(await syncStore.execute('syncAccounts'))[0]:null;
+  const scan=await syncStore.execute('begin',[{fullScan,profileLabel:useSavedAccount?account?.label??'':profileLabel,confirmed,switchProfile,...(account?{reuseAccount:true,accountId:account.stableId}:{})},tab.id]);
   fullScan=fullScan||scan.forceFull;const stored=scan.state;
   try {
   const knownOrderFingerprints = Array.isArray(stored[STORAGE_ORDER_FINGERPRINTS]) ? stored[STORAGE_ORDER_FINGERPRINTS] : [];
@@ -124,7 +125,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'FANATICAL_IMPORT_PURCHASES') {
     if(_sender?.id!==chrome.runtime.id||!/^https:\/\/www\.fanatical\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?orders\/?(?:[?#]|$)/iu.test(_sender?.url??'')||!_sender.tab?.id){sendResponse({ok:false,error:'Import from the signed-in Fanatical orders page.'});return false;}
     if (purchaseScan) { sendResponse({ ok: false, error: 'A Fanatical purchase scan is already running. Wait for it to finish.' }); return true; }
-    purchaseScan = importPurchases({ fullScan: message.fullScan === true,profileLabel:message.profileLabel,confirmed:message.confirmed===true,switchProfile:message.switchProfile===true,progressId:message.progressId,tab:_sender.tab }).then((summary) => sendResponse({ ok: true, summary })).catch(async (error) => {
+    purchaseScan = importPurchases({ fullScan: message.fullScan === true,profileLabel:message.profileLabel,confirmed:message.confirmed===true,switchProfile:message.switchProfile===true,progressId:message.progressId,useSavedAccount:message.useSavedAccount===true,tab:_sender.tab }).then((summary) => sendResponse({ ok: true, summary })).catch(async (error) => {
       // Persist only an explicit coverage failure flag, never page/transport errors.
       try { if(error.scanToken)await syncStore.execute('failure',[error.scanToken,null,error.scanTabId]); } catch { /* Keep the on-page warning even when storage is unavailable. */ }
       sendResponse({ ok: false, error: `Scan incomplete; previous purchases and successful scan history were kept. ${String(error?.message ?? 'Please try again.').slice(0, 500)}` });

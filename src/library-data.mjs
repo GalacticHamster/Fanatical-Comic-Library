@@ -269,9 +269,13 @@ export function createSyncStore(area){
       await area.set({fanaticalAccountId:selected.accountId,fanaticalLibraryItems:items,fanaticalHistoricalItems:history,fanaticalScannedOrderFingerprints:scan?.fingerprints??[],fanaticalImportSummary:scan?.summary??null,fanaticalLastScanAttempt:scan?.attempt??null,fanaticalProfileLabel:label,fanaticalProfileArchives:archives,[key]:null});return true;
     }
     if(operation==='begin'){
-      const [options,tabId]=args;const label=String(options.profileLabel??'').trim();
-      if(!options.confirmed||!label||label.length>100)throw new Error('Enter an account nickname and confirm the signed-in Fanatical account.');
-      const state=await area.get(defaults);const changing=Boolean(state.fanaticalProfileLabel)&&state.fanaticalProfileLabel!==label;
+      const [options,tabId]=args;const state=await area.get(defaults);let label=String(options.profileLabel??'').trim();
+      const reuse=options.reuseAccount===true&&options.accountId===state.fanaticalAccountId&&!options.switchProfile;
+      if(options.reuseAccount&&!reuse)throw Error('The selected saved account changed. Start the update again.');
+      if(reuse){if(label&&label!==state.fanaticalProfileLabel)throw Error('Use Change account to select another account; use Rename in Saved accounts to change its name.');label=state.fanaticalProfileLabel||'Default account';}
+      if(!label&&options.confirmed&&options.switchProfile){let n=state.fanaticalProfileArchives.length+2;do{label='Account '+n++;}while(label===state.fanaticalProfileLabel||state.fanaticalProfileArchives.some(a=>a.profileLabel===label));}
+      if((!options.confirmed&&!reuse)||!label||label.length>100)throw new Error('Choose the saved account to update.');
+      const changing=Boolean(state.fanaticalProfileLabel)&&state.fanaticalProfileLabel!==label;
       if(changing&&state.fanaticalProfileArchives.some(entry=>entry.profileLabel===label))throw Error('This account is already saved. Use saved account before importing.');
       if(changing&&(!options.fullScan||!options.switchProfile))throw new Error('Choose Rescan all purchases and explicitly select Save a new account.');
       const forceFull=changing||!state.fanaticalProfileLabel;const token=globalThis.crypto.randomUUID();

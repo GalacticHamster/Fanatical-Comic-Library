@@ -165,3 +165,6 @@
 
 /* Native bundle hover overlays sit at layer 5; keep sibling badges visible. */
 :is(.bundle-game-card, .bundle-product-card, .PickAndMixCard).fanatical-library-badge-host > [data-fanatical-library-for] { z-index:6; }
+
+.library-import-profile > details { grid-column:1 / -1; }
+.library-import-profile > details > summary { cursor:pointer; }

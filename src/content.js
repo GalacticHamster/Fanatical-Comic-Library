@@ -350,7 +350,7 @@
     actions.append(quick, full);
     const status = document.createElement('output'); status.setAttribute('aria-live', 'polite');
     const profileControls=document.createElement('div'); profileControls.className='library-import-profile';
-    profileControls.innerHTML='<label>Account nickname <input data-profile-label maxlength="100" placeholder="e.g. personal"></label><label><input type="checkbox" data-profile-confirm> The signed-in account matches this nickname</label><label><input type="checkbox" data-profile-switch> Save a new account on full rescan</label>';
+    profileControls.innerHTML='<details><summary>Advanced accounts</summary><label>Account nickname <input data-profile-label maxlength="100" placeholder="e.g. personal"></label><label><input type="checkbox" data-profile-confirm> The signed-in account matches this nickname</label><label><input type="checkbox" data-profile-switch> Save a new account on full rescan</label></details>';
     chrome.storage.local.get({fanaticalProfileLabel:''}).then(saved=>{const input=profileControls.querySelector('[data-profile-label]');if(active()&&!input.value)input.value=saved.fanaticalProfileLabel;}).catch(()=>{});
     const intro=document.createElement('div'); intro.className='library-import-description';
     const help=document.createElement('details');help.innerHTML='<summary>How account nicknames work</summary><p>Choose a local nickname, such as personal. It does not sign you in or detect your account. Only the active account is checked for ownership. Use Saved accounts below to switch back to a saved snapshot, then Import new purchases to refresh it. Rename account keeps its purchases and scan history. For a new account, sign in on the website, enter a new nickname, select Save a new account, and rescan all purchases once.</p>';
@@ -359,6 +359,8 @@
     panel.append(intro,profileControls,footer);
     document.body.prepend(panel);
     const accounts=LibraryAccountProfiles.mount(intro,{request:async(operation,...args)=>{if(!active())throw Error('Open Orders to manage this account.');const result=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation,args});if(!result?.ok)throw Error(result?.error??'Saved accounts are unavailable.');return result.result;},keys:['fanaticalProfileLabel','fanaticalProfileArchives'],onActiveChange:(label,previous)=>{if(!active())return;const input=profileControls.querySelector('[data-profile-label]');if(previous===undefined&&input.value)return;const changed=input.value!==label;input.value=label;if(changed){profileControls.querySelector('[data-profile-confirm]').checked=false;if(previous!==undefined)status.textContent='Active account: '+(label||'Not yet named')+'. Import new purchases checks for updates.';}profileControls.querySelector('[data-profile-switch]').checked=false;}});
+    profileControls.querySelector('[data-profile-label]').readOnly=true;
+    profileControls.querySelector('[data-profile-switch]').addEventListener('change',()=>{const input=profileControls.querySelector('[data-profile-label]');input.readOnly=!profileControls.querySelector('[data-profile-switch]').checked;if(!input.readOnly)input.value='';});
     profileControls.querySelector('[data-profile-label]').addEventListener('input',()=>{profileControls.querySelector('[data-profile-confirm]').checked=false;});
     const buttons = [quick, full];
     let removeProgress=()=>{};
@@ -385,7 +387,7 @@
       window.addEventListener('message',onProgress);
       removeProgress=()=>window.removeEventListener('message',onProgress);
       // The worker owns the atomic import. Navigation detaches its UI, not its save.
-      const operation=Promise.resolve().then(()=>chrome.runtime.sendMessage({type:'FANATICAL_IMPORT_PURCHASES',fullScan,progressId,profileLabel:profileControls.querySelector('[data-profile-label]').value,confirmed:profileControls.querySelector('[data-profile-confirm]').checked,switchProfile:profileControls.querySelector('[data-profile-switch]').checked}))
+      const operation=Promise.resolve().then(()=>chrome.runtime.sendMessage({type:'FANATICAL_IMPORT_PURCHASES',fullScan,progressId,useSavedAccount:!profileControls.querySelector('[data-profile-switch]').checked,profileLabel:profileControls.querySelector('[data-profile-label]').value,confirmed:profileControls.querySelector('[data-profile-confirm]').checked,switchProfile:profileControls.querySelector('[data-profile-switch]').checked}))
         .then(response=>response?.ok?{...response,summary:{...response.summary,scanMode:fullScan?'full':response.summary.scanMode}}:response)
         .catch(()=>({ok:false,error:'Import failed. Open the signed-in Fanatical Orders page and try again.'}));
       pendingOrderImport=operation;
