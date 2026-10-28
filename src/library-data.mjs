@@ -208,7 +208,7 @@ export function backupRestoreState(items, backup={}) {
     ...(backup.schemaVersion>=3?{fanaticalWishlistItems:globalThis.FanaticalLibrary.normalizeWishlist(backup.wishlistItems)}:{}) };
 }
 
-export function createSyncStore(area){
+export function createSyncStore(area,{onInvalidated=()=>{}}={}){
   let tail=Promise.resolve();const key='fanaticalSyncControl';
   const defaults={fanaticalLibraryItems:[],fanaticalScannedOrderFingerprints:[],fanaticalProfileLabel:'',fanaticalAccountId:null,fanaticalProfileArchives:[],fanaticalHistoricalItems:[],fanaticalImportSummary:null,fanaticalLastScanAttempt:null,mediaTypeOverrides:{},rejectedPurchaseItems:[]};
   async function operate(operation,args){
@@ -324,10 +324,11 @@ export function createSyncStore(area){
       const next=action==='remove'?current.filter(item=>F.wishlistKey(item)!==value):F.normalizeWishlist(action==='add'?[...current,...F.normalizeWishlist(value)]:value);await area.set({fanaticalWishlistItems:next});return next;
     }
     if(operation==='restore'){
-      const backup=args[0];const items=parseLibraryBackup(backup);await area.set({galacticPurchaseAccountIds:{},galacticPurchaseSync:{},...backupRestoreState(items,backup),[key]:null});return true;
+      const backup=args[0];const items=parseLibraryBackup(backup),retirement=await GalacticPurchaseSync.retirementPatch(area);await area.set({galacticPurchaseAccountIds:{},galacticPurchaseSync:{},...backupRestoreState(items,backup),[key]:null});Promise.resolve().then(()=>onInvalidated(retirement.retired)).catch(()=>{});return true;
     }
     if(operation==='clear'){
-      await area.remove(['galacticPurchaseAccountIds','galacticPurchaseSync',...Object.keys(defaults),'fanaticalImportSummary','fanaticalLastScanAttempt',key]);return true;
+      const retirement=await GalacticPurchaseSync.retirementPatch(area);
+      await area.remove(['galacticPurchaseAccountIds','galacticPurchaseSync',...Object.keys(defaults),'fanaticalImportSummary','fanaticalLastScanAttempt',key]);Promise.resolve().then(()=>onInvalidated(retirement.retired)).catch(()=>{});return true;
     }
     if (operation === 'setMediaOverride') {
       const [targetItem, targetKind] = args;

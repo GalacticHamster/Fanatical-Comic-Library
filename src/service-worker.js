@@ -7,7 +7,7 @@ import './purchase-transfer.js';
 
 import {importFanaticalOrdersInPage} from './order-importer.mjs';
 
-const syncStore=createSyncStore(chrome.storage.local);
+const syncStore=createSyncStore(chrome.storage.local,{onInvalidated:events=>purchaseSync.notifyInvalidated(events)});
 const appearanceService=GalacticHamsterTheme.createService({runtime:chrome.runtime,companion:true,
   read:async()=>{const value=await chrome.storage.local.get({galacticHamsterAppearance:null});return value.galacticHamsterAppearance;},
   save:prefs=>syncStore.execute('patch',[{galacticHamsterAppearance:prefs}]),
