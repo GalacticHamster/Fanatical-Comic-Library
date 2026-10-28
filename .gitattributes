@@ -8,3 +8,6 @@ src/theme.js text eol=lf
 src/theme.css text eol=lf
 src/theme-app.css text eol=lf
 src/theme-overlays.css text eol=lf
+
+# Git hook scripts must retain shell-compatible line endings.
+.githooks/pre-commit text eol=lf
