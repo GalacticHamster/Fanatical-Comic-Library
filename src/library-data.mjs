@@ -175,7 +175,7 @@ export function parseHistoricalItems(value, profileLabel) {
   });
 }
 
-export function createLibraryBackup(items, summary, exportedAt = new Date().toISOString(), profileLabel='', profileArchives=[],wishlistItems=[],historicalItems=[],mediaTypeOverrides={},rejectedPurchaseItems=[]) {
+export function createLibraryBackup(items, summary, exportedAt = new Date().toISOString(), profileLabel='', profileArchives=[],wishlistItems=[],historicalItems=[],mediaTypeOverrides={},rejectedPurchaseItems=[],accountId=null) {
   // Scan metadata is informational only: restore never trusts its skip history.
   const safeSummary = summary && ['full', 'quick'].includes(summary.scanMode) ? {
     importedAt: safeDate(summary.importedAt), scanMode: summary.scanMode,
@@ -185,7 +185,8 @@ export function createLibraryBackup(items, summary, exportedAt = new Date().toIS
   } : null;
   const safeOverrides = (mediaTypeOverrides && typeof mediaTypeOverrides === 'object' && !Array.isArray(mediaTypeOverrides)) ? mediaTypeOverrides : {};
   const safeRejected = Array.isArray(rejectedPurchaseItems) ? rejectedPurchaseItems : [];
-  const scoped={format:'fanatical-library-backup',schemaVersion:4,wishlistItems:globalThis.FanaticalLibrary.normalizeWishlist(wishlistItems),items:sanitizeImportResult({items}).items,profileLabel,profileArchives,historicalItems:parseHistoricalItems(historicalItems,profileLabel),mediaTypeOverrides:safeOverrides,rejectedPurchaseItems:safeRejected};
+  if(accountId!=null&&!GalacticPurchaseSync.accountUuid(accountId))throw Error('Invalid saved account identity.');
+  const scoped={...(accountId?{accountId}:{}),format:'fanatical-library-backup',schemaVersion:4,wishlistItems:globalThis.FanaticalLibrary.normalizeWishlist(wishlistItems),items:sanitizeImportResult({items}).items,profileLabel,profileArchives,historicalItems:parseHistoricalItems(historicalItems,profileLabel),mediaTypeOverrides:safeOverrides,rejectedPurchaseItems:safeRejected};
   parseLibraryBackup(scoped);
   const safeArchives=backupRestoreState(scoped.items,scoped).fanaticalProfileArchives;
   return { format:'fanatical-library-backup', ...scoped, exportedAt: safeDate(exportedAt), summary: safeSummary, profileArchives:safeArchives };
@@ -194,10 +195,13 @@ export function createLibraryBackup(items, summary, exportedAt = new Date().toIS
 export function backupRestoreState(items, backup={}) {
   const profileArchives=(backup.schemaVersion>=2?backup.profileArchives:[]).map(entry=>{
     if(!entry||typeof entry.profileLabel!=='string'||!entry.profileLabel||entry.profileLabel.length>100)throw new Error('Invalid archived profile.');
-    return {profileLabel:entry.profileLabel,items:parseLibraryBackup({schemaVersion:1,items:entry.items}),archivedAt:safeDate(entry.archivedAt),
+    if(entry.accountId!=null&&!GalacticPurchaseSync.accountUuid(entry.accountId))throw Error('Invalid saved account identity.');
+    return {...(entry.accountId?{accountId:entry.accountId}:{}),profileLabel:entry.profileLabel,items:parseLibraryBackup({schemaVersion:1,items:entry.items}),archivedAt:safeDate(entry.archivedAt),
       historicalItems:parseHistoricalItems(entry.historicalItems??[],entry.profileLabel)};
   });
-  return { fanaticalLibraryItems: items, fanaticalImportSummary: null, fanaticalScannedOrderFingerprints: [], fanaticalLastScanAttempt: null, fanaticalProfileLabel:backup.schemaVersion>=2?backup.profileLabel:'', fanaticalProfileArchives:profileArchives,
+  if(backup.accountId!=null&&!GalacticPurchaseSync.accountUuid(backup.accountId))throw Error('Invalid saved account identity.');
+  const ids=[backup.accountId,...profileArchives.map(a=>a.accountId)].filter(Boolean).map(id=>id.toLowerCase());if(new Set(ids).size!==ids.length)throw Error('Duplicate saved account identity.');
+  return { fanaticalAccountId:backup.accountId??null, fanaticalLibraryItems: items, fanaticalImportSummary: null, fanaticalScannedOrderFingerprints: [], fanaticalLastScanAttempt: null, fanaticalProfileLabel:backup.schemaVersion>=2?backup.profileLabel:'', fanaticalProfileArchives:profileArchives,
     fanaticalHistoricalItems:backup.schemaVersion>=4?parseHistoricalItems(backup.historicalItems,backup.profileLabel):[],
     ...(backup.mediaTypeOverrides && typeof backup.mediaTypeOverrides === 'object' && !Array.isArray(backup.mediaTypeOverrides) ? { mediaTypeOverrides: backup.mediaTypeOverrides } : {}),
     ...(Array.isArray(backup.rejectedPurchaseItems) ? { rejectedPurchaseItems: backup.rejectedPurchaseItems } : {}),
@@ -206,16 +210,17 @@ export function backupRestoreState(items, backup={}) {
 
 export function createSyncStore(area){
   let tail=Promise.resolve();const key='fanaticalSyncControl';
-  const defaults={fanaticalLibraryItems:[],fanaticalScannedOrderFingerprints:[],fanaticalProfileLabel:'',fanaticalProfileArchives:[],fanaticalHistoricalItems:[],fanaticalImportSummary:null,fanaticalLastScanAttempt:null,mediaTypeOverrides:{},rejectedPurchaseItems:[]};
+  const defaults={fanaticalLibraryItems:[],fanaticalScannedOrderFingerprints:[],fanaticalProfileLabel:'',fanaticalAccountId:null,fanaticalProfileArchives:[],fanaticalHistoricalItems:[],fanaticalImportSummary:null,fanaticalLastScanAttempt:null,mediaTypeOverrides:{},rejectedPurchaseItems:[]};
   async function operate(operation,args){
+    if(['syncAccounts','begin','selectProfile','renameProfile'].includes(operation))await GalacticPurchaseSync.migrateAccounts(area,'fan');
     function archive(state){
       const fingerprints=state.fanaticalScannedOrderFingerprints;
       if(!Array.isArray(fingerprints)||fingerprints.some(value=>typeof value!=='string'||!/^[a-f0-9]{64}$/.test(value)))throw Error('Saved account scan history is invalid.');
-      return {profileLabel:state.fanaticalProfileLabel,items:parseLibraryBackup({schemaVersion:1,items:state.fanaticalLibraryItems}),historicalItems:parseHistoricalItems(state.fanaticalHistoricalItems,state.fanaticalProfileLabel),archivedAt:new Date().toISOString(),localScanState:{fingerprints:[...new Set(fingerprints)],summary:state.fanaticalImportSummary,attempt:state.fanaticalLastScanAttempt}};
+      return {accountId:state.fanaticalAccountId,profileLabel:state.fanaticalProfileLabel,items:parseLibraryBackup({schemaVersion:1,items:state.fanaticalLibraryItems}),historicalItems:parseHistoricalItems(state.fanaticalHistoricalItems,state.fanaticalProfileLabel),archivedAt:new Date().toISOString(),localScanState:{fingerprints:[...new Set(fingerprints)],summary:state.fanaticalImportSummary,attempt:state.fanaticalLastScanAttempt}};
     }
     if(operation==='syncAccounts'){
-      const state=await area.get(defaults),rows=await globalThis.GalacticPurchaseAdapters.accounts('fan',state),saved=(await area.get({galacticPurchaseAccountIds:{}})).galacticPurchaseAccountIds;
-      const result=globalThis.GalacticPurchaseSync.registry(rows,saved);if(Object.keys(result.patch).length)await area.set(result.patch);return result.accounts;
+      const state=await area.get(defaults),rows=await globalThis.GalacticPurchaseAdapters.accounts('fan',state);
+      return rows;
     }
     if(['handoffAccounts','handoffSnapshot','handoffImport','handoffPreview'].includes(operation)){
       const A=globalThis.GalacticPurchaseAdapters,S=globalThis.GalacticPurchaseSnapshot,state=await area.get(defaults);
@@ -224,14 +229,14 @@ export function createSyncStore(area){
       const [raw,target]=args,data=S.validate(raw);if(data.provider!=='fanatical')throw Error('Wrong purchase provider.');
       if(operation!=='handoffPreview'&&(await area.get({[key]:null}))[key])throw Error('Wait for the Fanatical scan to finish before importing saved purchases.');
       let scope;
-      if(target?.newLabel){const label=String(target.newLabel).trim();if(!label||label.length>100||A.fanScopes(state).some(value=>value.label===label)||target.expectedActiveLabel!==state.fanaticalProfileLabel)throw Error('Invalid or stale new account choice.');scope={label,items:[],fresh:true};}
+      if(target?.newLabel){const label=String(target.newLabel).trim();if(!label||label.length>100||A.fanScopes(state).some(value=>value.label===label)||target.expectedActiveLabel!==state.fanaticalProfileLabel)throw Error('Invalid or stale new account choice.');scope={label,items:[],state:{accountId:crypto.randomUUID()},fresh:true};}
       else scope=await A.selected('fan',state,target?.accountRef);
-      if(operation==='handoffImport'&&target?.autoSync){const ids=(await area.get({galacticPurchaseAccountIds:{}})).galacticPurchaseAccountIds;await globalThis.GalacticPurchaseSync.assertCommit(area,data.provider,target,ids[scope.label]);}
+      if(operation==='handoffImport'&&target?.autoSync){const accountId=scope.stableId;await globalThis.GalacticPurchaseSync.assertCommit(area,data.provider,target,accountId);}
       const result=A.fanMerge(scope.items,data.records,Boolean(target?.autoSync)),items=parseLibraryBackup({schemaVersion:1,items:result.items});
       if(operation==='handoffPreview')return {readOnly:true,sourceRecords:data.records.length,destinationRecords:scope.items.length,...result.stats,...A.previewTitles(scope.items,result.items.slice(scope.items.length)),updateBreakdownKnown:false,limitations:data.limitations};
       if(!result.stats.added&&!result.stats.updated&&!scope.fresh)return result.stats;
-      if(scope.label===state.fanaticalProfileLabel||!state.fanaticalProfileLabel&&!state.fanaticalLibraryItems.length)await area.set({fanaticalLibraryItems:items,fanaticalProfileLabel:scope.label});
-      else {const archives=state.fanaticalProfileArchives.filter(p=>p.profileLabel!==scope.label);archives.push({...scope.state,profileLabel:scope.label,items,historicalItems:scope.state?.historicalItems??[],archivedAt:new Date().toISOString()});if(archives.length>100)throw Error('Too many saved accounts.');await area.set({fanaticalProfileArchives:archives});}
+      if(scope.label===state.fanaticalProfileLabel||!state.fanaticalProfileLabel&&!state.fanaticalLibraryItems.length)await area.set({fanaticalAccountId:scope.state.accountId??scope.stableId,fanaticalLibraryItems:items,fanaticalProfileLabel:scope.label});
+      else {const archives=state.fanaticalProfileArchives.filter(p=>p.profileLabel!==scope.label);archives.push({...scope.state,accountId:scope.stableId??scope.state.accountId,profileLabel:scope.label,items,historicalItems:scope.state?.historicalItems??[],archivedAt:new Date().toISOString()});if(archives.length>100)throw Error('Too many saved accounts.');await area.set({fanaticalProfileArchives:archives});}
       return result.stats;
     }
     if(operation==='profiles'){
@@ -252,7 +257,7 @@ export function createSyncStore(area){
         if(next===state.fanaticalProfileLabel||state.fanaticalProfileArchives.some(entry=>entry.profileLabel===next))throw Error('That account nickname is already in use.');
         const renameHistory=rows=>(rows??[]).map(entry=>({...entry,profileLabel:next}));
         const archives=state.fanaticalProfileArchives.map(entry=>entry.profileLabel===label?{...entry,profileLabel:next,historicalItems:renameHistory(entry.historicalItems)}:entry);
-        await area.set({...await globalThis.GalacticPurchaseSync?.renamePatch(area,label,next),fanaticalProfileArchives:archives,...(label===state.fanaticalProfileLabel?{fanaticalProfileLabel:next,fanaticalHistoricalItems:renameHistory(state.fanaticalHistoricalItems)}:{}),[key]:null});return true;
+        await area.set({fanaticalProfileArchives:archives,...(label===state.fanaticalProfileLabel?{fanaticalProfileLabel:next,fanaticalHistoricalItems:renameHistory(state.fanaticalHistoricalItems)}:{}),[key]:null});return true;
       }
       if(label===state.fanaticalProfileLabel)return true;
       if(!state.fanaticalProfileLabel&&state.fanaticalLibraryItems.length)throw Error('Confirm a nickname for the current library through the importer before switching saved accounts.');
@@ -261,7 +266,7 @@ export function createSyncStore(area){
       const archives=state.fanaticalProfileArchives.filter(entry=>entry.profileLabel!==label&&entry.profileLabel!==state.fanaticalProfileLabel);
       if(state.fanaticalProfileLabel)archives.push(archive(state));
       if(archives.length>100)throw Error('Too many saved accounts. Export a backup first.');
-      await area.set({fanaticalLibraryItems:items,fanaticalHistoricalItems:history,fanaticalScannedOrderFingerprints:scan?.fingerprints??[],fanaticalImportSummary:scan?.summary??null,fanaticalLastScanAttempt:scan?.attempt??null,fanaticalProfileLabel:label,fanaticalProfileArchives:archives,[key]:null});return true;
+      await area.set({fanaticalAccountId:selected.accountId,fanaticalLibraryItems:items,fanaticalHistoricalItems:history,fanaticalScannedOrderFingerprints:scan?.fingerprints??[],fanaticalImportSummary:scan?.summary??null,fanaticalLastScanAttempt:scan?.attempt??null,fanaticalProfileLabel:label,fanaticalProfileArchives:archives,[key]:null});return true;
     }
     if(operation==='begin'){
       const [options,tabId]=args;const label=String(options.profileLabel??'').trim();
@@ -305,10 +310,10 @@ export function createSyncStore(area){
         if(!observed.has(item.sourceItemId)&&!history.has(item.sourceItemId))history.set(item.sourceItemId,{profileLabel:control.label,missingSince:now,item});
       }
       for(const id of observed)history.delete(id);
-      await area.set({...(!state.fanaticalProfileLabel?await globalThis.GalacticPurchaseSync?.renamePatch(area,'',control.label):{}),...updates,fanaticalLibraryItems:incoming,fanaticalHistoricalItems:[...history.values()],fanaticalProfileLabel:control.label,fanaticalProfileArchives:archives,rejectedPurchaseItems:nextRejected,[key]:null});return true;
+      await area.set({...updates,fanaticalAccountId:control.changing?crypto.randomUUID():state.fanaticalAccountId,fanaticalLibraryItems:incoming,fanaticalHistoricalItems:[...history.values()],fanaticalProfileLabel:control.label,fanaticalProfileArchives:archives,rejectedPurchaseItems:nextRejected,[key]:null});return true;
     }
     if(operation==='backup'){
-      const state=await area.get({...defaults,fanaticalImportSummary:null,fanaticalWishlistItems:[]});return createLibraryBackup(state.fanaticalLibraryItems,state.fanaticalImportSummary,undefined,state.fanaticalProfileLabel,state.fanaticalProfileArchives,state.fanaticalWishlistItems,state.fanaticalHistoricalItems,state.mediaTypeOverrides,state.rejectedPurchaseItems);
+      const state=await area.get({...defaults,fanaticalImportSummary:null,fanaticalWishlistItems:[]});return createLibraryBackup(state.fanaticalLibraryItems,state.fanaticalImportSummary,undefined,state.fanaticalProfileLabel,state.fanaticalProfileArchives,state.fanaticalWishlistItems,state.fanaticalHistoricalItems,state.mediaTypeOverrides,state.rejectedPurchaseItems,state.fanaticalAccountId);
     }
     if(operation==='wishlist'){
       const [action,value]=args,F=globalThis.FanaticalLibrary,stored=await area.get({fanaticalWishlistItems:[]}),current=F.normalizeWishlist(stored.fanaticalWishlistItems);if(!['add','remove','replace'].includes(action))throw Error('Unsupported wishlist action.');
