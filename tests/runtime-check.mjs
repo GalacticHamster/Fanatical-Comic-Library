@@ -17,7 +17,7 @@ function protocol(child){
 }
 if(process.argv.slice(2).some(arg=>arg!=='--central'))throw Error('Usage: node tests/runtime-check.mjs [--central]');
 const temporary=await mkdtemp(join(tmpdir(),'fanatical-runtime-test-'));
-let child,exited;
+let child,exited,centralSession=null,centralExtensionId=null;
 try{
   const stage=join(temporary,'extension'),{zip}=await createRelease();
   for(const [name,bytes]of readRuntimeZip(zip)){const target=join(stage,name);await mkdir(dirname(target),{recursive:true});await writeFile(target,bytes);}
@@ -43,7 +43,7 @@ try{
   if(process.argv.includes('--central')){
     const centralRoot=resolve('..','GalacticLibrary'),builder=await import(pathToFileURL(join(centralRoot,'scripts/release.mjs'))),central=await builder.createRelease(centralRoot),centralStage=join(temporary,'central');
     for(const [name,bytes]of builder.readRuntimeZip(central.zip)){const target=join(centralStage,name);await mkdir(dirname(target),{recursive:true});await writeFile(target,bytes);}
-    const paired=await driver.send('Extensions.loadUnpacked',{path:centralStage}),centralPage=await attach('chrome-extension://'+paired.id+'/options.html');await wait("document.readyState==='complete'",centralPage);
+    const paired=await driver.send('Extensions.loadUnpacked',{path:centralStage}),centralPage=await attach('chrome-extension://'+paired.id+'/options.html');centralSession=centralPage;centralExtensionId=paired.id;await wait("document.readyState==='complete'",centralPage);
     const rejected=await evaluate(`(async()=>{try{await FanaticalLibrary.testGalacticLink(message=>chrome.runtime.sendMessage(${JSON.stringify(paired.id)},message));return false;}catch{return true;}})()`,options);assert.equal(rejected,true);console.log('PASS installed Chrome: real central worker rejects an unpaired companion');
     await evaluate(`(async()=>{const S=await import('./src/lib/storage.js');await S.saveAllowedExternalClientIds([${JSON.stringify(installed.id)}]);await S.mergeProviderItems('gog',[{providerItemId:'native-soft',title:'Native creative software',mediaType:'software',ownership:'owned'}]);await S.mergeProviderItems('fanatical',[{providerItemId:'native-key',title:'Native creative software',mediaType:'software',ownership:'owned',}]);await S.mergeProviderItems('humble',[{providerItemId:'native-hb-key',title:'Native reported key',mediaType:'game',ownership:'owned',metadata:{entitlement:'third-party-key',keyStatus:'unrevealed',expiresAt:'2026-11-01T00:00:00.000Z'}}]);return true;})()`,centralPage);
     const pairedChecks=await evaluate(`(async()=>{
@@ -103,7 +103,7 @@ try{
   await driver.send('Fetch.enable',{patterns:[{urlPattern:'*'}]},page);await driver.send('Page.enable',{},page);await driver.send('Page.navigate',{url:'https://www.fanatical.com/en/orders'},page);
   await wait("!!document.querySelector('#fanatical-library-importer')",page);
   await evaluate("window.importMessages=[];new MutationObserver(()=>importMessages.push(document.querySelector('#fanatical-library-importer output').textContent)).observe(document.querySelector('#fanatical-library-importer output'),{childList:true});true",page);
-  await evaluate("document.querySelector('[data-profile-label]').value='synthetic';document.querySelector('[data-profile-confirm]').checked=true;document.querySelector('[data-import-mode=all]').click();true",page);
+  await evaluate("document.querySelector('[data-import-mode=all]').click();true",page);
   await wait("!document.querySelector('[data-import-mode=all]').disabled",page);
   let saved=await evaluate('chrome.storage.local.get(null)',options);
   assert.equal(saved.fanaticalImportSummary?.ordersScanned,200,await evaluate("document.querySelector('#fanatical-library-importer output').textContent",page));assert.equal(saved.fanaticalImportSummary.coverage.pagesFetched,10);assert.equal(saved.fanaticalLibraryItems[0].purchaseOrigins.length,200);assert.equal(paths.filter(path=>!path.includes('synthetic-order')).length,10);assert.equal(paths.filter(path=>path.includes('synthetic-order')).length,200);assert(maxActive<=3);assert(!JSON.stringify(saved).includes('SYNTHETIC-SECRET'));assert(!JSON.stringify(saved).includes('synthetic-order-'));
@@ -127,13 +127,31 @@ try{
   await evaluate("document.querySelector('[data-profile-label]').value='other';document.querySelector('[data-profile-confirm]').checked=true;document.querySelector('[data-profile-switch]').checked=true;document.querySelector('[data-import-mode=all]').click();true",page);await wait("!document.querySelector('[data-import-mode=all]').disabled",page);
   saved=await evaluate('chrome.storage.local.get(null)',options);assert.equal(saved.fanaticalProfileLabel,'other');assert.deepEqual(saved.fanaticalProfileArchives[0].localScanState.fingerprints,savedFingerprints);
   await wait("document.querySelector('#account-profiles [data-account-list]')?.options.length===2",options);
-  await evaluate("(()=>{const host=document.querySelector('#account-profiles'),picker=host.querySelector('[data-account-list]');picker.value='synthetic';picker.dispatchEvent(new Event('change'));host.querySelector('[data-account-confirm]').checked=true;host.querySelector('[data-account-use]').click();return true;})()",options);
-  await wait("document.querySelector('#account-profiles summary').textContent.includes('active: synthetic')",options);await wait("document.querySelector('[data-profile-label]').value==='synthetic'",page);
+  await evaluate("(()=>{const host=document.querySelector('#account-profiles'),picker=host.querySelector('[data-account-list]');picker.value='Default account';picker.dispatchEvent(new Event('change'));host.querySelector('[data-account-confirm]').checked=true;host.querySelector('[data-account-use]').click();return true;})()",options);
+  await wait("document.querySelector('#account-profiles summary').textContent.includes('active: Default account')",options);await wait("document.querySelector('[data-profile-label]').value==='Default account'",page);
   total=202;paths.length=0;await evaluate("document.querySelector('[data-profile-confirm]').checked=true;document.querySelector('[data-import-mode=new]').click();true",page);await wait("!document.querySelector('[data-import-mode=new]').disabled",page);saved=await evaluate('chrome.storage.local.get(null)',options);
   assert.equal(saved.fanaticalImportSummary.scanMode,'quick');assert.equal(saved.fanaticalImportSummary.ordersScanned,1);assert.equal(saved.fanaticalImportSummary.ordersSkipped,201);assert.equal(paths.filter(path=>path.includes('synthetic-order')).length,1);console.log('PASS installed Chrome: saved account switch restores private scan history and quick import fetches only its one new order');
   await evaluate("(()=>{const host=document.querySelector('#account-profiles');host.querySelector('[data-account-name]').value='personal';host.querySelector('[data-account-rename]').click();return true;})()",options);await wait("document.querySelector('#account-profiles summary').textContent.includes('active: personal')",options);
   saved=await evaluate('chrome.storage.local.get(null)',options);assert.equal(saved.fanaticalScannedOrderFingerprints.length,202);assert.equal(saved.fanaticalLibraryItems[0].purchaseOrigins.length,202);console.log('PASS installed Chrome: account rename preserves all purchase origins and incremental scan history');
 
+  if(centralSession){
+    await evaluate(`(async()=>{const S=await import('./src/lib/storage.js');await S.saveAllowedExternalClientIds([${JSON.stringify(installed.id)}]);return true;})()`,centralSession);
+    await evaluate(`chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'patch',args:[{galacticLibraryExtensionId:${JSON.stringify(centralExtensionId)}}]})`,options);
+    const syncCall=fields=>evaluate(`chrome.runtime.sendMessage(${JSON.stringify({type:'GH_PURCHASE_ACTION',provider:'fanatical',...fields})})`,centralSession);
+    let choices=await syncCall({action:'syncChoices',peerId:installed.id});assert(choices.ok,choices.error);
+    let result=await syncCall({action:'syncConnect',peerId:choices.peerId,localId:choices.accounts[0].stableId,remoteId:choices.remoteAccounts[0].stableId,confirmed:true,sameAccount:true});assert(result.ok,result.error);
+    const waitForOrigins=async count=>{for(let n=0;n<300;n++){if(await evaluate(`(async()=>{const S=await import('./src/lib/storage.js');return Object.values((await S.getDatabase()).providerItems).some(i=>i.provider==='fanatical'&&i.providerItemId==='product-123456'&&i.metadata.purchaseOrigins?.length===${count});})()`,centralSession))return;await pause(20);}throw Error('GL did not receive '+count+' Fanatical purchase origins');};
+    await waitForOrigins(202);
+    // Inject identity/permission loss only into this disposable synthetic library.
+    await evaluate(`(async()=>{await chrome.storage.local.remove(['fanaticalAccountId','galacticPurchaseSync']);await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'profiles',args:[]});return true;})()`,options);
+    assert.equal((await syncCall({action:'syncNow'})).ok,false);
+    const stopped=await syncCall({action:'syncState'});assert.equal(stopped.state.status,'attention');
+    choices=await syncCall({action:'syncChoices',peerId:installed.id});const a=choices.accounts[0],b=choices.remoteAccounts[0];
+    result=await syncCall({action:'syncRepair',peerId:choices.peerId,localId:a.stableId,remoteId:b.stableId,confirmed:true,sameAccount:true,expectedId:choices.state.id,expectedRemoteId:choices.remoteRelationshipId,localFingerprint:a.fingerprint,remoteFingerprint:b.fingerprint});assert(result.ok,result.error);
+    for(let n=0;n<300;n++){if((await syncCall({action:'syncState'})).state?.status==='synced')break;await pause(20);}
+    total=203;broken=false;await evaluate("document.querySelector('[data-import-mode=new]').click();true",page);await wait("!document.querySelector('[data-import-mode=new]').disabled",page);await waitForOrigins(203);
+    console.log('PASS installed Chrome: real FAN purchase import reaches GL; identity loss repairs once; a subsequent real content/worker Quick Import automatically transfers its new purchase origin');
+  }
 }finally{
   if(child){child.kill();await Promise.race([exited,pause(3000)]);}
   const target=resolve(temporary),base=resolve(tmpdir());if(!target.startsWith(base+sep)||!target.slice(base.length+1).startsWith('fanatical-runtime-test-'))throw Error('Unsafe runtime test cleanup.');await rm(target,{recursive:true,force:true,maxRetries:5,retryDelay:200});

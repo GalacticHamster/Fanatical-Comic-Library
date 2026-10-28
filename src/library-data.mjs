@@ -324,7 +324,7 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
       const next=action==='remove'?current.filter(item=>F.wishlistKey(item)!==value):F.normalizeWishlist(action==='add'?[...current,...F.normalizeWishlist(value)]:value);await area.set({fanaticalWishlistItems:next});return next;
     }
     if(operation==='restore'){
-      const backup=args[0];const items=parseLibraryBackup(backup),retirement=await GalacticPurchaseSync.retirementPatch(area);await area.set({galacticPurchaseAccountIds:{},galacticPurchaseSync:{},...backupRestoreState(items,backup),[key]:null});Promise.resolve().then(()=>onInvalidated(retirement.retired)).catch(()=>{});return true;
+      const backup=args[0];const items=parseLibraryBackup(backup),retirement=await GalacticPurchaseSync.retirementPatch(area);await area.set({galacticPurchaseAccountIds:{},galacticPurchaseSync:{},...await GalacticPurchaseSync.restoredAccounts('fan',backupRestoreState(items,backup)),[key]:null});Promise.resolve().then(()=>onInvalidated(retirement.retired)).catch(()=>{});return true;
     }
     if(operation==='clear'){
       const retirement=await GalacticPurchaseSync.retirementPatch(area);
