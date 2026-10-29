@@ -18,7 +18,11 @@
   check(window.scrollY===savedScroll,'Hydration repair preserves scroll position');
   check(H.events.filter(e=>e.event==='gl-request').length===1&&H.events.filter(e=>e.event==='local-ready').length===1,'Hydration repair does not repeat local reads or GL requests');
   await pause(3000);check(H.pending.length>0&&badges().length===count,'Three-second GL delay does not remove local badges');
+  // Synthetic storefront charity dialog: native top-layer focus and input must
+  // survive asynchronous ownership hydration underneath it.
+  const charity=document.createElement('dialog');charity.innerHTML='<form method="dialog"><label>Charity contribution <input type="number" value="2" aria-label="Charity contribution"></label><button>Done</button></form>';document.body.append(charity);charity.showModal();const contribution=charity.querySelector('input');contribution.focus();contribution.value='3';
   release();await until(()=>!FanaticalLibrary.state.rendering);check(badges().length===count&&visible(),'GL enrichment settles without duplicate or missing badges');
+  check(charity.open&&document.activeElement===contribution&&contribution.value==='3','Charity dialog retains focus and entered contribution during GL enrichment');const rect=contribution.getBoundingClientRect();check(document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)===contribution,'Ownership overlays do not cover the storefront charity control');charity.close();charity.remove();
   H.container.replaceChildren();FanaticalLibrary.render();await until(()=>!FanaticalLibrary.state.rendering);H.log('warm-hydrate');H.container.innerHTML=H.html;await until(()=>badges().length===count);check(visible(),'Warm GL response before hydration still yields visible badges');
   H.hold=true;await chrome.storage.local.set({galacticLibraryExtensionId:'c'.repeat(32)});await until(()=>H.pending.length);H.container.replaceChildren();H.container.innerHTML=H.html;await until(()=>badges().length===count,1000);check(H.pending.length>0,'Fresh local badges do not wait for a repeated lookup');
   // A route change while the previous lookup is held must initialize locally.

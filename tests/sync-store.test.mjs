@@ -105,7 +105,7 @@ test('saved account selection validates confirmation, stale UI and scan history 
   const f=fixture(),scan=await f.store.execute('begin',[{...options,profileLabel:'work',switchProfile:true},1]);await f.store.execute('commit',[scan.token,update,1]);const before=structuredClone(f.state);
   for(const args of [{...choose('personal','work'),confirmed:false},choose('personal','stale'),choose('missing','work')]){await assert.rejects(f.store.execute('selectProfile',[args]));assert.deepEqual(f.state,before);}
   await assert.rejects(f.store.execute('begin',[{...options,profileLabel:'personal',switchProfile:true},1]),/Use saved account/);assert.deepEqual(f.state,before);
-  f.state.fanaticalProfileLabel='';f.state.fanaticalLibraryItems=[item];const unnamed=structuredClone(f.state);await assert.rejects(f.store.execute('selectProfile',[choose('personal','')]),/nickname/);assert.deepEqual(f.state,unnamed);f.state.fanaticalProfileLabel='work';
+  f.state.fanaticalProfileLabel='';f.state.fanaticalLibraryItems=[item];const unnamed=structuredClone(f.state);await assert.rejects(f.store.execute('selectProfile',[choose('personal','')]),/Saved accounts/);assert.deepEqual(f.state,unnamed);f.state.fanaticalProfileLabel='work';
   f.state.fanaticalProfileArchives[0].localScanState.fingerprints=['bad'];const invalid=structuredClone(f.state);await assert.rejects(f.store.execute('selectProfile',[choose('personal','work')]),/scan history/);assert.deepEqual(f.state,invalid);
 });
 test('renames preserve scan authority, scope historical evidence correctly and reject collisions',async()=>{

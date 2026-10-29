@@ -242,14 +242,14 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
     if(operation==='profiles'){
       const state=await area.get(defaults),unique=new Map(state.fanaticalProfileArchives.map(entry=>[entry.profileLabel,entry]));
       if(state.fanaticalProfileLabel)unique.delete(state.fanaticalProfileLabel);
-      return {activeLabel:state.fanaticalProfileLabel,profiles:[...(state.fanaticalProfileLabel?[{label:state.fanaticalProfileLabel,active:true,itemCount:state.fanaticalLibraryItems.length}]:[]),...[...unique.values()].map(entry=>({label:entry.profileLabel,active:false,itemCount:entry.items.length}))]};
+      return {activeLabel:state.fanaticalProfileLabel,profiles:[...(state.fanaticalProfileLabel||state.fanaticalAccountId||state.fanaticalLibraryItems.length?[{label:state.fanaticalProfileLabel,active:true,itemCount:state.fanaticalLibraryItems.length}]:[]),...[...unique.values()].map(entry=>({label:entry.profileLabel,active:false,itemCount:entry.items.length}))]};
     }
     if(operation==='selectProfile'||operation==='renameProfile'){
       const [options]=args,state=await area.get(defaults),label=String(options.profileLabel??'').trim();
       if(options.confirmed!==true)throw Error('Confirm the selected account before continuing.');
       if(options.expectedActiveLabel!==state.fanaticalProfileLabel)throw Error('The active account changed. Review the saved accounts and try again.');
       const selected=label===state.fanaticalProfileLabel&&label?null:[...state.fanaticalProfileArchives].reverse().find(entry=>entry.profileLabel===label);
-      if(!label||label!==state.fanaticalProfileLabel&&!selected)throw Error('This saved account is unavailable. Refresh the account list.');
+      if(!label&&operation!=='renameProfile'||label!==state.fanaticalProfileLabel&&!selected)throw Error('This saved account is unavailable. Refresh the account list.');
       if(operation==='renameProfile'){
         const next=String(options.newLabel??'').trim();
         if(!next||next.length>100)throw Error('Enter an account nickname of 1 to 100 characters.');
@@ -260,7 +260,7 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
         await area.set({fanaticalProfileArchives:archives,...(label===state.fanaticalProfileLabel?{fanaticalProfileLabel:next,fanaticalHistoricalItems:renameHistory(state.fanaticalHistoricalItems)}:{}),[key]:null});return true;
       }
       if(label===state.fanaticalProfileLabel)return true;
-      if(!state.fanaticalProfileLabel&&state.fanaticalLibraryItems.length)throw Error('Confirm a nickname for the current library through the importer before switching saved accounts.');
+      if(!state.fanaticalProfileLabel&&state.fanaticalLibraryItems.length)throw Error('Name the current account in Saved accounts before switching. Your purchases were kept.');
       const items=parseLibraryBackup({schemaVersion:1,items:selected.items}),history=parseHistoricalItems(selected.historicalItems??[],label),scan=selected.localScanState;
       if(scan&&(!Array.isArray(scan.fingerprints)||scan.fingerprints.some(value=>typeof value!=='string'||!/^[a-f0-9]{64}$/.test(value))))throw Error('Saved account scan history is invalid.');
       const archives=state.fanaticalProfileArchives.filter(entry=>entry.profileLabel!==label&&entry.profileLabel!==state.fanaticalProfileLabel);
