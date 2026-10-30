@@ -1,20 +1,29 @@
-# Fanatical Library v0.1
+# Fanatical Library 1.0.0
 
-A standalone, browser-local Chrome MV3 extension that annotates Fanatical
-standard/tiered bundles and Pick & Mix offers using locally imported Fanatical
-purchase metadata. It optionally asks a paired Galactic Library extension for
-identity and reviewed contents evidence for games, books/comics, audiobooks and advertised software support.
+Fanatical Library is an unofficial Chrome and Firefox extension that helps you
+compare Fanatical standard/tiered bundles and Pick & Mix offers with your saved
+purchases. It shows purchase and ownership evidence, possible matches, and
+bundle-planning information for supported games, books/comics, audiobooks and software.
 
-## Load in Chrome
+It works independently using purchase metadata stored locally in your browser.
+Optional Galactic Library integration adds identity and reviewed contents evidence
+from other libraries; saved-purchase synchronization requires explicit account consent.
+It is not affiliated with or endorsed by Fanatical.
 
-1. Open `chrome://extensions`.
-2. Enable **Developer mode**.
-3. Choose **Load unpacked** and select this project directory.
-4. Open the extension popup and choose **Manage library**. In Extension
-   options, select **Open Fanatical orders importer**, then use **Import new
-   purchases** on that signed-in Orders page. Use **Rescan all
-   purchases** to deliberately rebuild the local library from every completed
-   order.
+[Privacy policy](PRIVACY.md) | [Import and backup guide](docs/backups-and-purchases.md) | [Galactic Library setup](docs/companion-pairing.md) | [Report an issue](https://github.com/GalacticHamster/Fanatical-Comic-Library/issues)
+
+## Installation and availability
+
+Version **1.0.0** supports Chrome and Firefox desktop 140+. Chrome Web Store and Firefox AMO availability are pending; no store approval or publication is implied by this tagged release. Verified store links will be added when available. Normal Firefox distribution requires signing.
+
+For source installation or temporary Firefox testing, see [Development and testing](#development-and-testing).
+
+## Get started
+
+Open the extension popup and choose **Manage library**. In Extension options,
+select **Open Fanatical orders importer**, then use **Import new purchases** on
+that signed-in Orders page. Use **Rescan all purchases** to deliberately rebuild
+the local library from every completed order.
 
 Importer messages distinguish **No new purchases**, new purchases, unchanged
 purchases skipped, and full rescans. Live progress shows purchase-list pages,
@@ -213,7 +222,26 @@ scan refuses to declare complete coverage. This conservative guard also means
 switching to a saved Fanatical account requires website-account confirmation and restores only that snapshot. New accounts require an initial full rescan. Inactive snapshots never contribute active ownership. No raw order IDs or response bodies leave the
 page context.
 
-## Automated checks
+## Development and testing
+
+These installs are for development and testing, not signed store distribution.
+
+### Load unpacked in Chrome
+
+1. Open `chrome://extensions`.
+2. Enable **Developer mode**.
+3. Choose **Load unpacked** and select this project directory.
+4. Follow [Get started](#get-started) to import purchases and check bundles.
+
+### Firefox desktop
+
+Run `npm run package:firefox`, extract `dist/FanaticalLibrary-1.0.0-firefox.zip`, then select its manifest through `about:debugging#/runtime/this-firefox`. This is a temporary development install; permanent distribution requires signing. Firefox 140+ is supported with a module event page and the same runtime assets as Chrome.
+
+Compatible builds automatically pair using the existing `fanatical-library@galactichamster.com` and `galactic-library@galactichamster.com` IDs. Use **Check connection**. Advanced / Developer pairing retains custom IDs; signing/listing continuity must be confirmed before publication. Firefox central review asks the allowed GL extension to open its own options; it needs no native helper or private URL. Older GL versions show toolbar instructions.
+
+`npm run browser-check:firefox` checks all nine packaged DOM fixtures. From the adjacent GalacticLibrary repo, `node tests/firefox.mjs --companions` verifies actual installed pairing and GL/FAN MAIN injection against 200 synthetic purchases over ten pages, a quick scan over eleven pages fetching only one new detail, and rejection of broken pagination. These test isolated profiles and synthetic accounts.
+
+### Automated checks
 
 Run `npm test` for parser, matching, privacy, scan safety, backup validation and options
 behavior tests. Run `npm run browser-check` for real-DOM checks in isolated
@@ -278,14 +306,6 @@ signed-in flows still need the manual checks below.
   Fanatical layouts.
 - Firefox 140+ packages and actual Galactic pairing are tested; signed-in
   provider smoke checks and AMO signing remain separate release steps.
-
-## Firefox desktop
-
-Run `npm run package:firefox`, extract `dist/FanaticalLibrary-1.0.0-firefox.zip`, then select its manifest through `about:debugging#/runtime/this-firefox`. This is a temporary development install; permanent distribution requires signing. Firefox 140+ is supported with a module event page and the same runtime assets as Chrome.
-
-Compatible builds automatically pair using the existing `fanatical-library@galactichamster.com` and `galactic-library@galactichamster.com` IDs. Use **Check connection**. Advanced / Developer pairing retains custom IDs; signing/listing continuity must be confirmed before publication. Firefox central review asks the allowed GL extension to open its own options; it needs no native helper or private URL. Older GL versions show toolbar instructions.
-
-`npm run browser-check:firefox` checks all nine packaged DOM fixtures. From the adjacent GalacticLibrary repo, `node tests/firefox.mjs --companions` verifies actual installed pairing and GL/FAN MAIN injection against 200 synthetic purchases over ten pages, a quick scan over eleven pages fetching only one new detail, and rejection of broken pagination. These test isolated profiles and synthetic accounts.
 
 ## Companion interface
 
