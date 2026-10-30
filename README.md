@@ -281,7 +281,7 @@ signed-in flows still need the manual checks below.
 
 ## Firefox desktop
 
-Run `npm run package:firefox`, extract `dist/FanaticalLibrary-0.1.0-firefox.zip`, then select its manifest through `about:debugging#/runtime/this-firefox`. This is a temporary development install; permanent distribution requires signing. Firefox 140+ is supported with a module event page and the same runtime assets as Chrome.
+Run `npm run package:firefox`, extract `dist/FanaticalLibrary-1.0.0-firefox.zip`, then select its manifest through `about:debugging#/runtime/this-firefox`. This is a temporary development install; permanent distribution requires signing. Firefox 140+ is supported with a module event page and the same runtime assets as Chrome.
 
 Compatible builds automatically pair using the existing `fanatical-library@galactichamster.com` and `galactic-library@galactichamster.com` IDs. Use **Check connection**. Advanced / Developer pairing retains custom IDs; signing/listing continuity must be confirmed before publication. Firefox central review asks the allowed GL extension to open its own options; it needs no native helper or private URL. Older GL versions show toolbar instructions.
 

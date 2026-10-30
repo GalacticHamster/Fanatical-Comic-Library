@@ -1,5 +1,6 @@
 {
   "name": "fanatical-library",
+  "version": "1.0.0",
   "private": true,
   "license": "GPL-3.0-or-later",
   "type": "module",
