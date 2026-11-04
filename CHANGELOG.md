@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 1.0.1
 
 - Request `unlimitedStorage` for large local libraries and purchase/account history in Chrome and Firefox. Import validation and single-write saves are unchanged; failed writes retain previous purchases, corrections and successful scan history. Disk exhaustion and browser-wide storage limits remain possible.
 

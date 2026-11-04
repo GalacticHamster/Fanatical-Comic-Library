@@ -1,4 +1,4 @@
-# Fanatical Library 1.0.0
+# Fanatical Library 1.0.1
 
 Fanatical Library is an unofficial Chrome and Firefox extension that helps you
 compare Fanatical standard/tiered bundles and Pick & Mix offers with your saved
@@ -14,7 +14,7 @@ It is not affiliated with or endorsed by Fanatical.
 
 ## Installation and availability
 
-Version **1.0.0** supports Chrome and Firefox desktop 140+. Chrome Web Store and Firefox AMO availability are pending; no store approval or publication is implied by this tagged release. Verified store links will be added when available. Normal Firefox distribution requires signing.
+Version **1.0.1** supports Chrome and Firefox desktop 140+. Chrome Web Store and Firefox AMO availability are pending; no store approval or publication is implied by this tagged release. Verified store links will be added when available. Normal Firefox distribution requires signing.
 
 For source installation or temporary Firefox testing, see [Development and testing](#development-and-testing).
 
@@ -239,7 +239,7 @@ These installs are for development and testing, not signed store distribution.
 
 ### Firefox desktop
 
-Run `npm run package:firefox`, extract `dist/FanaticalLibrary-1.0.0-firefox.zip`, then select its manifest through `about:debugging#/runtime/this-firefox`. This is a temporary development install; permanent distribution requires signing. Firefox 140+ is supported with a module event page and the same runtime assets as Chrome.
+Run `npm run package:firefox`, extract `dist/FanaticalLibrary-1.0.1-firefox.zip`, then select its manifest through `about:debugging#/runtime/this-firefox`. This is a temporary development install; permanent distribution requires signing. Firefox 140+ is supported with a module event page and the same runtime assets as Chrome.
 
 Compatible builds automatically pair using the existing `fanatical-library@galactichamster.com` and `galactic-library@galactichamster.com` IDs. Use **Check connection**. Advanced / Developer pairing retains custom IDs; signing/listing continuity must be confirmed before publication. Firefox central review asks the allowed GL extension to open its own options; it needs no native helper or private URL. Older GL versions show toolbar instructions.
 
