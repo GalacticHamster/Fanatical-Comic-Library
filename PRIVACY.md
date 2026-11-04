@@ -1,6 +1,6 @@
 # Privacy Policy for Fanatical Library
 
-Last updated: October 19, 2026
+Last updated: November 3, 2026
 
 Fanatical Library is an unofficial browser extension for comparing a person's Fanatical purchase library with product and bundle listings. It is not affiliated with or endorsed by Fanatical.
 
@@ -27,6 +27,7 @@ Inbound companion communication includes status/review requests and authorized p
 ## Browser permissions used
 
 - **storage** saves library data, preferences, account relationships, and local working state.
+- **unlimitedStorage** allows large browser-local libraries, purchase histories and saved account snapshots to exceed the normal extension-storage quota. It adds no website access or remote storage. Disk space and browser-wide storage limits can still cause saves to fail; failed import saves retain previous purchases, corrections and successful scan history.
 - **scripting** runs the signed-in order importer in the Fanatical page.
 - **alarms** schedules purchase-synchronization work and retries.
 - **Fanatical site access** reads listings, displays badges/planning overlays, and retrieves order history.

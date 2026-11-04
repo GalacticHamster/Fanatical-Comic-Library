@@ -8,6 +8,7 @@ const dispatch=(listeners,message,sender,respond)=>{for(const fn of listeners)if
 import { safeId, validateScanResult, createSyncStore, mergeLibraryItems } from '../src/library-data.mjs';
 
 import {importFanaticalOrdersInPage} from '../src/order-importer.mjs';
+import {quotaProduct,quotaBaseline,quotaProtectedFields} from './fixtures/storage-quota.mjs';
 
 const source = fs.readFileSync(new URL('../src/service-worker.js', import.meta.url), 'utf8').replace(/^import .*;\r?\n/gmu, '');
 const orderId = 'order-123456';
@@ -16,8 +17,43 @@ const detail = { _id: orderId, status: 'COMPLETE', items: [{ _id: 'bundle-123456
 const summary = { _id: orderId, status: 'COMPLETE', items: [{ name: 'Bundle', bundles: [{ games: [{ name: 'New purchase' }] }] }] };
 const previous = { fanaticalLibraryItems: [{ source: 'fanatical', sourceItemId: 'product-654321', title: 'Previously imported', mediaType: 'game', bundle: { sourceItemId: 'bundle-654321', title: 'Previous bundle' } }], fanaticalImportSummary: { importedAt: 'previous', scanMode: 'full' }, fanaticalScannedOrderFingerprints: [] };
 
-function harness({ list = [summary], details = { [orderId]: detail }, headers = {}, status = 200, invalidJSON = false, known = [], scriptResult, respond, authRead=()=>'SECRET-TOKEN', pageOverrides = {} } = {}) {
-  const stored = structuredClone({ ...previous, fanaticalAccountId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',fanaticalProfileLabel:'fixture',fanaticalProfileArchives:[],fanaticalScannedOrderFingerprints: known });
+test('full and incremental imports above 20 MiB retain account evidence and corrections when later writes fail', async () => {
+  const list=[],details={},count=26000;
+  for(let first=0;first<count;first+=25){
+    const products=Array.from({length:25},(_,offset)=>quotaProduct(first+offset));
+    const bundle=products[0].bundle,id=`quota-order-${first/25}`;
+    const leaves=products.map(p=>({_id:p.sourceItemId,name:p.title,type:'book',slug:p.slug,authors:p.authors,language:p.language,edition:p.edition,series:p.series,volume:p.volume,formats:p.formats,drm:p.drm,platforms:p.platforms}));
+    details[id]={_id:id,status:'COMPLETE',date:'2026-01-15T12:00:00.000Z',items:[{_id:bundle.sourceItemId,name:bundle.title,slug:bundle.slug,bundles:[{games:leaves}]}]};
+    list.push({_id:id,status:'COMPLETE',items:[{name:bundle.title,bundles:[{games:leaves.map(p=>({name:p.name}))}]}]});
+  }
+  let failure='';
+  const run=harness({list,details,initial:quotaBaseline(),onSet:async values=>{if(failure&&Object.hasOwn(values,'fanaticalLibraryItems'))throw Error(failure);}});
+  assert.equal((await run.send(true)).ok,true);
+  assert.ok(Buffer.byteLength(JSON.stringify(run.stored.fanaticalLibraryItems))>20*1024*1024);
+  assert.equal(run.stored.fanaticalLibraryItems.length,count);
+  assert.equal(run.stored.fanaticalLibraryItems.find(p=>p.sourceItemId==='quota-product-0').manualMediaType,'comic');
+  assert.deepEqual(run.stored.fanaticalProfileArchives,run.before.fanaticalProfileArchives);
+  assert.deepEqual(run.stored.fanaticalHistoricalItems,run.before.fanaticalHistoricalItems);
+  const fingerprints=[...run.stored.fanaticalScannedOrderFingerprints];
+  list.push(summary);details[orderId]=detail;
+  await new Promise(resolve=>setImmediate(resolve));
+  const updated=await run.send(false);assert.equal(updated.ok,true,updated.error);assert.equal(updated.summary.ordersScanned,1);
+  assert.equal(run.stored.fanaticalLibraryItems.length,count+1);
+  const foreignId=run.before.fanaticalProfileArchives[0].items[0].sourceItemId;
+  assert.ok(run.stored.fanaticalLibraryItems.every(p=>p.sourceItemId!==foreignId));
+  assert.ok(fingerprints.every(value=>run.stored.fanaticalScannedOrderFingerprints.includes(value)));
+  const saved=structuredClone(run.stored);
+  for(const error of ['Resource::kQuotaBytes quota exceeded','Disk write failed']){
+    await new Promise(resolve=>setImmediate(resolve));
+    failure=error;const reply=await run.send(true);assert.equal(reply.ok,false);assert.match(reply.error,/previous purchases.*kept/);
+    for(const key of quotaProtectedFields)assert.deepEqual(run.stored[key],saved[key],`${key} survives ${error}`);
+    assert.equal(run.stored.fanaticalSyncControl,null);
+    assert.equal(run.stored.fanaticalLastScanAttempt.status,'incomplete');
+  }
+});
+
+function harness({ list = [summary], details = { [orderId]: detail }, headers = {}, status = 200, invalidJSON = false, known = [], scriptResult, respond, authRead=()=>'SECRET-TOKEN', pageOverrides = {}, initial = {}, onSet } = {}) {
+  const stored = structuredClone({ ...previous, fanaticalAccountId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',fanaticalProfileLabel:'fixture',fanaticalProfileArchives:[],fanaticalScannedOrderFingerprints: known, ...initial });
   const before = structuredClone(stored); const writes = []; const paths = []; const receipts = [];
   const listeners=[]; let active = 0; let maxActive = 0;
   const page = { TextEncoder, crypto: webcrypto, URL, AbortController, setTimeout, clearTimeout, ...pageOverrides, localStorage: { getItem: () => JSON.stringify({ token:authRead() }) }, fetch: async (url, options) => {
@@ -32,7 +68,7 @@ function harness({ list = [summary], details = { [orderId]: detail }, headers = 
   } };
   const chrome = { runtime: { id:'a'.repeat(32),getURL:()=>`chrome-extension://${'a'.repeat(32)}/`, onMessage: { addListener(handler) { listeners.push(handler); } } }, tabs: { query: async () => [{ id: 1, url: 'https://www.fanatical.com/en/orders' }] }, storage: { local: {
     get: async (defaults) => ({ ...defaults, ...structuredClone(stored) }),
-    set: async (changes) => { if(Object.keys(changes).some(key=>key!=='fanaticalSyncControl'))writes.push(structuredClone(changes)); Object.assign(stored, structuredClone(changes)); }
+    set: async (changes) => { if(onSet)await onSet(changes); if(Object.keys(changes).some(key=>key!=='fanaticalSyncControl'))writes.push(structuredClone(changes)); Object.assign(stored, structuredClone(changes)); }
   } }, scripting: { executeScript: async ({ func, args }) => {
     if (scriptResult) return scriptResult();
     // Execute the serialized function in a separate page world, just like Chrome.

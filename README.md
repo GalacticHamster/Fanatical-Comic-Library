@@ -190,6 +190,8 @@ wishes along with ownership and provenance using an atomic queued snapshot.
 
 ## Scan safety
 
+The `storage` and `unlimitedStorage` permissions support large local libraries, purchase histories and saved account snapshots. `unlimitedStorage` lifts the normal extension-local quota; it does not add website access, remote storage or unlimited disk space. Browser-wide limits and disk failures can still reject a save. Failed imports keep existing purchases, manual corrections and the last successful scan history.
+
 Scans validate the observed order-list array and the identity/status/structure
 of every requested completed order before making a single storage update.
 Order details must include every product occurrence named in their summaries;
@@ -223,6 +225,8 @@ switching to a saved Fanatical account requires website-account confirmation and
 page context.
 
 ## Development and testing
+
+Run `node tests/storage-quota-runtime.mjs` and repeat with `--firefox` for installed-browser saves and incremental updates above 20 MiB using disposable synthetic libraries. The Chrome-only `--limited` negative control removes `unlimitedStorage` from its disposable copy to verify real quota rejection preserves previous purchases, account archives and manual corrections. The production importer pipeline is also covered by `tests/import-safety.test.mjs`; no personal browser profile is used.
 
 These installs are for development and testing, not signed store distribution.
 

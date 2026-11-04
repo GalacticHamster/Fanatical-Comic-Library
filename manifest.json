@@ -6,6 +6,7 @@
   "description": "Locally mark Fanatical products and bundles you already own.",
   "permissions": [
     "storage",
+    "unlimitedStorage",
     "scripting",
     "alarms"
   ],
