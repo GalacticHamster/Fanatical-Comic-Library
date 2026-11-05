@@ -328,6 +328,10 @@
   }
 
   function importerResult(summary, fullScan) {
+    if(summary.outcome==='partial-extraction'||summary.outcome==='partial-discovery'){
+      const saved=`Saved ${summary.verifiedPurchasesSaved} verified purchase${summary.verifiedPurchasesSaved===1?'':'s'}; ${summary.addedProducts} new product${summary.addedProducts===1?'':'s'}.`;
+      return [saved,summary.outcome==='partial-discovery'?'The scan could not verify the end of your library; additional purchases may be missing.':'',summary.unresolvedOrders?`${summary.unresolvedOrders} purchase${summary.unresolvedOrders===1?'':'s'} could not be processed and will be retried on a future scan.`:'',summary.failureExplanation??'','Existing purchases were preserved. The last complete scan was not updated.'].filter(Boolean).join(' ');
+    }
     const scope = F.purchaseImportScope({...summary,scanMode:fullScan?'full':'quick'});
     const result = `${scope}; imported ${summary.addedProducts} new item${summary.addedProducts === 1 ? '' : 's'}; ${summary.ownedLeafProducts} total items.`;
     return `${result} ${summary.historyCoverage ?? ''}`.trim();
@@ -356,7 +360,18 @@
     const help=document.createElement('details');help.innerHTML='<summary>How account nicknames work</summary><p>Choose a local nickname, such as personal. It does not sign you in or detect your account. Only the active account is checked for ownership. Use Saved accounts below to switch back to a saved snapshot, then Import new purchases to refresh it. Rename account keeps its purchases and scan history. For a new account, sign in on the website, enter a new nickname, select Save a new account, and rescan all purchases once.</p>';
     intro.append(heading,' ',description,help);
     const footer=document.createElement('div');footer.className='library-import-footer';footer.append(status,actions);
-    panel.append(intro,profileControls,footer);
+    const scanDetails=document.createElement('details');scanDetails.hidden=true;
+    const scanDetailsTitle=document.createElement('summary');scanDetailsTitle.textContent='Scan diagnostics';
+    const scanInfo=document.createElement('p');
+    const exportScan=document.createElement('button');exportScan.type='button';exportScan.textContent='Export scan report';
+    let scanReport=null;
+    exportScan.addEventListener('click',()=>{
+      if(!scanReport||!active())return;
+      const link=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(scanReport,null,2)],{type:'application/json'}));
+      link.href=url;link.download='fanatical-scan-report.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),0);
+    });
+    scanDetails.append(scanDetailsTitle,scanInfo,exportScan);
+    panel.append(intro,profileControls,footer,scanDetails);
     document.body.prepend(panel);
     const accounts=LibraryAccountProfiles.mount(intro,{request:async(operation,...args)=>{if(!active())throw Error('Open Orders to manage this account.');const result=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation,args});if(!result?.ok)throw Error(result?.error??'Saved accounts are unavailable.');return result.result;},keys:['fanaticalProfileLabel','fanaticalProfileArchives'],onActiveChange:(label,previous)=>{if(!active())return;const input=profileControls.querySelector('[data-profile-label]');if(previous===undefined&&input.value)return;const changed=input.value!==label;input.value=label;if(changed){profileControls.querySelector('[data-profile-confirm]').checked=false;}profileControls.querySelector('[data-profile-switch]').checked=false;}});
     profileControls.querySelector('[data-profile-label]').readOnly=true;
@@ -370,6 +385,9 @@
       promise.then(response=>{
         if(!active())return;
         status.textContent=response?.ok?importerResult(response.summary,response.summary.scanMode==='full'):(response?.error??'Import failed.');
+        scanReport=response?.scanDiagnostic??response?.summary?.scanDiagnostic??null;
+        scanDetails.hidden=!scanReport;
+        if(scanReport)scanInfo.textContent=`${scanReport.code} · ${scanReport.stage}. The report contains scan counts and failure categories, not titles, order numbers, account details or credentials. Export it before leaving or reloading Orders.`;
         buttons.forEach(control=>{control.disabled=false;});
       });
     };
@@ -379,6 +397,7 @@
       const fullScan=button.dataset.importMode==='all';
       if(fullScan&&!confirm('Full scan every completed Fanatical purchase? This can take longer.'))return;
       status.textContent='Loading your purchase list\u2026';
+      scanReport=null;scanDetails.hidden=true;
       const progressId=[...crypto.getRandomValues(new Uint8Array(16))].map(value=>value.toString(16).padStart(2,'0')).join('');
       const onProgress=event=>{
         if(!active()||event.source!==window||event.origin!==location.origin||event.data?.type!=='FANATICAL_IMPORT_PROGRESS'||event.data.progressId!==progressId)return;

@@ -1,5 +1,14 @@
 /* Self-contained: Chrome serializes this exact function into the Fanatical page. */
-export async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerprints = [], scanHistoryMissing = false, progressId = '', operation = 'import', orderSummaries = [], orderDetails = [] } = {}) {
+export async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerprints = [], scanHistoryMissing = false, progressId = '', operation = 'import', orderSummaries = [], orderDetails = [], returnFailure = false, allowPartial = false, accountOrderFingerprints = [] } = {}) {
+  // Chrome does not propagate MAIN-world exceptions to InjectionResult. Keep
+  // errors in an explicit, aggregate-only envelope when called by the worker.
+  const diagnostic = {stage:'authentication',pagesAttempted:0,pagesParsed:0,ordersRecognized:0,detailsParsed:0,retries:0,terminalReached:false,authentication:'unknown',httpStatus:null};
+  const unresolved=new Set(),ineligible=new Set(),verified=new Set(),failureCounts=new Map();
+  let discoveryComplete=true,unidentifiedRecords=0;
+  const fatal=error=>['authentication-missing','authentication-rejected','session-changed','order-identity-conflict','account-scope-conflict'].includes(error?.fanaticalFailureCode);
+  const note=(error,stage)=>{const code=error?.fanaticalFailureCode??'details-unreadable',key=stage+':'+code,old=failureCounts.get(key);failureCounts.set(key,{code,stage,count:(old?.count??0)+1});};
+  const failure = (code, message) => Object.assign(new Error(message), {fanaticalFailureCode:code});
+  try {
   // Progress is informational only. Send aggregate counts, never account data,
   // order identifiers, titles, authentication tokens or redemption values.
   const reportProgress = (progress) => {
@@ -264,15 +273,16 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   }
   let token = '';
   try { token = String(JSON.parse(localStorage.getItem('bsauth') || '{}')?.token || ''); } catch { /* no signed-in token */ }
-  if (!token) throw new Error('Sign in to Fanatical before importing purchases.');
-  const unreadable = () => new Error('Fanatical returned unreadable or incomplete order data. Your library and scan history were not changed.');
-  const incomplete = (reason) => new Error(`Fanatical scan incomplete; order-history coverage could not be confirmed: ${reason} Your library and scan history were not changed.`);
+  if (!token) throw failure('authentication-missing','Sign in to Fanatical before importing purchases.');
+  diagnostic.authentication='token-present';
+  const unreadable = () => failure(diagnostic.stage+'-unreadable','Fanatical returned unreadable or incomplete order data. Your library and scan history were not changed.');
+  const incomplete = (reason, code=diagnostic.stage+'-incomplete') => failure(code,`Fanatical scan incomplete; order-history coverage could not be confirmed: ${reason} Your library and scan history were not changed.`);
   const scanController = new AbortController();
   const concurrency = 3; const maxAttempts = 3; const maxPages = 1000; const maxOrders = 100000;
   let retries = 0; let cooldownUntil = 0;
   const pause = (ms) => new Promise((resolve, reject) => {
-    if (scanController.signal.aborted) { reject(incomplete('Scan stopped after a failed request.')); return; }
-    const abort = () => { clearTimeout(timer); reject(incomplete('Scan stopped after a failed request.')); };
+    if (scanController.signal.aborted) { reject(incomplete('Scan stopped after a failed request.','request-aborted')); return; }
+    const abort = () => { clearTimeout(timer); reject(incomplete('Scan stopped after a failed request.','request-aborted')); };
     const timer = setTimeout(() => { scanController.signal.removeEventListener('abort', abort); resolve(); }, ms);
     scanController.signal.addEventListener('abort', abort, { once: true });
   });
@@ -281,14 +291,14 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     if (!header) return backoff;
     const delay = /^\d+$/u.test(header) ? Number(header) * 1000 : Date.parse(header) - Date.now();
     // Do not retry earlier than Retry-After, or keep the page busy indefinitely.
-    if (delay > 30000) throw incomplete('Fanatical requested a longer retry delay. Please try scanning again later.');
+    if (delay > 30000) throw incomplete('Fanatical requested a longer retry delay. Please try scanning again later.','retry-later');
     if (!Number.isFinite(delay)) return backoff;
     return Math.max(backoff, delay);
   };
   const request = async (path) => {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       while (cooldownUntil > Date.now()) await pause(cooldownUntil - Date.now());
-      if (scanController.signal.aborted) throw incomplete('Scan stopped after a failed request.');
+      if (scanController.signal.aborted) throw incomplete('Scan stopped after a failed request.','request-aborted');
       const controller = new AbortController();
       const abort = () => controller.abort();
       scanController.signal.addEventListener('abort', abort, { once: true });
@@ -298,7 +308,8 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
         try {
           response = await fetch(path, { method: 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal, headers: { accept: 'application/json', authorization: token } });
         } catch { transportFailed = true; }
-        if (scanController.signal.aborted) throw incomplete('Scan stopped after a failed request.');
+        if (scanController.signal.aborted) throw incomplete('Scan stopped after a failed request.','request-aborted');
+        diagnostic.httpStatus=Number.isInteger(response?.status)?response.status:null;
         if (response?.status === 200) {
           let data;
           try { data = await response.json(); } catch (error) {
@@ -310,25 +321,26 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
         // Do not leave retry/error response streams downloading in the background.
         try { await response?.body?.cancel(); } catch { /* No ownership data is read from error bodies. */ }
         if (!transportFailed && ![408, 429, 500, 502, 503, 504].includes(response?.status)) {
-          if (response?.status === 401 || response?.status === 403) throw incomplete('Fanatical session expired or access was denied. Sign in and try again.');
+          if (response?.status === 401 || response?.status === 403) {diagnostic.authentication='rejected';throw incomplete('Fanatical session expired or access was denied. Sign in and try again.','authentication-rejected');}
           throw unreadable();
         }
       } finally {
         clearTimeout(timer); scanController.signal.removeEventListener('abort', abort);
       }
-      if (attempt === maxAttempts - 1) throw incomplete('An order request failed after three attempts. Please try again later.');
+      if (attempt === maxAttempts - 1) throw incomplete('An order request failed after three attempts. Please try again later.','request-exhausted');
       const delay = retryDelay(response?.headers?.get('retry-after'), attempt);
       retries++;
+      diagnostic.retries=retries;
       reportProgress({phase:'retry',attempt:attempt+2});
       if ([429, 503].includes(response?.status)) cooldownUntil = Math.max(cooldownUntil, Date.now() + delay);
       await pause(delay);
     }
-    throw incomplete('An order request did not finish.');
+    throw incomplete('An order request did not finish.','request-exhausted');
   };
   const pagePath = (target, current) => {
     let url;
-    try { url = new URL(target, `https://www.fanatical.com${current}`); } catch { throw incomplete('A pagination link was unreadable.'); }
-    if (url.origin !== 'https://www.fanatical.com' || url.pathname !== '/api/user/orders' || url.username || url.password || url.hash) throw incomplete('An unsupported pagination link was returned.');
+    try { url = new URL(target, `https://www.fanatical.com${current}`); } catch { throw incomplete('A pagination link was unreadable.','pagination-unsafe'); }
+    if (url.origin !== 'https://www.fanatical.com' || url.pathname !== '/api/user/orders' || url.username || url.password || url.hash) throw incomplete('An unsupported pagination link was returned.','pagination-unsafe');
     url.searchParams.sort();
     return url.pathname + url.search;
   };
@@ -367,7 +379,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
       }
       if (!relations) throw unreadable();
       for (const relation of relations.filter((rel) => ['next', 'last'].includes(rel))) {
-        if (links[relation]) throw incomplete('Pagination returned ambiguous next/last links.');
+        if (links[relation]) throw incomplete('Pagination returned ambiguous next/last links.','pagination-ambiguous');
         links[relation] = pagePath(match[1], current);
       }
     }
@@ -376,53 +388,75 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   const summaries = []; const visitedPages = new Set(); const pageOrderIds = new Set();
   let path = '/api/user/orders'; let expectedTotal = null; let ranged = false; let linked = false; let declaredLast = null;
   const acceptTotal = (value) => {
-    if (!Number.isSafeInteger(value) || value < 0 || value > maxOrders || (expectedTotal !== null && value !== expectedTotal)) throw incomplete('Pagination totals changed or were unreadable.');
+    if (!Number.isSafeInteger(value) || value < 0 || value > maxOrders || (expectedTotal !== null && value !== expectedTotal)) throw incomplete('Pagination totals changed or were unreadable.','pagination-total');
     expectedTotal = value;
+    diagnostic.paginationEvidence=ranged?'range':'count';
   };
+  const admitOrders=data=>{
+    if(summaries.length+data.length>maxOrders)throw incomplete('The 100,000-order safety limit was reached.','order-limit');
+    const ids=new Set();
+    for(const order of data){
+      if(!order||typeof order._id!=='string'||!safeIdInPage(order._id)||pageOrderIds.has(order._id)||ids.has(order._id)){unidentifiedRecords++;throw incomplete('Pagination returned an unreadable or repeated order.','pagination-order');}
+      ids.add(order._id);
+    }
+    for(const order of data){pageOrderIds.add(order._id);summaries.push(order);}
+    diagnostic.ordersRecognized=summaries.length;
+  };
+  diagnostic.stage='listing';
+  try {
   while (path) {
-    if (visitedPages.has(path)) throw incomplete('Pagination repeated a page.');
-    if (visitedPages.size >= maxPages) throw incomplete('The 1,000-page safety limit was reached.');
+    if (visitedPages.has(path)) throw incomplete('Pagination repeated a page.','pagination-repeated');
+    if (visitedPages.size >= maxPages) throw incomplete('The 1,000-page safety limit was reached.','page-limit');
     visitedPages.add(path);
+    diagnostic.pagesAttempted=visitedPages.size;
     reportProgress({phase:'list',page:visitedPages.size});
     const { data, headers } = await request(path);
     // Envelopes/query conventions are not guessed from a fabricated contract.
     if (!Array.isArray(data)) throw unreadable();
+    diagnostic.authentication='accepted-response';
+    const pageOffset=summaries.length;
+    if(allowPartial)admitOrders(data);
     const total = headers?.get('x-total-count');
     if (total !== null && total !== undefined) {
       if (!/^\d+$/u.test(total)) throw unreadable();
       acceptTotal(Number(total));
     }
     const range = headers?.get('content-range');
-    if (ranged && !range) throw incomplete('Pagination omitted a previously supplied range.');
+    if (ranged && !range) throw incomplete('Pagination omitted a previously supplied range.','pagination-range');
     if (range) {
       ranged = true;
       if (data.length === 0 && summaries.length === 0 && /^(?:items|orders)\s+\*\/0$/iu.test(range)) acceptTotal(0);
       else {
         const match = /^(?:items|orders)\s+(\d+)-(\d+)\/(\d+)$/iu.exec(range);
-        if (!match || Number(match[1]) !== summaries.length || Number(match[2]) - Number(match[1]) + 1 !== data.length || Number(match[2]) >= Number(match[3])) throw incomplete('Pagination ranges have gaps, overlaps or unreadable bounds.');
+        if (!match || Number(match[1]) !== pageOffset || Number(match[2]) - Number(match[1]) + 1 !== data.length || Number(match[2]) >= Number(match[3])) throw incomplete('Pagination ranges have gaps, overlaps or unreadable bounds.','pagination-range');
         acceptTotal(Number(match[3]));
       }
     }
-    if (summaries.length + data.length > maxOrders) throw incomplete('The 100,000-order safety limit was reached.');
-    for (const order of data) {
-      if (!order || typeof order._id !== 'string' || !safeIdInPage(order._id) || pageOrderIds.has(order._id)) throw incomplete('Pagination returned an unreadable or repeated order.');
-      pageOrderIds.add(order._id);
-      summaries.push(order);
-    }
-    if (summaries.length > maxOrders || (expectedTotal !== null && summaries.length > expectedTotal)) throw incomplete('Pagination exceeded its total or the 100,000-order safety limit.');
+    if(!allowPartial)admitOrders(data);
+    if (summaries.length > maxOrders || (expectedTotal !== null && summaries.length > expectedTotal)) throw incomplete('Pagination exceeded its total or the 100,000-order safety limit.','pagination-total');
     const links = paginationLinks(headers?.get('link'), path);
+    if(links.next&&expectedTotal===null)diagnostic.paginationEvidence='link';
     if (links.last) {
-      if (declaredLast && declaredLast !== links.last) throw incomplete('Pagination changed its advertised last page.');
+      if (declaredLast && declaredLast !== links.last) throw incomplete('Pagination changed its advertised last page.','pagination-last');
       declaredLast = links.last;
     }
     if (links.next) {
-      if (!data.length || (expectedTotal !== null && summaries.length >= expectedTotal)) throw incomplete('Pagination supplied a next page after an empty or final page.');
+      if (!data.length || (expectedTotal !== null && summaries.length >= expectedTotal)) throw incomplete('Pagination supplied a next page after an empty or final page.','pagination-final');
       linked = true;
     } else if ((expectedTotal !== null && summaries.length !== expectedTotal) || (declaredLast && declaredLast !== path)) {
-      throw incomplete('Fanatical returned only part of the history without a usable next-page link.');
+      throw incomplete('Fanatical returned only part of the history without a usable next-page link.','pagination-missing-next');
     }
+    diagnostic.pagesParsed++;
     path = links.next || null;
   }
+  }catch(error){
+    if(!allowPartial||fatal(error)||!error?.fanaticalFailureCode||!summaries.length)throw error;
+    discoveryComplete=false;note(error,'listing');
+  }
+  diagnostic.terminalReached=discoveryComplete;
+  diagnostic.paginationEvidence=ranged?'range':expectedTotal!==null?'count':linked?'link':'array-only';
+  if(allowPartial&&diagnostic.paginationEvidence==='array-only'){discoveryComplete=false;note(failure('discovery-unverified','No independent history end was supplied.'),'listing');}
+  diagnostic.stage='summaries';
   const listed = new Set();
   const expectedProducts = new Map();
   const productCounts = (parents) => {
@@ -442,11 +476,18 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     return counts;
   };
   for (const order of summaries) {
-    if (!order || typeof order._id !== 'string' || !safeIdInPage(order._id) || typeof order.status !== 'string' || !/^[A-Z][A-Z_]*$/u.test(order.status) || listed.has(order._id)) throw unreadable();
+    if (!order || typeof order._id !== 'string' || !safeIdInPage(order._id) || listed.has(order._id)) throw unreadable();
     listed.add(order._id);
-    if (order.status === 'COMPLETE') expectedProducts.set(order._id, productCounts(order.items));
+    try{
+      if(typeof order.status!=='string'||!/^[A-Z][A-Z_]*$/u.test(order.status))throw unreadable();
+      if(order.status==='COMPLETE')expectedProducts.set(order._id,productCounts(order.items));
+      else if(allowPartial){
+        if(!['REFUNDED','CANCELLED','CANCELED','PENDING','FAILED'].includes(order.status))throw unreadable();
+        ineligible.add(await fingerprintOrderInPage(order._id));
+      }
+    }catch(error){if(!allowPartial||fatal(error))throw error;unresolved.add(await fingerprintOrderInPage(order._id));note(error,'summaries');}
   }
-  const complete = summaries.filter((order) => order.status === 'COMPLETE');
+  const complete = summaries.filter(order=>order.status==='COMPLETE'&&expectedProducts.has(order._id));
   // Only opaque SHA-256 fingerprints leave the page world. This lets a quick
   // scan identify unseen orders without persisting Fanatical order IDs.
   const boundedMap = async (input, task) => {
@@ -465,15 +506,21 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   const completeWithFingerprints = await boundedMap(complete, async (order) => ({ order, fingerprint: await fingerprintOrderInPage(order._id) }));
   const known = new Set((Array.isArray(knownOrderFingerprints) ? knownOrderFingerprints : []).filter((fingerprint) => /^[a-f0-9]{64}$/iu.test(String(fingerprint))).map((fingerprint) => String(fingerprint).toLowerCase()));
   const listedFingerprints = new Set(await boundedMap([...listed], fingerprintOrderInPage));
+  const accountKnown=new Set([...known,...(Array.isArray(accountOrderFingerprints)?accountOrderFingerprints:[]).filter(fp=>typeof fp==='string'&&/^[a-f0-9]{64}$/u.test(fp)).slice(0,100000)]);
+  if(allowPartial&&accountKnown.size&&![...accountKnown].some(fp=>listedFingerprints.has(fp)))throw failure('account-scope-conflict','The listing does not share saved purchase identity evidence. Confirm or change the account before importing.');
   if ([...known].some((fingerprint) => !listedFingerprints.has(fingerprint))) {
-    throw new Error('Fanatical order history omits previously scanned orders, so complete coverage could not be confirmed. Your library and scan history were not changed.');
+    const error=failure('history-missing-known','Fanatical order history omits previously scanned orders, so complete coverage could not be confirmed. Your library and scan history were not changed.');
+    if(!allowPartial)throw error;discoveryComplete=false;note(error,'listing');
   }
   const toInspect = fullScan ? completeWithFingerprints : completeWithFingerprints.filter(({ fingerprint }) => !known.has(fingerprint));
   const scope = {fullScan,scanHistoryMissing,total:toInspect.length,skipped:complete.length-toInspect.length};
   reportProgress({phase:'plan',...scope});
   let completedDetails = 0;
+  diagnostic.stage='details';
   const details = await boundedMap(toInspect, async ({ order: listedOrder, fingerprint }) => {
+    try {
     const { data: order } = await request(`/api/user/orders/${encodeURIComponent(listedOrder._id)}`);
+    if(allowPartial&&typeof order?._id==='string'&&order._id!==listedOrder._id)throw failure('order-identity-conflict','A purchase response belonged to a different order.');
     const projectedItems = [];
     if (!order || order._id !== listedOrder._id || order.status !== 'COMPLETE' || !Array.isArray(order.items) || !order.items.length) throw unreadable();
     const expected = expectedProducts.get(order._id);
@@ -492,19 +539,29 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
       }
     }
     reportProgress({phase:'details',...scope,completed:++completedDetails});
+    diagnostic.detailsParsed=completedDetails;verified.add(fingerprint);
     return projectedItems;
+    }catch(error){if(!allowPartial||fatal(error))throw error;unresolved.add(fingerprint);note(error,'details');return [];}
   });
   const items = combineProducts(details.flat());
   let currentToken='';try{currentToken=String(JSON.parse(localStorage.getItem('bsauth')||'{}')?.token||'');}catch{}
-  if(currentToken!==token)throw new Error('The signed-in Fanatical session changed during this scan. Start a fresh scan.');
+  diagnostic.stage='session';
+  if(currentToken!==token)throw failure('session-changed','The signed-in Fanatical session changed during this scan. Start a fresh scan.');
   // `token`, summaries, details, and raw leaves remain in this execution world.
+  const outcome=!discoveryComplete?'partial-discovery':unresolved.size?'partial-extraction':'complete';
   return {
+    ...(allowPartial?{partialScanVersion:1,outcome,verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...listedFingerprints],failures:[...failureCounts.values()],unidentifiedRecords}:{}),
     schemaVersion: 1,
-    coverage: { complete: true, listedOrders: summaries.length, validatedOrders: details.length, emptyAccount: summaries.length === 0,
+    coverage: { complete: allowPartial?outcome==='complete':true,...(allowPartial?{discoveryComplete,pagesParsed:diagnostic.pagesParsed,accountAffinity:accountKnown.size?'saved-order-match':'declared-scope'}:{}), listedOrders: summaries.length, validatedOrders: allowPartial?verified.size:details.length, emptyAccount: summaries.length === 0,
       pagesFetched: visitedPages.size, expectedTotal, paginationEvidence: ranged ? 'range' : expectedTotal !== null ? 'count' : linked ? 'link' : 'array-only', retries, concurrency },
-    ordersScanned: toInspect.length,
+    ordersScanned: allowPartial?verified.size:toInspect.length,
     ordersAvailable: complete.length,
-    orderFingerprints: completeWithFingerprints.map(({ fingerprint }) => fingerprint),
+    orderFingerprints: completeWithFingerprints.map(({ fingerprint }) => fingerprint).filter(fp=>!unresolved.has(fp)),
     items
   };
+  } catch (error) {
+    if(!returnFailure)throw error;
+    // No message, stack, URL, token, order or product data crosses this path.
+    return {fanaticalImportFailure:1,code:error?.fanaticalFailureCode??'page-exception',diagnostic};
+  }
 }

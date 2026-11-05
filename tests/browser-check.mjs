@@ -7,7 +7,7 @@ import http from 'node:http';
 import { spawn,execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {setTimeout as pause} from 'node:timers/promises';
-import {createRelease} from '../scripts/release.mjs';
+import {createRelease,readRuntimeZip} from '../scripts/release.mjs';
 const firefox=process.argv.includes('--firefox');
 const slowCentral=process.argv.includes('--slow-central');
 const themeMode=process.argv.includes('--theme'),themeWidth=process.argv.includes('--tiny')?420:process.argv.includes('--narrow')?560:1200;
@@ -15,7 +15,7 @@ const lifecycle=process.argv.includes('--lifecycle');
 const hydration=process.argv.includes('--hydration');
 const navigation=process.argv.includes('--navigation');
 const glPack=navigation?await(await import('../../GalacticLibrary/scripts/release.mjs')).createRelease(undefined,undefined,firefox?'firefox':'chrome'):null;
-const packaged=process.argv.includes('--release')?await createRelease(undefined,undefined,firefox?'firefox':'chrome'):null;
+const packaged=process.argv.includes('--release')?(process.env.FAN_BROWSER_PACKAGE?{files:readRuntimeZip(fs.readFileSync(process.env.FAN_BROWSER_PACKAGE))}:await createRelease(undefined,undefined,firefox?'firefox':'chrome')):null;
 const readRuntime=name=>process.env.FAN_TEST_CONTENT_REF&&name==='src/content.js'
   ?execFileSync('git',['show',process.env.FAN_TEST_CONTENT_REF+':'+name],{cwd:root,windowsHide:true,encoding:'utf8',maxBuffer:4*1024*1024})
   :packaged?packaged.files.get(name)?.toString('utf8')??(()=>{throw Error('Absent runtime '+name);})():fs.readFileSync(new URL('../'+name,import.meta.url),'utf8');
@@ -67,13 +67,14 @@ globalThis.chrome = {runtime:{getManifest:()=>({name:'Fanatical Library'}),onMes
   if(message.type==='PING'&&centralMode==='absent')throw Error('Could not establish connection. Receiving end does not exist.');
   if(message.type==='PING')return {ok:true,apiVersion:1,appVersion:'0.1.0'};
   if(message.type==='FANATICAL_IMPORT_PURCHASES'){
+    if(scanScenario==='partial')return {ok:true,summary:{outcome:'partial-extraction',scanMode:'full',verifiedPurchasesSaved:499,unresolvedOrders:1,addedProducts:499,scanDiagnostic:{code:'details-unreadable',stage:'details',outcome:'partial-extraction',completeCheckpointAdvanced:false}}};
     const scope={fullScan:message.fullScan,scanHistoryMissing:scanScenario==='restore',total:scanScenario==='empty'?0:1,skipped:scanScenario==='empty'?26:0};
     window.postMessage({type:'FANATICAL_IMPORT_PROGRESS',progressId:message.progressId,progress:{phase:'plan',...scope}},location.origin);
     window.postMessage({type:'FANATICAL_IMPORT_PROGRESS',progressId:'wrong-scan',progress:{phase:'plan',...scope,total:999}},location.origin);
     window.postMessage({type:'FANATICAL_IMPORT_PROGRESS',progressId:message.progressId,progress:{phase:'plan',...scope,total:-1}},location.origin);
     await new Promise(resolve=>setTimeout(resolve,100));
     setTimeout(()=>window.postMessage({type:'FANATICAL_IMPORT_PROGRESS',progressId:message.progressId,progress:{phase:'list',page:999}},location.origin),20);
-    return scanFailure?{ok:false,error:'Scan incomplete; previous purchases and successful scan history were kept.'}:{ok:true,summary:{scanMode:message.fullScan?'full':'quick',scanHistoryMissing:scope.scanHistoryMissing,ordersScanned:scope.total,ordersSkipped:scope.skipped,addedProducts:scanScenario==='new'?1:0,ownedLeafProducts:1,historyCoverage:'No pagination metadata: silent server truncation cannot be independently ruled out.'}};
+    return scanFailure?{ok:false,error:'Scan incomplete; previous purchases and successful scan history were kept.',scanDiagnostic:{format:1,provider:'fanatical',code:'details-unreadable',stage:'details'}}:{ok:true,summary:{scanMode:message.fullScan?'full':'quick',scanHistoryMissing:scope.scanHistoryMissing,ordersScanned:scope.total,ordersSkipped:scope.skipped,addedProducts:scanScenario==='new'?1:0,ownedLeafProducts:1,historyCoverage:'No pagination metadata: silent server truncation cannot be independently ruled out.'}};
   }
   if(message.type==='MATCH_ITEMS'&&centralMode==='none')return {ok:true,apiVersion:1,results:message.items.map(item=>({requestId:item.requestId,matches:[],possibleMatches:[],partialMatches:[],coverage:null}))};
   if(message.type==='MATCH_ITEMS'&&centralMode==='fanatical')return {ok:true,apiVersion:1,results:message.items.map(item=>({requestId:item.requestId,matches:item.title==='External comic'?[{provider:'fanatical',title:item.title,ownership:'owned',relationship:'same-edition'}]:[]}))};
@@ -244,7 +245,8 @@ try {
   await wait();
   const panel=document.querySelector('#fanatical-library-importer');
   assert(panel,'Orders importer missing');
-  assert(panel.children.length===3&&panel.querySelector('.library-import-profile details')&&!panel.querySelector('.library-import-profile details').open,'Advanced account controls must start collapsed');
+  assert(panel.children.length===4&&panel.querySelector('.library-import-profile details')&&!panel.querySelector('.library-import-profile details').open,'Advanced account controls must start collapsed');
+  assert([...panel.querySelectorAll('details')].find(d=>d.querySelector('summary')?.textContent==='Scan diagnostics')?.hidden,'Scan diagnostics must stay hidden before a scan');
   assert(panel.querySelector('.library-import-footer').contains(panel.querySelector('output')),'Importer status is outside the button footer');
   assert(panel.querySelector('[data-import-mode="new"]').textContent==='Import new purchases'&&panel.querySelector('[data-import-mode="all"]').textContent==='Rescan all purchases','Importer button wording differs');
   const quick=panel.querySelector('[data-import-mode="new"]');const full=panel.querySelector('[data-import-mode="all"]');const status=panel.querySelector('output');
@@ -263,9 +265,39 @@ try {
   scanScenario='new';
   scanFailure=true;full.click();await wait();
   assert(status.textContent.includes('Scan incomplete')&&status.textContent.includes('previous purchases'),'Failed coverage warning missing');
+  const reportButton=[...panel.querySelectorAll('button')].find(b=>b.textContent==='Export scan report');
+  assert(reportButton&&!reportButton.closest('details').hidden,'Safe scan report unavailable after failure');
+  assert(reportButton.closest('details').textContent.includes('details-unreadable'),'Stable failure code is missing');
+  reportButton.click();const exportedReport=JSON.parse(await exportedBlob.text());
+  assert(exportedReport.code==='details-unreadable'&&exportedReport.stage==='details','Explicit report download lost its failure category');
   assert(!quick.disabled&&!full.disabled,'Failed scan left controls disabled');
   scanFailure=false;full.click();await wait();
   assert(status.textContent.startsWith('Rescanned 1 purchase; current snapshot rebuilt'),'Successful rescan did not replace error');
+  assert(reportButton.closest('details').hidden,'Old failure report remained after a new result without diagnostics');
+  scanScenario='partial';full.click();await wait();
+  assert(status.textContent.includes('Saved 499 verified purchases')&&status.textContent.includes('1 purchase could not be processed')&&status.textContent.includes('The last complete scan was not updated'),'Partial result is not distinct from failure/complete success');
+  assert(!reportButton.closest('details').hidden,'Partial diagnostic report is missing');scanScenario='new';
+  // Exercise the serialized production function in each browser engine too;
+  // no provider network requests or real sessions are used by these fixtures.
+  const imported=await import('/src/order-importer.mjs'),serialized=(0,eval)('('+imported.importFanaticalOrdersInPage.toString()+')');
+  const originalFetch=window.fetch,originalAuth=localStorage.getItem('bsauth');
+  try{
+    localStorage.setItem('bsauth',JSON.stringify({token:'SYNTHETIC-PRIVATE'}));
+    window.fetch=async()=>new Response('[]',{status:200,headers:{'content-type':'application/json'}});
+    const empty=await serialized({returnFailure:true,fullScan:true});
+    assert(empty.coverage.emptyAccount&&empty.coverage.complete,'Native empty-account receipt failed');
+    window.fetch=async()=>new Response(JSON.stringify([{_id:'synthetic-order',status:'COMPLETE',items:[]}]),{status:200,headers:{'x-total-count':'2'}});
+    const partial=await serialized({returnFailure:true});
+    assert(partial.code==='pagination-missing-next'&&partial.diagnostic.pagesAttempted===1&&!partial.diagnostic.terminalReached,'Native pagination failure envelope lost its cause');
+    window.fetch=async()=>new Response('{}',{status:403});
+    const denied=await serialized({returnFailure:true});assert(denied.code==='authentication-rejected','Native authorization failure was collapsed');
+    const rows=[1,2].map(n=>({_id:'synthetic-order-'+n,status:'COMPLETE',items:[{name:'Synthetic bundle',bundles:[{games:[{name:'Synthetic book'}]}]}]}));
+    window.fetch=async path=>new Response(JSON.stringify(path==='/api/user/orders'?rows:{_id:'synthetic-order-'+(path.endsWith('1')?1:2),status:'COMPLETE',items:[{_id:'synthetic-bundle',name:'Synthetic bundle',bundles:[{games:[{_id:path.endsWith('1')?'synthetic-product':'bad',name:'Synthetic book',type:'book'}]}]}]}),{status:200,headers:{'content-type':'application/json',...(path==='/api/user/orders'?{'x-total-count':'2'}:{})}});
+    const pilot=await serialized({returnFailure:true,allowPartial:true,fullScan:true});
+    assert(pilot.outcome==='partial-extraction'&&pilot.items.length===1&&pilot.verifiedOrderFingerprints.length===1&&pilot.unresolvedOrderFingerprints.length===1,'Native browser did not isolate one malformed order');
+    const validator=await import('/src/library-data.mjs');assert(validator.validateScanResult(pilot,{fullScan:true}).outcome==='partial-extraction','Native receipt/provenance validation failed');
+    assert(!JSON.stringify([empty,partial,denied]).includes('SYNTHETIC-PRIVATE'),'Native error envelope leaked credentials');
+  }finally{window.fetch=originalFetch;if(originalAuth===null)localStorage.removeItem('bsauth');else localStorage.setItem('bsauth',originalAuth);}
   finish({ok:true,scenario:'Orders importer coverage, failed scan and control recovery'});
 }catch(error){finish({ok:false,error:error.message})}
 `;

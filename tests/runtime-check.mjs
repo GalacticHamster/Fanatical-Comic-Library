@@ -19,7 +19,7 @@ if(process.argv.slice(2).some(arg=>arg!=='--central'))throw Error('Usage: node t
 const temporary=await mkdtemp(join(tmpdir(),'fanatical-runtime-test-'));
 let child,exited,centralSession=null,centralExtensionId=null;
 try{
-  const stage=join(temporary,'extension'),{zip}=await createRelease();
+  const stage=join(temporary,'extension'),zip=process.env.FAN_RUNTIME_PACKAGE?await readFile(process.env.FAN_RUNTIME_PACKAGE):(await createRelease()).zip;
   for(const [name,bytes]of readRuntimeZip(zip)){const target=join(stage,name);await mkdir(dirname(target),{recursive:true});await writeFile(target,bytes);}
   child=spawn(process.env.CHROME_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--no-first-run','--no-default-browser-check','--disable-background-networking','--user-data-dir='+join(temporary,'profile'),'--remote-debugging-pipe','--enable-unsafe-extension-debugging','about:blank'],{windowsHide:true,stdio:['ignore','pipe','pipe','pipe','pipe']});
   exited=new Promise(done=>child.once('exit',done));const driver=protocol(child);
@@ -42,7 +42,8 @@ try{
 
   if(process.argv.includes('--central')){
     const centralRoot=resolve('..','GalacticLibrary'),builder=await import(pathToFileURL(join(centralRoot,'scripts/release.mjs'))),central=await builder.createRelease(centralRoot),centralStage=join(temporary,'central');
-    for(const [name,bytes]of builder.readRuntimeZip(central.zip)){const target=join(centralStage,name);await mkdir(dirname(target),{recursive:true});await writeFile(target,bytes);}
+    const centralZip=process.env.FAN_GL_RUNTIME_PACKAGE?await readFile(process.env.FAN_GL_RUNTIME_PACKAGE):central.zip;
+    for(const [name,bytes]of builder.readRuntimeZip(centralZip)){const target=join(centralStage,name);await mkdir(dirname(target),{recursive:true});await writeFile(target,bytes);}
     const paired=await driver.send('Extensions.loadUnpacked',{path:centralStage}),centralPage=await attach('chrome-extension://'+paired.id+'/options.html');centralSession=centralPage;centralExtensionId=paired.id;await wait("document.readyState==='complete'",centralPage);
     const rejected=await evaluate(`(async()=>{try{await FanaticalLibrary.testGalacticLink(message=>chrome.runtime.sendMessage(${JSON.stringify(paired.id)},message));return false;}catch{return true;}})()`,options);assert.equal(rejected,true);console.log('PASS installed Chrome: real central worker rejects an unpaired companion');
     await evaluate(`(async()=>{const S=await import('./src/lib/storage.js');await S.saveAllowedExternalClientIds([${JSON.stringify(installed.id)}]);await S.mergeProviderItems('gog',[{providerItemId:'native-soft',title:'Native creative software',mediaType:'software',ownership:'owned'}]);await S.mergeProviderItems('fanatical',[{providerItemId:'native-key',title:'Native creative software',mediaType:'software',ownership:'owned',}]);await S.mergeProviderItems('humble',[{providerItemId:'native-hb-key',title:'Native reported key',mediaType:'game',ownership:'owned',metadata:{entitlement:'third-party-key',keyStatus:'unrevealed',expiresAt:'2026-11-01T00:00:00.000Z'}}]);return true;})()`,centralPage);
@@ -78,9 +79,9 @@ try{
 
   // Every request on this synthetic Fanatical tab is fulfilled locally. It
   // never contacts Fanatical or uses a real account/session or user profile.
-  const page=await attach('about:blank');let total=200,broken=false,active=0,maxActive=0;const paths=[],errors=[];
+  const page=await attach('about:blank');let total=200,broken=false,malformedOrder=null,active=0,maxActive=0;const paths=[],errors=[];
   const summary=n=>({_id:'synthetic-order-'+n,status:'COMPLETE',items:[{name:'Synthetic bundle',bundles:[{games:[{name:'Synthetic purchase'}]}]}]});
-  const detail=n=>({_id:'synthetic-order-'+n,status:'COMPLETE',date:'2026-10-01T00:00:00Z',privateKey:'SYNTHETIC-SECRET',items:[{_id:'bundle-123456',name:'Synthetic bundle',bundles:[{games:[{_id:'product-123456',name:'Synthetic purchase',type:'book',privateDownloadUrl:'SYNTHETIC-SECRET'}]}]}]});
+  const detail=n=>({_id:'synthetic-order-'+n,status:'COMPLETE',date:'2026-10-01T00:00:00Z',privateKey:'SYNTHETIC-SECRET',items:[{_id:'bundle-123456',name:'Synthetic bundle',bundles:[{games:[{_id:n===malformedOrder?'bad':n>=203?'product-synthetic-'+n:'product-123456',name:'Synthetic purchase',type:'book',privateDownloadUrl:'SYNTHETIC-SECRET'}]}]}]});
   driver.on(message=>{
     if(message.sessionId!==page)return;
     if(message.method==='Page.javascriptDialogOpening'){driver.send('Page.handleJavaScriptDialog',{accept:true},page).catch(error=>errors.push(error));return;}
@@ -121,7 +122,15 @@ try{
   assert.match(await evaluate("document.querySelector('#fanatical-library-importer output').textContent",page),/^No new purchases; no purchase details to check; skipped 201 unchanged purchases/);
   console.log('PASS installed Chrome: repeated quick import says no new purchases and skips every known purchase detail');
   const before=JSON.stringify({items:saved.fanaticalLibraryItems,summary:saved.fanaticalImportSummary,fingerprints:saved.fanaticalScannedOrderFingerprints});broken=true;await evaluate("document.querySelector('[data-import-mode=new]').click();true",page);await wait("!document.querySelector('[data-import-mode=new]').disabled",page);saved=await evaluate('chrome.storage.local.get(null)',options);
-  assert.equal(JSON.stringify({items:saved.fanaticalLibraryItems,summary:saved.fanaticalImportSummary,fingerprints:saved.fanaticalScannedOrderFingerprints}),before);assert.equal(saved.fanaticalLastScanAttempt.status,'incomplete');assert.equal(errors.length,0,String(errors[0]));console.log('PASS installed Chrome: broken pagination retains purchases and successful summary, displaying incomplete coverage');
+  assert.equal(JSON.stringify({items:saved.fanaticalLibraryItems,summary:saved.fanaticalImportSummary,fingerprints:saved.fanaticalScannedOrderFingerprints}),before);assert.equal(saved.fanaticalLastScanAttempt.status,'partial');assert.equal(errors.length,0,String(errors[0]));console.log('PASS installed Chrome: broken pagination retains purchases and successful summary, displaying incomplete coverage');
+  assert.match(await evaluate("document.querySelector('#fanatical-library-importer output').textContent",page),/usable next-page link/u,'Chrome must retain the specific pagination failure across MAIN injection');
+  const downloads=join(temporary,'scan-reports');await mkdir(downloads);
+  await driver.send('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:downloads});
+  await evaluate("[...document.querySelectorAll('#fanatical-library-importer button')].find(b=>b.textContent==='Export scan report').click();true",page);
+  let report;for(let n=0;n<100;n++){try{report=JSON.parse(await readFile(join(downloads,'fanatical-scan-report.json'),'utf8'));break;}catch{await pause(25);}}
+  assert.equal(report?.code,'pagination-missing-next');assert.equal(report.stage,'listing');assert.equal(report.pagesAttempted,2);assert.equal(report.pagesParsed,1);assert.equal(report.purchaseRecordsRecognized,40);assert.equal(report.requestedOperation,'quick');assert.equal(report.selectedMode,'quick');assert.equal(report.storageAdmission,'committed');assert.equal(report.outcome,'partial-discovery');assert.equal(report.completeCheckpointAdvanced,false);assert.equal(report.previousLibraryPreserved,true);assert.equal(report.terminalVerified,false);
+  assert(!/SYNTHETIC-SECRET|synthetic-order-|Synthetic purchase|Synthetic bundle/u.test(JSON.stringify(report)));
+  console.log('PASS installed Chrome: specific MAIN-world failure and explicitly downloaded privacy-safe report retain stage, mode and counts');
   broken=false;
   const savedFingerprints=[...saved.fanaticalScannedOrderFingerprints];
   await evaluate("document.querySelector('[data-profile-label]').value='other';document.querySelector('[data-profile-confirm]').checked=true;document.querySelector('[data-profile-switch]').checked=true;document.querySelector('[data-import-mode=all]').click();true",page);await wait("!document.querySelector('[data-import-mode=all]').disabled",page);
@@ -152,6 +161,30 @@ try{
     total=203;broken=false;await evaluate("document.querySelector('[data-import-mode=new]').click();true",page);await wait("!document.querySelector('[data-import-mode=new]').disabled",page);await waitForOrigins(203);
     console.log('PASS installed Chrome: real FAN purchase import reaches GL; identity loss repairs once; a subsequent real content/worker Quick Import automatically transfers its new purchase origin');
   }
+  const priorSummary=await evaluate('chrome.storage.local.get("fanaticalImportSummary").then(s=>s.fanaticalImportSummary)',options);
+  const otherProviders=centralSession?await evaluate("(async()=>{const S=await import('./src/lib/storage.js');const db=await S.getDatabase();return JSON.stringify(Object.values(db.providerItems).filter(i=>i.provider!=='fanatical'));})()",centralSession):null;
+  total=500;malformedOrder=211;
+  for(let repeat=0;repeat<2;repeat++){
+    await evaluate("document.querySelector('[data-import-mode=all]').click();true",page);await wait("!document.querySelector('[data-import-mode=all]').disabled",page);
+    saved=await evaluate('chrome.storage.local.get(null)',options);
+    assert.equal(saved.fanaticalLastScanAttempt.status,'partial');assert.equal(saved.fanaticalLastScanAttempt.verifiedPurchasesSaved,499);assert.equal(saved.fanaticalLastScanAttempt.unresolvedOrders,1);
+    assert.deepEqual(saved.fanaticalImportSummary,priorSummary);assert.equal(saved.fanaticalScannedOrderFingerprints.length,499);assert.equal(saved.fanaticalLibraryItems.filter(i=>i.sourceItemId==='product-123456'||i.sourceItemId.startsWith('product-synthetic-')).reduce((n,i)=>n+(i.purchaseOrigins?.length??0),0),499);
+    assert.match(await evaluate("document.querySelector('#fanatical-library-importer output').textContent",page),/Saved 499 verified purchases/u);
+    if(centralSession){
+      for(let n=0;n<300;n++){if(await evaluate("(async()=>{const S=await import('./src/lib/storage.js');return Object.values((await S.getDatabase()).providerItems).filter(i=>i.provider==='fanatical'&&(i.providerItemId==='product-123456'||i.providerItemId.startsWith('product-synthetic-'))).reduce((n,i)=>n+(i.metadata.purchaseOrigins?.length??0),0)===499;})()",centralSession))break;await pause(20);}
+      const centralProgress=await evaluate("(async()=>{const S=await import('./src/lib/storage.js');const db=await S.getDatabase();const sync=await chrome.runtime.sendMessage({type:'GH_PURCHASE_ACTION',provider:'fanatical',action:'syncState'});return {origins:Object.values(db.providerItems).filter(i=>i.provider==='fanatical'&&(i.providerItemId==='product-123456'||i.providerItemId.startsWith('product-synthetic-'))).reduce((n,i)=>n+(i.metadata.purchaseOrigins?.length??0),0),status:sync.state?.status,error:sync.state?.error};})()",centralSession);
+      assert.equal(centralProgress.origins,499,JSON.stringify(centralProgress));
+      assert.equal(await evaluate("(async()=>{const S=await import('./src/lib/storage.js');return JSON.stringify(Object.values((await S.getDatabase()).providerItems).filter(i=>i.provider!=='fanatical'));})()",centralSession),otherProviders);
+    }
+  }
+  malformedOrder=null;paths.length=0;
+  await evaluate("document.querySelector('[data-import-mode=new]').click();true",page);await wait("!document.querySelector('[data-import-mode=new]').disabled",page);
+  saved=await evaluate('chrome.storage.local.get(null)',options);
+  assert.equal(saved.fanaticalLastScanAttempt.status,'complete');assert.equal(saved.fanaticalImportSummary.ordersScanned,1);assert.equal(saved.fanaticalScannedOrderFingerprints.length,500);assert.equal(saved.fanaticalLibraryItems.filter(i=>i.sourceItemId==='product-123456'||i.sourceItemId.startsWith('product-synthetic-')).reduce((n,i)=>n+(i.purchaseOrigins?.length??0),0),500);
+  assert.equal(paths.filter(p=>p.includes('synthetic-order')).length,1);
+  console.log('PASS installed Chrome: 499/500 partial orders saved atomically, repeat is idempotent, unresolved order alone retried and complete coverage recovered');
+  if(centralSession)console.log('PASS installed Chrome: repeated partial FAN additions reach GL without duplicating origins or modifying unrelated provider records');
+
 }finally{
   if(child){child.kill();await Promise.race([exited,pause(3000)]);}
   const target=resolve(temporary),base=resolve(tmpdir());if(!target.startsWith(base+sep)||!target.slice(base.length+1).startsWith('fanatical-runtime-test-'))throw Error('Unsafe runtime test cleanup.');await rm(target,{recursive:true,force:true,maxRetries:5,retryDelay:200});

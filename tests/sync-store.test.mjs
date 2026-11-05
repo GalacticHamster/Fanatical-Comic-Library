@@ -4,7 +4,7 @@ import {createSyncStore,createLibraryBackup,backupRestoreState,parseLibraryBacku
 
 const item={source:'fanatical',sourceItemId:'product-123456',title:'Personal comic',mediaType:'book',bundle:{sourceItemId:'bundle-123456',title:'Personal bundle'}};
 function fixture(){
-  const state={fanaticalLibraryItems:[item],fanaticalProfileLabel:'personal',fanaticalProfileArchives:[],fanaticalScannedOrderFingerprints:['a'.repeat(64)]};
+  const state={fanaticalLibraryItems:[item],fanaticalProfileLabel:'personal',fanaticalProfileArchives:[],fanaticalScannedOrderFingerprints:['a'.repeat(64)],fanaticalImportSummary:{scanMode:'full'}};
   const area={get:async defaults=>structuredClone({...defaults,...Object.fromEntries(Object.keys(defaults).filter(key=>key in state).map(key=>[key,state[key]]))}),set:async updates=>Object.assign(state,structuredClone(updates)),remove:async keys=>{for(const key of Array.isArray(keys)?keys:[keys])delete state[key];}};
   return {state,area,store:createSyncStore(area)};
 }
@@ -120,5 +120,5 @@ test('backups and older archives never restore private scan fingerprints as skip
   const f=fixture(),scan=await f.store.execute('begin',[{...options,profileLabel:'work',switchProfile:true},1]);await f.store.execute('commit',[scan.token,update,1]);
   const backup=await f.store.execute('backup');assert.equal(JSON.stringify(backup).includes('localScanState'),false);assert.equal(JSON.stringify(backup).includes('a'.repeat(64)),false);
   backup.profileArchives[0].localScanState={fingerprints:['c'.repeat(64)],summary:{scanMode:'full'}};await f.store.execute('restore',[backup]);await f.store.execute('selectProfile',[choose('personal','work')]);assert.deepEqual(f.state.fanaticalScannedOrderFingerprints,[]);assert.equal(f.state.fanaticalLibraryItems[0].title,'Personal comic');
-  const quick=await f.store.execute('begin',[{profileLabel:'personal',confirmed:true},1]);assert.equal(quick.forceFull,false);assert.deepEqual(quick.state.fanaticalScannedOrderFingerprints,[]);
+  const quick=await f.store.execute('begin',[{profileLabel:'personal',confirmed:true},1]);assert.equal(quick.forceFull,true);assert.deepEqual(quick.state.fanaticalScannedOrderFingerprints,[]);
 });

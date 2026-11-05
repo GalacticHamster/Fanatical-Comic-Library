@@ -139,6 +139,7 @@ export function parseLibraryBackup(value) {
 
 /** Do not let tolerant sanitization turn a broken scan into an empty rebuild. */
 export function validateScanResult(value, { fullScan = false, knownOrderFingerprints = [] } = {}) {
+  if(value?.partialScanVersion===1)return validatePartialScan(value,{fullScan,knownOrderFingerprints});
   const fail = () => { throw new Error('Fanatical scan was unreadable or incomplete. Your library and scan history were not changed.'); };
   const integer = (number) => Number.isSafeInteger(number) && number >= 0;
   if (!value || value.schemaVersion !== 1 || value.coverage?.complete !== true || !integer(value.ordersScanned) || !integer(value.ordersAvailable)
@@ -161,6 +162,40 @@ export function validateScanResult(value, { fullScan = false, knownOrderFingerpr
     || (coverage.paginationEvidence === 'link' && coverage.pagesFetched < 2)) fail();
   return { ...projected, coverage: { complete: true, listedOrders: coverage.listedOrders, validatedOrders: coverage.validatedOrders, emptyAccount: coverage.emptyAccount,
     pagesFetched: coverage.pagesFetched, expectedTotal: coverage.expectedTotal, paginationEvidence: coverage.paginationEvidence, retries: coverage.retries, concurrency: 3 } };
+}
+
+const PARTIAL_FAILURE_CODES=new Set(['discovery-unverified','listing-unreadable','listing-incomplete','summaries-unreadable','details-unreadable','details-incomplete','request-aborted','retry-later','request-exhausted','pagination-unsafe','pagination-ambiguous','pagination-total','pagination-repeated','page-limit','order-limit','pagination-range','pagination-order','pagination-last','pagination-final','pagination-missing-next','history-missing-known']);
+function validFingerprints(value){return Array.isArray(value)&&value.length<=100000&&value.every(fp=>typeof fp==='string'&&/^[a-f0-9]{64}$/u.test(fp))&&new Set(value).size===value.length;}
+function validatePartialScan(value,{fullScan,knownOrderFingerprints}){
+  const fail=()=>{throw Error('Invalid independent purchase evidence; the partial scan was not saved.');};
+  const bounded=n=>Number.isSafeInteger(n)&&n>=0&&n<=100000;
+  if(value.schemaVersion!==1||!['complete','partial-extraction','partial-discovery'].includes(value.outcome))fail();
+  if(value.outcome==='complete')validateScanResult({...value,partialScanVersion:undefined},{fullScan,knownOrderFingerprints});
+  for(const name of ['orderFingerprints','verifiedOrderFingerprints','unresolvedOrderFingerprints','ineligibleOrderFingerprints','observedOrderFingerprints'])if(!validFingerprints(value[name]))fail();
+  const all=new Set(value.observedOrderFingerprints),verified=new Set(value.verifiedOrderFingerprints),processed=new Set(value.orderFingerprints),unresolved=new Set(value.unresolvedOrderFingerprints),ineligible=new Set(value.ineligibleOrderFingerprints),known=new Set(validFingerprints(knownOrderFingerprints)?knownOrderFingerprints:[]);
+  if([...processed].some(fp=>!all.has(fp)||unresolved.has(fp)||ineligible.has(fp)||!verified.has(fp)&&(!known.has(fp)||fullScan))||[...verified].some(fp=>!processed.has(fp))||[...unresolved].some(fp=>!all.has(fp)||ineligible.has(fp))||[...ineligible].some(fp=>!all.has(fp))||processed.size+unresolved.size+ineligible.size!==all.size)fail();
+  const c=value.coverage;
+  if(!c||typeof c.discoveryComplete!=='boolean'||c.complete!==(value.outcome==='complete')||c.discoveryComplete!==(value.outcome!=='partial-discovery')||!bounded(c.listedOrders)||c.listedOrders!==all.size||c.validatedOrders!==verified.size||c.emptyAccount!==(all.size===0)||!Number.isSafeInteger(c.pagesFetched)||c.pagesFetched<1||c.pagesFetched>1000||!Number.isSafeInteger(c.retries)||c.retries<0||c.retries>300000||c.concurrency!==3||!['array-only','link','count','range'].includes(c.paginationEvidence)||c.expectedTotal!==null&&!bounded(c.expectedTotal)||!bounded(value.ordersAvailable)||value.ordersAvailable>all.size||value.ordersScanned!==verified.size||!bounded(value.unidentifiedRecords))fail();
+  if(!['saved-order-match','declared-scope'].includes(c.accountAffinity))fail();
+  if(!Number.isSafeInteger(c.pagesParsed)||c.pagesParsed<0||c.pagesParsed>c.pagesFetched)fail();
+  if(c.discoveryComplete&&(c.paginationEvidence==='array-only'||c.expectedTotal!==null&&c.expectedTotal!==all.size||value.unidentifiedRecords))fail();
+  if(!Array.isArray(value.failures)||value.failures.length>32||value.failures.some(f=>!f||!PARTIAL_FAILURE_CODES.has(f.code)||!['listing','summaries','details'].includes(f.stage)||!bounded(f.count)||f.count<1))fail();
+  const failures=value.failures.map(({code,stage,count})=>({code,stage,count}));
+  if(value.outcome==='complete'&&(unresolved.size||value.unidentifiedRecords||failures.length)||value.outcome==='partial-extraction'&&!unresolved.size||value.outcome!=='complete'&&!failures.length)fail();
+  if(!Array.isArray(value.items)||value.items.length>500000)fail();
+  const projected=sanitizeImportResult(value),origins=new Set();
+  if(projected.items.length!==value.items.length)fail();
+  for(const item of value.items){
+    if(item.source!=='fanatical'||!safeId(item.sourceItemId)||!safeText(item.title)||!safeId(item.bundle?.sourceItemId)||!safeText(item.bundle?.title)||!Array.isArray(item.purchaseOrigins)||!item.purchaseOrigins.length)fail();
+    purchaseOrigins(item.purchaseOrigins,true);
+    for(const origin of item.purchaseOrigins){if(!verified.has(origin.purchaseRef)||!safeId(origin.bundle?.sourceItemId)||!safeText(origin.bundle?.title))fail();origins.add(origin.purchaseRef);}
+  }
+  if(origins.size!==verified.size)fail();
+  return {...projected,partialScanVersion:1,outcome:value.outcome,verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...all],failures,unidentifiedRecords:value.unidentifiedRecords,coverage:{complete:c.complete,discoveryComplete:c.discoveryComplete,accountAffinity:c.accountAffinity,listedOrders:c.listedOrders,validatedOrders:c.validatedOrders,emptyAccount:c.emptyAccount,pagesFetched:c.pagesFetched,pagesParsed:c.pagesParsed,expectedTotal:c.expectedTotal,paginationEvidence:c.paginationEvidence,retries:c.retries,concurrency:3}};
+}
+
+function partialAttemptIsValid(attempt){
+  return attempt?.status==='partial'&&attempt.partialCheckpointVersion===1&&['partial-discovery','partial-extraction'].includes(attempt.outcome)&&attempt.discoveryComplete===(attempt.outcome==='partial-extraction')&&['full','quick'].includes(attempt.scanMode)&&Number.isSafeInteger(attempt.pagesProcessed)&&attempt.pagesProcessed>=1&&attempt.pagesProcessed<=1000&&attempt.completeCheckpointAdvanced===false&&Boolean(safeDate(attempt.attemptedAt))&&['verifiedPurchasesSaved','unresolvedOrders'].every(k=>Number.isSafeInteger(attempt[k])&&attempt[k]>=0&&attempt[k]<=100000)&&Array.isArray(attempt.failures)&&attempt.failures.length<=32&&attempt.failures.every(f=>PARTIAL_FAILURE_CODES.has(f.code)&&['listing','summaries','details'].includes(f.stage)&&Number.isSafeInteger(f.count)&&f.count>0&&f.count<=100000);
 }
 
 export function parseHistoricalItems(value, profileLabel) {
@@ -278,16 +313,40 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
       const changing=Boolean(state.fanaticalProfileLabel)&&state.fanaticalProfileLabel!==label;
       if(changing&&state.fanaticalProfileArchives.some(entry=>entry.profileLabel===label))throw Error('This account is already saved. Use saved account before importing.');
       if(changing&&(!options.fullScan||!options.switchProfile))throw new Error('Choose Rescan all purchases and explicitly select Save a new account.');
-      const forceFull=changing||!state.fanaticalProfileLabel;const token=globalThis.crypto.randomUUID();
+      const fingerprints=state.fanaticalScannedOrderFingerprints;
+      const initialized=(['full','quick'].includes(state.fanaticalImportSummary?.scanMode)||partialAttemptIsValid(state.fanaticalLastScanAttempt)&&fingerprints?.length>0)&&validFingerprints(fingerprints);
+      const forceFull=changing||!state.fanaticalProfileLabel||!initialized;const token=globalThis.crypto.randomUUID();
       await area.set({[key]:{token,tabId,label,changing,fullScan:options.fullScan||forceFull}});
       return {token,forceFull,state:changing?{...defaults}:state};
     }
-    if(operation==='commit'||operation==='failure'){
-      const [token,updates,tabId]=args;const control=(await area.get({[key]:null}))[key];
+    if(operation==='commit'||operation==='commitPartial'||operation==='failure'){
+      const [token,rawUpdates,tabId]=args;let updates=rawUpdates;const control=(await area.get({[key]:null}))[key];
       if(!control||control.token!==token||control.tabId!==tabId){if(operation==='failure')return false;throw new Error('Scan superseded by another scan, restore, or clear. Start a fresh scan.');}
       if(operation==='failure'){await area.set({fanaticalLastScanAttempt:{status:'incomplete',scanMode:control.fullScan?'full':'quick',attemptedAt:new Date().toISOString()},[key]:null});return true;}
-      if(control.fullScan&&updates.fanaticalImportSummary?.scanMode!=='full')throw new Error('This profile requires a full scan.');
       const state=await area.get(defaults);const archives=[...state.fanaticalProfileArchives];
+      const partial=operation==='commitPartial';let partialSummary;
+      if(partial){
+        const base=control.changing?defaults:state,receipt=validateScanResult(updates,{fullScan:control.fullScan,knownOrderFingerprints:base.fanaticalScannedOrderFingerprints});
+        if(!receipt.partialScanVersion||receipt.outcome==='complete')throw Error('A partial commit requires independently verified partial evidence.');
+        const priorItems=parseLibraryBackup({schemaVersion:1,items:base.fanaticalLibraryItems}),priorById=new Map(priorItems.map(item=>[item.sourceItemId,item]));
+        const additions=receipt.items.map(item=>{
+          const previous=priorById.get(item.sourceItemId);if(!previous)return item;
+          const origins=new Map((previous.purchaseOrigins??[]).map(origin=>[JSON.stringify([origin.purchaseRef,origin.bundle?.sourceItemId]),origin]));
+          return {...previous,...item,externalIds:{...previous.externalIds,...item.externalIds},purchaseDate:item.purchaseDate??previous.purchaseDate,
+            purchaseOrigins:item.purchaseOrigins.map(origin=>{const old=origins.get(JSON.stringify([origin.purchaseRef,origin.bundle?.sourceItemId]));return {...old,...origin,purchaseDate:origin.purchaseDate??old?.purchaseDate??null};})};
+        });
+        const merged=mergeLibraryItems([...priorItems,...additions]);
+        const fingerprints=new Set(validFingerprints(base.fanaticalScannedOrderFingerprints)?base.fanaticalScannedOrderFingerprints:[]);
+        for(const fp of [...receipt.unresolvedOrderFingerprints,...receipt.ineligibleOrderFingerprints])fingerprints.delete(fp);
+        for(const fp of receipt.verifiedOrderFingerprints)fingerprints.add(fp);
+        if(fingerprints.size>100000)throw Error('Saved scan history reached its safety limit.');
+        const attempt={status:'partial',partialCheckpointVersion:1,outcome:receipt.outcome,scanMode:control.fullScan?'full':'quick',attemptedAt:new Date().toISOString(),discoveryComplete:receipt.coverage.discoveryComplete,completeCheckpointAdvanced:false,verifiedPurchasesSaved:receipt.verifiedOrderFingerprints.length,unresolvedOrders:receipt.unresolvedOrderFingerprints.length,unidentifiedRecords:receipt.unidentifiedRecords,failures:receipt.failures,pagesProcessed:receipt.coverage.pagesFetched};
+        if(!partialAttemptIsValid(attempt))throw Error('Invalid partial scan checkpoint.');
+        const existingIds=new Set(base.fanaticalLibraryItems.map(item=>item.sourceItemId));
+        partialSummary={...attempt,ordersScanned:receipt.ordersScanned,ordersAvailable:receipt.ordersAvailable,ordersSkipped:receipt.orderFingerprints.length-receipt.ordersScanned,addedProducts:receipt.items.filter(i=>!existingIds.has(i.sourceItemId)).length,ownedLeafProducts:merged.length,coverage:receipt.coverage};
+        updates={fanaticalLibraryItems:merged,fanaticalScannedOrderFingerprints:[...fingerprints].sort(),fanaticalImportSummary:base.fanaticalImportSummary,fanaticalLastScanAttempt:attempt};
+      }
+      if(!partial&&control.fullScan&&updates.fanaticalImportSummary?.scanMode!=='full')throw new Error('This profile requires a full scan.');
       const parsedIncoming=parseLibraryBackup({schemaVersion:1,items:updates.fanaticalLibraryItems});
       const overrides = state.mediaTypeOverrides ?? {};
       const incoming = parsedIncoming.map(item => {
@@ -310,11 +369,11 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
       const observed=new Set(incoming.map(item=>item.sourceItemId));
       // Only a successful complete scan of the same confirmed profile infers
       // absence. Quick scans, failures, and switches cannot retire its items.
-      if(control.fullScan&&sameProfile)for(const item of parseLibraryBackup({schemaVersion:1,items:state.fanaticalLibraryItems})) {
+      if(!partial&&control.fullScan&&sameProfile)for(const item of parseLibraryBackup({schemaVersion:1,items:state.fanaticalLibraryItems})) {
         if(!observed.has(item.sourceItemId)&&!history.has(item.sourceItemId))history.set(item.sourceItemId,{profileLabel:control.label,missingSince:now,item});
       }
-      for(const id of observed)history.delete(id);
-      await area.set({...updates,fanaticalAccountId:control.changing?crypto.randomUUID():state.fanaticalAccountId,fanaticalLibraryItems:incoming,fanaticalHistoricalItems:[...history.values()],fanaticalProfileLabel:control.label,fanaticalProfileArchives:archives,rejectedPurchaseItems:nextRejected,[key]:null});return true;
+      if(!partial)for(const id of observed)history.delete(id);
+      await area.set({...updates,fanaticalAccountId:control.changing?crypto.randomUUID():state.fanaticalAccountId,fanaticalLibraryItems:incoming,fanaticalHistoricalItems:[...history.values()],fanaticalProfileLabel:control.label,fanaticalProfileArchives:archives,rejectedPurchaseItems:nextRejected,[key]:null});return partial?partialSummary:true;
     }
     if(operation==='backup'){
       const state=await area.get({...defaults,fanaticalImportSummary:null,fanaticalWishlistItems:[]});return createLibraryBackup(state.fanaticalLibraryItems,state.fanaticalImportSummary,undefined,state.fanaticalProfileLabel,state.fanaticalProfileArchives,state.fanaticalWishlistItems,state.fanaticalHistoricalItems,state.mediaTypeOverrides,state.rejectedPurchaseItems,state.fanaticalAccountId);
