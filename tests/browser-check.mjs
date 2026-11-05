@@ -67,6 +67,7 @@ globalThis.chrome = {runtime:{getManifest:()=>({name:'Fanatical Library'}),onMes
   if(message.type==='PING'&&centralMode==='absent')throw Error('Could not establish connection. Receiving end does not exist.');
   if(message.type==='PING')return {ok:true,apiVersion:1,appVersion:'0.1.0'};
   if(message.type==='FANATICAL_IMPORT_PURCHASES'){
+    if(scanScenario.startsWith('unverified')){const cases={unverified:[1,0,47],'unverified-quick':[0,1,0],'unverified-recheck':[1,0,0],'unverified-singular':[2,0,1],'unverified-empty':[0,0,0],'unverified-mixed':[2,3,0]},[verifiedPurchasesSaved,ordersSkipped,addedProducts]=cases[scanScenario];return {ok:true,summary:{outcome:'partial-discovery',acquisitionComplete:true,scanMode:'full',verifiedPurchasesSaved,unresolvedOrders:0,ordersSkipped,addedProducts,scanDiagnostic:{code:'discovery-unverified',stage:'listing',acquisitionComplete:true,discoveryComplete:false,completeCheckpointAdvanced:false}}};}
     if(scanScenario==='partial')return {ok:true,summary:{outcome:'partial-extraction',scanMode:'full',verifiedPurchasesSaved:499,unresolvedOrders:1,addedProducts:499,scanDiagnostic:{code:'details-unreadable',stage:'details',outcome:'partial-extraction',completeCheckpointAdvanced:false}}};
     const scope={fullScan:message.fullScan,scanHistoryMissing:scanScenario==='restore',total:scanScenario==='empty'?0:1,skipped:scanScenario==='empty'?26:0};
     window.postMessage({type:'FANATICAL_IMPORT_PROGRESS',progressId:message.progressId,progress:{phase:'plan',...scope}},location.origin);
@@ -276,7 +277,22 @@ try {
   assert(reportButton.closest('details').hidden,'Old failure report remained after a new result without diagnostics');
   scanScenario='partial';full.click();await wait();
   assert(status.textContent.includes('Saved 499 verified purchases')&&status.textContent.includes('1 purchase could not be processed')&&status.textContent.includes('The last complete scan was not updated'),'Partial result is not distinct from failure/complete success');
-  assert(!reportButton.closest('details').hidden,'Partial diagnostic report is missing');scanScenario='new';
+  assert(!reportButton.closest('details').hidden,'Partial diagnostic report is missing');
+  scanScenario='unverified';full.click();await wait();
+  assert(status.textContent==='Import finished. 1 purchase verified; 47 products added.','Clean acquisition has inaccurate counts or alarming wording');
+  assert(!status.textContent.includes('unverified')&&!status.textContent.includes('could not'),'Coverage qualification leaked into the clean success status');
+  assert(reportButton.closest('details').textContent.includes('entire purchase history was returned'),'Informational coverage details disappeared');
+  assert(!reportButton.closest('details').hidden,'Unverified coverage must retain user-initiated diagnostics');
+  assert(getComputedStyle(status).color===getComputedStyle(panel).color,'Clean acquisition has a warning color');
+  assert(!reportButton.closest('details').open,'Technical qualification opens as a warning');
+  for(const [scenario,expected]of [
+    ['unverified-quick','Import finished. 1 previously verified purchase skipped; 0 products added.'],
+    ['unverified-recheck','Import finished. 1 purchase verified; 0 products added.'],
+    ['unverified-singular','Import finished. 2 purchases verified; 1 product added.'],
+    ['unverified-empty','Import finished. No purchases to process; 0 products added.'],
+    ['unverified-mixed','Import finished. 2 purchases verified; 3 previously verified purchases skipped; 0 products added.']
+  ]){scanScenario=scenario;quick.click();await wait();assert(status.textContent===expected,'Incorrect successful count/grammar: '+status.textContent);}
+  scanScenario='new';
   // Exercise the serialized production function in each browser engine too;
   // no provider network requests or real sessions are used by these fixtures.
   const imported=await import('/src/order-importer.mjs'),serialized=(0,eval)('('+imported.importFanaticalOrdersInPage.toString()+')');
@@ -296,6 +312,15 @@ try {
     const pilot=await serialized({returnFailure:true,allowPartial:true,fullScan:true});
     assert(pilot.outcome==='partial-extraction'&&pilot.items.length===1&&pilot.verifiedOrderFingerprints.length===1&&pilot.unresolvedOrderFingerprints.length===1,'Native browser did not isolate one malformed order');
     const validator=await import('/src/library-data.mjs');assert(validator.validateScanResult(pilot,{fullScan:true}).outcome==='partial-extraction','Native receipt/provenance validation failed');
+    const single=rows.slice(0,1),games=Array.from({length:47},(_,i)=>({_id:'browser-product-'+i,name:'Synthetic book '+i,type:'book'}));
+    single[0].items[0].bundles[0].games=games.map(({name})=>({name}));
+    for(const headers of [{},{'x-total-count':'1'},{'content-range':'orders 0-0/1'}]){
+      window.fetch=async path=>new Response(JSON.stringify(path==='/api/user/orders'?single:{_id:single[0]._id,status:'COMPLETE',items:[{_id:'synthetic-bundle',name:'Synthetic bundle',bundles:[{games}]}]}),{status:200,headers});
+      const receipt=validator.validateScanResult(await serialized({allowPartial:true,returnFailure:true,fullScan:true}),{fullScan:true});
+      assert(receipt.items.length===47&&receipt.acquisitionComplete,'Native 47-product acquisition did not finish');
+      assert(receipt.coverage.complete===Boolean(Object.keys(headers).length),'Native headers were lost or unsupported completeness was invented');
+      assert(receipt.coverage.listingEvidence.headersReadablePages===1&&receipt.coverage.listingEvidence.totalCountHeaderPages===('x-total-count' in headers?1:0)&&receipt.coverage.listingEvidence.contentRangeHeaderPages===('content-range' in headers?1:0),'Native response-header evidence was not read correctly');
+    }
     assert(!JSON.stringify([empty,partial,denied]).includes('SYNTHETIC-PRIVATE'),'Native error envelope leaked credentials');
   }finally{window.fetch=originalFetch;if(originalAuth===null)localStorage.removeItem('bsauth');else localStorage.setItem('bsauth',originalAuth);}
   finish({ok:true,scenario:'Orders importer coverage, failed scan and control recovery'});

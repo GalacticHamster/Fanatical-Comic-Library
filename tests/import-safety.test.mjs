@@ -17,6 +17,48 @@ const detail = { _id: orderId, status: 'COMPLETE', items: [{ _id: 'bundle-123456
 const summary = { _id: orderId, status: 'COMPLETE', items: [{ name: 'Bundle', bundles: [{ games: [{ name: 'New purchase' }] }] }] };
 const previous = { fanaticalLibraryItems: [{ source: 'fanatical', sourceItemId: 'product-654321', title: 'Previously imported', mediaType: 'game', bundle: { sourceItemId: 'bundle-654321', title: 'Previous bundle' } }], fanaticalImportSummary: { importedAt: 'previous', scanMode: 'full' }, fanaticalScannedOrderFingerprints: [] };
 
+test('headerless one-order 47-product acquisition finishes without inventing complete coverage and Quick remains incremental',async()=>{
+  const games=Array.from({length:47},(_,i)=>({_id:'synthetic-product-'+i,name:'Synthetic book '+i,type:'book'}));
+  const oneDetail={...detail,items:[{...detail.items[0],bundles:[{games}]}]},oneSummary={...summary,items:[{name:'Bundle',bundles:[{games:games.map(({name})=>({name}))}]}]};
+  const headers={},run=harness({partial:true,headers,list:[oneSummary],details:{[orderId]:oneDetail},initial:{fanaticalLibraryItems:[],fanaticalImportSummary:null}});
+  const first=await run.send(false);assert.equal(first.ok,true,first.error);assert.equal(first.summary.acquisitionComplete,true);
+  assert.equal(first.summary.verifiedPurchasesSaved,1);assert.equal(first.summary.addedProducts,47);assert.equal(run.stored.fanaticalLibraryItems.length,47);
+  assert.equal(first.summary.outcome,'partial-discovery');assert.equal(first.summary.coverage.complete,false);assert.equal(run.stored.fanaticalImportSummary,null);
+  assert.equal(first.summary.completeCheckpointAdvanced,false);assert.equal(first.summary.scanDiagnostic.acquisitionComplete,true);
+  assert.deepEqual(structuredClone(first.summary.scanDiagnostic.listingEvidence),{arrayPages:1,objectPages:0,otherPages:0,headersReadablePages:1,linkHeaderPages:0,totalCountHeaderPages:0,contentRangeHeaderPages:0,nextReferencePages:0});
+  const snapshot=structuredClone(run.stored.fanaticalLibraryItems);run.paths.length=0;await new Promise(r=>setImmediate(r));
+  const quick=await run.send(false);assert.equal(quick.ok,true,quick.error);assert.equal(quick.summary.scanMode,'quick');assert.equal(quick.summary.ordersScanned,0);assert.equal(quick.summary.acquisitionComplete,true);
+  assert.equal(run.paths.length,1);assert.deepEqual(run.stored.fanaticalLibraryItems,snapshot);assert.equal(run.stored.fanaticalImportSummary,null);
+  await new Promise(r=>setImmediate(r));const full=await run.send(true);assert.equal(full.summary.acquisitionComplete,true);assert.equal(full.summary.ordersScanned,1);assert.deepEqual(run.stored.fanaticalLibraryItems,snapshot);
+  headers['x-total-count']='1';await new Promise(r=>setImmediate(r));
+  const covered=await run.send(true);assert.equal(covered.summary.outcome,'complete');assert.equal(covered.summary.completeCheckpointAdvanced,true);assert.equal(run.stored.fanaticalImportSummary.coverage.complete,true);assert.deepEqual(run.stored.fanaticalLibraryItems,snapshot);
+});
+
+test('acquisition success is separate from total/range/link coverage and genuine interrupted discovery',async()=>{
+  for(const headers of [{},{'x-total-count':'1'},{'content-range':'orders 0-0/1'},{'x-total-count':'2'}]){
+    const run=harness({partial:true,headers}),reply=await run.send(true);assert.equal(reply.ok,true,reply.error);
+    const missing=headers['x-total-count']==='2',complete=Boolean(headers['content-range']||headers['x-total-count']==='1');
+    assert.equal(reply.summary.acquisitionComplete,!missing);assert.equal(reply.summary.completeCheckpointAdvanced,complete);
+    assert.equal(reply.summary.outcome,complete?'complete':'partial-discovery');
+    assert.equal(run.stored.fanaticalLibraryItems.length,complete?1:2);
+    assert.equal(run.stored.fanaticalImportSummary.importedAt==='previous',!complete);
+  }
+  const bad=harness({partial:true,list:[{...summary,items:[]}]});const reply=await bad.send();assert.equal(reply.ok,true);assert.equal(reply.summary.acquisitionComplete,false);assert.equal(reply.summary.unresolvedOrders,1);
+  const preserved=harness({partial:true,known:[fingerprint(orderId)],initial:{fanaticalLibraryItems:previous.fanaticalLibraryItems.map(item=>({...item,purchaseDate:null}))}}),snapshot=structuredClone(preserved.before);
+  const quick=await preserved.send(false);assert.equal(quick.summary.acquisitionComplete,true);assert.equal(quick.summary.scanMode,'quick');assert.deepEqual(preserved.stored.fanaticalImportSummary,snapshot.fanaticalImportSummary);assert.deepEqual(preserved.stored.fanaticalLibraryItems,snapshot.fanaticalLibraryItems);
+});
+
+test('listing diagnostics export shape/header counts only and a supplied acquisition flag cannot establish success',async()=>{
+  const run=harness({partial:true}),reply=await run.send();assert.equal(reply.ok,true);
+  const receipt=structuredClone(run.receipts.at(-1));receipt.acquisitionComplete=false;
+  assert.equal(validateScanResult(receipt,{fullScan:true}).acquisitionComplete,true,'Acquisition status must be derived from validated evidence');
+  receipt.failures.push({code:'pagination-missing-next',stage:'listing',count:1});receipt.acquisitionComplete=true;
+  assert.equal(validateScanResult(receipt,{fullScan:true}).acquisitionComplete,false);
+  receipt.coverage.listingEvidence.headersReadablePages=1001;assert.throws(()=>validateScanResult(receipt,{fullScan:true}));
+  const object=harness({partial:true,list:{orders:[summary],email:'PRIVATE@example.test'}}),failure=await object.send();
+  assert.equal(failure.ok,false);assert.equal(failure.scanDiagnostic.listingEvidence.objectPages,1);assert(!JSON.stringify(failure).includes('PRIVATE'));assert.deepEqual(object.stored.fanaticalLibraryItems,object.before.fanaticalLibraryItems);
+});
+
 test('partial pilot saves 499 independently verified orders and retries the malformed order',async()=>{
   const history=longHistory(500,20);history.orders[211].detail.items[0].bundles[0].games[0]._id='bad';
   const run=harness({...history,partial:true}),before=structuredClone(run.before),reply=await run.send(true);

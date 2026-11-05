@@ -328,6 +328,14 @@
   }
 
   function importerResult(summary, fullScan) {
+    if(summary.acquisitionComplete===true&&summary.outcome==='partial-discovery'){
+      const counts=[];
+      if(summary.verifiedPurchasesSaved)counts.push(`${summary.verifiedPurchasesSaved} purchase${summary.verifiedPurchasesSaved===1?'':'s'} verified`);
+      if(summary.ordersSkipped)counts.push(`${summary.ordersSkipped} previously verified purchase${summary.ordersSkipped===1?'':'s'} skipped`);
+      if(!counts.length)counts.push('No purchases to process');
+      counts.push(`${summary.addedProducts} product${summary.addedProducts===1?'':'s'} added`);
+      return `Import finished. ${counts.join('; ')}.`;
+    }
     if(summary.outcome==='partial-extraction'||summary.outcome==='partial-discovery'){
       const saved=`Saved ${summary.verifiedPurchasesSaved} verified purchase${summary.verifiedPurchasesSaved===1?'':'s'}; ${summary.addedProducts} new product${summary.addedProducts===1?'':'s'}.`;
       return [saved,summary.outcome==='partial-discovery'?'The scan could not verify the end of your library; additional purchases may be missing.':'',summary.unresolvedOrders?`${summary.unresolvedOrders} purchase${summary.unresolvedOrders===1?'':'s'} could not be processed and will be retried on a future scan.`:'',summary.failureExplanation??'','Existing purchases were preserved. The last complete scan was not updated.'].filter(Boolean).join(' ');
@@ -387,7 +395,7 @@
         status.textContent=response?.ok?importerResult(response.summary,response.summary.scanMode==='full'):(response?.error??'Import failed.');
         scanReport=response?.scanDiagnostic??response?.summary?.scanDiagnostic??null;
         scanDetails.hidden=!scanReport;
-        if(scanReport)scanInfo.textContent=`${scanReport.code} · ${scanReport.stage}. The report contains scan counts and failure categories, not titles, order numbers, account details or credentials. Export it before leaving or reloading Orders.`;
+        if(scanReport)scanInfo.textContent=(scanReport.acquisitionComplete===true&&scanReport.discoveryComplete===false?'The import finished successfully. Fanatical did not provide enough information to independently verify that the entire purchase history was returned. Existing purchases were preserved. ':'')+`${scanReport.code} · ${scanReport.stage}. The report contains scan counts and failure categories, not titles, order numbers, account details or credentials. Export it before leaving or reloading Orders.`;
         buttons.forEach(control=>{control.disabled=false;});
       });
     };

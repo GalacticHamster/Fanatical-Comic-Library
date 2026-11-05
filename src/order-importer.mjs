@@ -2,7 +2,8 @@
 export async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerprints = [], scanHistoryMissing = false, progressId = '', operation = 'import', orderSummaries = [], orderDetails = [], returnFailure = false, allowPartial = false, accountOrderFingerprints = [] } = {}) {
   // Chrome does not propagate MAIN-world exceptions to InjectionResult. Keep
   // errors in an explicit, aggregate-only envelope when called by the worker.
-  const diagnostic = {stage:'authentication',pagesAttempted:0,pagesParsed:0,ordersRecognized:0,detailsParsed:0,retries:0,terminalReached:false,authentication:'unknown',httpStatus:null};
+  const listingEvidence={arrayPages:0,objectPages:0,otherPages:0,headersReadablePages:0,linkHeaderPages:0,totalCountHeaderPages:0,contentRangeHeaderPages:0,nextReferencePages:0};
+  const diagnostic = {listingEvidence,stage:'authentication',pagesAttempted:0,pagesParsed:0,ordersRecognized:0,detailsParsed:0,retries:0,terminalReached:false,authentication:'unknown',httpStatus:null};
   const unresolved=new Set(),ineligible=new Set(),verified=new Set(),failureCounts=new Map();
   let discoveryComplete=true,unidentifiedRecords=0;
   const fatal=error=>['authentication-missing','authentication-rejected','session-changed','order-identity-conflict','account-scope-conflict'].includes(error?.fanaticalFailureCode);
@@ -411,6 +412,11 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     diagnostic.pagesAttempted=visitedPages.size;
     reportProgress({phase:'list',page:visitedPages.size});
     const { data, headers } = await request(path);
+    listingEvidence[Array.isArray(data)?'arrayPages':data&&typeof data==='object'?'objectPages':'otherPages']++;
+    if(typeof headers?.get==='function'){
+      listingEvidence.headersReadablePages++;
+      for(const [header,key]of [['link','linkHeaderPages'],['x-total-count','totalCountHeaderPages'],['content-range','contentRangeHeaderPages']])if(headers.get(header)!==null&&headers.get(header)!==undefined)listingEvidence[key]++;
+    }
     // Envelopes/query conventions are not guessed from a fabricated contract.
     if (!Array.isArray(data)) throw unreadable();
     diagnostic.authentication='accepted-response';
@@ -435,6 +441,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     if(!allowPartial)admitOrders(data);
     if (summaries.length > maxOrders || (expectedTotal !== null && summaries.length > expectedTotal)) throw incomplete('Pagination exceeded its total or the 100,000-order safety limit.','pagination-total');
     const links = paginationLinks(headers?.get('link'), path);
+    if(links.next)listingEvidence.nextReferencePages++;
     if(links.next&&expectedTotal===null)diagnostic.paginationEvidence='link';
     if (links.last) {
       if (declaredLast && declaredLast !== links.last) throw incomplete('Pagination changed its advertised last page.','pagination-last');
@@ -552,7 +559,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   return {
     ...(allowPartial?{partialScanVersion:1,outcome,verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...listedFingerprints],failures:[...failureCounts.values()],unidentifiedRecords}:{}),
     schemaVersion: 1,
-    coverage: { complete: allowPartial?outcome==='complete':true,...(allowPartial?{discoveryComplete,pagesParsed:diagnostic.pagesParsed,accountAffinity:accountKnown.size?'saved-order-match':'declared-scope'}:{}), listedOrders: summaries.length, validatedOrders: allowPartial?verified.size:details.length, emptyAccount: summaries.length === 0,
+    coverage: { complete: allowPartial?outcome==='complete':true,...(allowPartial?{listingEvidence,discoveryComplete,pagesParsed:diagnostic.pagesParsed,accountAffinity:accountKnown.size?'saved-order-match':'declared-scope'}:{}), listedOrders: summaries.length, validatedOrders: allowPartial?verified.size:details.length, emptyAccount: summaries.length === 0,
       pagesFetched: visitedPages.size, expectedTotal, paginationEvidence: ranged ? 'range' : expectedTotal !== null ? 'count' : linked ? 'link' : 'array-only', retries, concurrency },
     ordersScanned: allowPartial?verified.size:toInspect.length,
     ordersAvailable: complete.length,

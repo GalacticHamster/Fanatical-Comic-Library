@@ -165,6 +165,7 @@ export function validateScanResult(value, { fullScan = false, knownOrderFingerpr
 }
 
 const PARTIAL_FAILURE_CODES=new Set(['discovery-unverified','listing-unreadable','listing-incomplete','summaries-unreadable','details-unreadable','details-incomplete','request-aborted','retry-later','request-exhausted','pagination-unsafe','pagination-ambiguous','pagination-total','pagination-repeated','page-limit','order-limit','pagination-range','pagination-order','pagination-last','pagination-final','pagination-missing-next','history-missing-known']);
+const LISTING_EVIDENCE_KEYS=['arrayPages','objectPages','otherPages','headersReadablePages','linkHeaderPages','totalCountHeaderPages','contentRangeHeaderPages','nextReferencePages'];
 function validFingerprints(value){return Array.isArray(value)&&value.length<=100000&&value.every(fp=>typeof fp==='string'&&/^[a-f0-9]{64}$/u.test(fp))&&new Set(value).size===value.length;}
 function validatePartialScan(value,{fullScan,knownOrderFingerprints}){
   const fail=()=>{throw Error('Invalid independent purchase evidence; the partial scan was not saved.');};
@@ -181,6 +182,13 @@ function validatePartialScan(value,{fullScan,knownOrderFingerprints}){
   if(c.discoveryComplete&&(c.paginationEvidence==='array-only'||c.expectedTotal!==null&&c.expectedTotal!==all.size||value.unidentifiedRecords))fail();
   if(!Array.isArray(value.failures)||value.failures.length>32||value.failures.some(f=>!f||!PARTIAL_FAILURE_CODES.has(f.code)||!['listing','summaries','details'].includes(f.stage)||!bounded(f.count)||f.count<1))fail();
   const failures=value.failures.map(({code,stage,count})=>({code,stage,count}));
+  let listingEvidence=null;
+  if(c.listingEvidence!==undefined){
+    if(!c.listingEvidence||LISTING_EVIDENCE_KEYS.some(k=>!Number.isSafeInteger(c.listingEvidence[k])||c.listingEvidence[k]<0||c.listingEvidence[k]>c.pagesFetched))fail();
+    listingEvidence=Object.fromEntries(LISTING_EVIDENCE_KEYS.map(k=>[k,c.listingEvidence[k]]));
+    if(listingEvidence.arrayPages+listingEvidence.objectPages+listingEvidence.otherPages>c.pagesFetched||listingEvidence.headersReadablePages>listingEvidence.arrayPages+listingEvidence.objectPages+listingEvidence.otherPages||['linkHeaderPages','totalCountHeaderPages','contentRangeHeaderPages'].some(k=>listingEvidence[k]>listingEvidence.headersReadablePages)||listingEvidence.nextReferencePages>listingEvidence.linkHeaderPages)fail();
+  }
+  const acquisitionComplete=value.outcome==='complete'||value.outcome==='partial-discovery'&&c.paginationEvidence==='array-only'&&c.expectedTotal===null&&c.pagesParsed===c.pagesFetched&&unresolved.size===0&&value.unidentifiedRecords===0&&failures.length===1&&failures[0].code==='discovery-unverified'&&failures[0].stage==='listing'&&failures[0].count===1;
   if(value.outcome==='complete'&&(unresolved.size||value.unidentifiedRecords||failures.length)||value.outcome==='partial-extraction'&&!unresolved.size||value.outcome!=='complete'&&!failures.length)fail();
   if(!Array.isArray(value.items)||value.items.length>500000)fail();
   const projected=sanitizeImportResult(value),origins=new Set();
@@ -191,7 +199,7 @@ function validatePartialScan(value,{fullScan,knownOrderFingerprints}){
     for(const origin of item.purchaseOrigins){if(!verified.has(origin.purchaseRef)||!safeId(origin.bundle?.sourceItemId)||!safeText(origin.bundle?.title))fail();origins.add(origin.purchaseRef);}
   }
   if(origins.size!==verified.size)fail();
-  return {...projected,partialScanVersion:1,outcome:value.outcome,verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...all],failures,unidentifiedRecords:value.unidentifiedRecords,coverage:{complete:c.complete,discoveryComplete:c.discoveryComplete,accountAffinity:c.accountAffinity,listedOrders:c.listedOrders,validatedOrders:c.validatedOrders,emptyAccount:c.emptyAccount,pagesFetched:c.pagesFetched,pagesParsed:c.pagesParsed,expectedTotal:c.expectedTotal,paginationEvidence:c.paginationEvidence,retries:c.retries,concurrency:3}};
+  return {...projected,acquisitionComplete,partialScanVersion:1,outcome:value.outcome,verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...all],failures,unidentifiedRecords:value.unidentifiedRecords,coverage:{...(listingEvidence?{listingEvidence}:{}),complete:c.complete,discoveryComplete:c.discoveryComplete,accountAffinity:c.accountAffinity,listedOrders:c.listedOrders,validatedOrders:c.validatedOrders,emptyAccount:c.emptyAccount,pagesFetched:c.pagesFetched,pagesParsed:c.pagesParsed,expectedTotal:c.expectedTotal,paginationEvidence:c.paginationEvidence,retries:c.retries,concurrency:3}};
 }
 
 function partialAttemptIsValid(attempt){
@@ -340,7 +348,7 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
         for(const fp of [...receipt.unresolvedOrderFingerprints,...receipt.ineligibleOrderFingerprints])fingerprints.delete(fp);
         for(const fp of receipt.verifiedOrderFingerprints)fingerprints.add(fp);
         if(fingerprints.size>100000)throw Error('Saved scan history reached its safety limit.');
-        const attempt={status:'partial',partialCheckpointVersion:1,outcome:receipt.outcome,scanMode:control.fullScan?'full':'quick',attemptedAt:new Date().toISOString(),discoveryComplete:receipt.coverage.discoveryComplete,completeCheckpointAdvanced:false,verifiedPurchasesSaved:receipt.verifiedOrderFingerprints.length,unresolvedOrders:receipt.unresolvedOrderFingerprints.length,unidentifiedRecords:receipt.unidentifiedRecords,failures:receipt.failures,pagesProcessed:receipt.coverage.pagesFetched};
+        const attempt={status:'partial',acquisitionComplete:receipt.acquisitionComplete,partialCheckpointVersion:1,outcome:receipt.outcome,scanMode:control.fullScan?'full':'quick',attemptedAt:new Date().toISOString(),discoveryComplete:receipt.coverage.discoveryComplete,completeCheckpointAdvanced:false,verifiedPurchasesSaved:receipt.verifiedOrderFingerprints.length,unresolvedOrders:receipt.unresolvedOrderFingerprints.length,unidentifiedRecords:receipt.unidentifiedRecords,failures:receipt.failures,pagesProcessed:receipt.coverage.pagesFetched};
         if(!partialAttemptIsValid(attempt))throw Error('Invalid partial scan checkpoint.');
         const existingIds=new Set(base.fanaticalLibraryItems.map(item=>item.sourceItemId));
         partialSummary={...attempt,ordersScanned:receipt.ordersScanned,ordersAvailable:receipt.ordersAvailable,ordersSkipped:receipt.orderFingerprints.length-receipt.ordersScanned,addedProducts:receipt.items.filter(i=>!existingIds.has(i.sourceItemId)).length,ownedLeafProducts:merged.length,coverage:receipt.coverage};

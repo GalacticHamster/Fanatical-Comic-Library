@@ -73,7 +73,7 @@ const SCAN_FAILURES = Object.freeze({
   'save-failed':'The validated scan could not be saved. Your previous purchases were kept. Export the scan report.',
   'account-check-failed':'The local account could not be selected. Check Saved accounts and retry.'
 });
-function scanReport({code,diagnostic={},requestedFull=false,actualFull=null,storageAdmission='not-reached',localAccountConfirmed=false,outcome=code==='complete'?'complete':'unsafe',verifiedPurchasesSaved=0,verifiedProductRecordsSaved=0,unresolvedOrders=0,failures=[]}={}) {
+function scanReport({code,diagnostic={},requestedFull=false,actualFull=null,storageAdmission='not-reached',localAccountConfirmed=false,outcome=code==='complete'?'complete':'unsafe',verifiedPurchasesSaved=0,verifiedProductRecordsSaved=0,unresolvedOrders=0,failures=[],acquisitionComplete=false}={}) {
   code=Object.hasOwn(SCAN_FAILURES,code)||code==='complete'?code:'page-exception';
   const count=(value,max)=>Number.isSafeInteger(value)&&value>=0&&value<=max?value:null;
   const version=chrome.runtime.getManifest?.().version;
@@ -89,6 +89,8 @@ function scanReport({code,diagnostic={},requestedFull=false,actualFull=null,stor
     authentication:['token-present','accepted-response','rejected'].includes(diagnostic.authentication)?diagnostic.authentication:'unknown',sourceAccountVerified:false,
     httpStatus:count(diagnostic.httpStatus,599)>=100?diagnostic.httpStatus:null,localAccountConfirmed:localAccountConfirmed===true,
     storageAdmission:['not-reached','attempted','committed'].includes(storageAdmission)?storageAdmission:'not-reached',previousLibraryPreserved:code==='complete'?null:true,
+    acquisitionComplete:storageAdmission==='committed'&&(outcome==='complete'||acquisitionComplete===true),
+    listingEvidence:diagnostic.listingEvidence&&typeof diagnostic.listingEvidence==='object'?Object.fromEntries(['arrayPages','objectPages','otherPages','headersReadablePages','linkHeaderPages','totalCountHeaderPages','contentRangeHeaderPages','nextReferencePages'].map(k=>[k,count(diagnostic.listingEvidence[k],1000)])):null,
     outcome:['complete','partial-extraction','partial-discovery','unsafe'].includes(outcome)?outcome:'unsafe',verifiedPurchasesSaved:count(verifiedPurchasesSaved,100000),verifiedProductRecordsSaved:count(verifiedProductRecordsSaved,500000),unresolvedOrders:count(unresolvedOrders,100000),discoveryComplete:diagnostic.terminalReached===true&&['link','count','range'].includes(diagnostic.paginationEvidence),completeCheckpointAdvanced:outcome==='complete'&&storageAdmission==='committed',retryEligible:outcome==='partial-extraction'||outcome==='partial-discovery',
     failures:Array.isArray(failures)?failures.filter(f=>Object.hasOwn(SCAN_FAILURES,f?.code)&&['listing','summaries','details'].includes(f.stage)&&count(f.count,100000)>0).slice(0,32).map(({code,stage,count})=>({code,stage,count})):[]};
 }
@@ -120,12 +122,12 @@ async function importPurchases({ fullScan = false, profileLabel='', confirmed=fa
   }
   const projected = validateScanResult(result[0]?.result, { fullScan, knownOrderFingerprints });
   if(projected.partialScanVersion&&projected.outcome!=='complete'){
-    pageDiagnostic={accountAffinity:projected.coverage.accountAffinity,stage:projected.failures[0].stage,pagesAttempted:projected.coverage.pagesFetched,pagesParsed:projected.coverage.pagesParsed,ordersRecognized:projected.coverage.listedOrders,detailsParsed:projected.ordersScanned,retries:projected.coverage.retries,terminalReached:projected.coverage.discoveryComplete,paginationEvidence:projected.coverage.paginationEvidence,authentication:'accepted-response'};
+    pageDiagnostic={listingEvidence:projected.coverage.listingEvidence,accountAffinity:projected.coverage.accountAffinity,stage:projected.failures[0].stage,pagesAttempted:projected.coverage.pagesFetched,pagesParsed:projected.coverage.pagesParsed,ordersRecognized:projected.coverage.listedOrders,detailsParsed:projected.ordersScanned,retries:projected.coverage.retries,terminalReached:projected.coverage.discoveryComplete,paginationEvidence:projected.coverage.paginationEvidence,authentication:'accepted-response'};
     stage='storage';
     const partial=await syncStore.execute('commitPartial',[scan.token,projected,tab.id]);
-    return {...partial,failureExplanation:SCAN_FAILURES[projected.failures[0].code],scanDiagnostic:scanReport({code:projected.failures[0].code,diagnostic:pageDiagnostic,requestedFull,actualFull:fullScan,localAccountConfirmed:true,storageAdmission:'committed',outcome:partial.outcome,verifiedPurchasesSaved:partial.verifiedPurchasesSaved,verifiedProductRecordsSaved:projected.items.length,unresolvedOrders:partial.unresolvedOrders,failures:projected.failures})};
+    return {...partial,failureExplanation:SCAN_FAILURES[projected.failures[0].code],scanDiagnostic:scanReport({code:projected.failures[0].code,diagnostic:pageDiagnostic,requestedFull,actualFull:fullScan,localAccountConfirmed:true,storageAdmission:'committed',outcome:partial.outcome,verifiedPurchasesSaved:partial.verifiedPurchasesSaved,verifiedProductRecordsSaved:projected.items.length,unresolvedOrders:partial.unresolvedOrders,failures:projected.failures,acquisitionComplete:partial.acquisitionComplete})};
   }
-  pageDiagnostic={accountAffinity:projected.coverage.accountAffinity,stage:'storage',pagesAttempted:projected.coverage.pagesFetched,pagesParsed:projected.coverage.pagesFetched,ordersRecognized:projected.coverage.listedOrders,detailsParsed:projected.ordersScanned,retries:projected.coverage.retries,terminalReached:true,paginationEvidence:projected.coverage.paginationEvidence,authentication:'accepted-response'};
+  pageDiagnostic={listingEvidence:projected.coverage.listingEvidence,accountAffinity:projected.coverage.accountAffinity,stage:'storage',pagesAttempted:projected.coverage.pagesFetched,pagesParsed:projected.coverage.pagesFetched,ordersRecognized:projected.coverage.listedOrders,detailsParsed:projected.ordersScanned,retries:projected.coverage.retries,terminalReached:true,paginationEvidence:projected.coverage.paginationEvidence,authentication:'accepted-response'};
   const existing = new Map((Array.isArray(stored[STORAGE_ITEMS]) ? stored[STORAGE_ITEMS] : []).filter((item) => safeId(item?.sourceItemId)).map((item) => [item.sourceItemId, item]));
   const addedProducts = projected.items.filter((item) => !existing.has(item.sourceItemId)).length;
   const merged = fullScan ? new Map() : existing;
@@ -150,7 +152,7 @@ async function importPurchases({ fullScan = false, profileLabel='', confirmed=fa
     [STORAGE_SUMMARY]: summary,
     fanaticalLastScanAttempt: { status: 'complete', scanMode: summary.scanMode, attemptedAt: importedAt }
   },tab.id]);
-  return {...summary,...(projected.partialScanVersion?{outcome:'complete',verifiedPurchasesSaved:projected.ordersScanned,unresolvedOrders:0,completeCheckpointAdvanced:true}:{}),scanDiagnostic:scanReport({code:'complete',diagnostic:{...pageDiagnostic,stage:'complete'},requestedFull,actualFull:fullScan,localAccountConfirmed:true,storageAdmission:'committed',verifiedPurchasesSaved:projected.ordersScanned,verifiedProductRecordsSaved:projected.items.length})};
+  return {...summary,...(projected.partialScanVersion?{acquisitionComplete:true,outcome:'complete',verifiedPurchasesSaved:projected.ordersScanned,unresolvedOrders:0,completeCheckpointAdvanced:true}:{}),scanDiagnostic:scanReport({code:'complete',diagnostic:{...pageDiagnostic,stage:'complete'},requestedFull,actualFull:fullScan,localAccountConfirmed:true,storageAdmission:'committed',verifiedPurchasesSaved:projected.ordersScanned,verifiedProductRecordsSaved:projected.items.length})};
   }catch(error){
     error.scanDiagnostic??=scanReport({code:stage==='storage'?'save-failed':stage==='validation'?'result-invalid':'injection-failed',diagnostic:{...pageDiagnostic,stage},requestedFull,actualFull:fullScan,localAccountConfirmed:true,storageAdmission:stage==='storage'?'attempted':'not-reached'});
     error.scanToken=scan.token;error.scanTabId=tab.id;throw error;

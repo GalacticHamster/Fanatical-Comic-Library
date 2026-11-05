@@ -79,7 +79,7 @@ try{
 
   // Every request on this synthetic Fanatical tab is fulfilled locally. It
   // never contacts Fanatical or uses a real account/session or user profile.
-  const page=await attach('about:blank');let total=200,broken=false,malformedOrder=null,active=0,maxActive=0;const paths=[],errors=[];
+  const page=await attach('about:blank');let total=200,broken=false,headerless=false,malformedOrder=null,active=0,maxActive=0;const paths=[],errors=[];
   const summary=n=>({_id:'synthetic-order-'+n,status:'COMPLETE',items:[{name:'Synthetic bundle',bundles:[{games:[{name:'Synthetic purchase'}]}]}]});
   const detail=n=>({_id:'synthetic-order-'+n,status:'COMPLETE',date:'2026-10-01T00:00:00Z',privateKey:'SYNTHETIC-SECRET',items:[{_id:'bundle-123456',name:'Synthetic bundle',bundles:[{games:[{_id:n===malformedOrder?'bad':n>=203?'product-synthetic-'+n:'product-123456',name:'Synthetic purchase',type:'book',privateDownloadUrl:'SYNTHETIC-SECRET'}]}]}]});
   driver.on(message=>{
@@ -93,6 +93,7 @@ try{
       }else if(url.origin==='https://www.fanatical.com'&&url.pathname==='/api/user/orders'){
         assert.equal(request.method,'GET');paths.push(url.pathname+url.search);code=200;const number=Number(url.searchParams.get('page')||1),start=(number-1)*20,end=Math.min(start+20,total),last=Math.ceil(total/20);body=JSON.stringify(Array.from({length:end-start},(_,n)=>summary(start+n)));headers.push({name:'X-Total-Count',value:String(total)},{name:'Content-Range',value:'items '+start+'-'+(end-1)+'/'+total});
         const links=[];if(number<last&&!(broken&&number===2))links.push('</api/user/orders?page='+(number+1)+'>; rel="next"');if(number===1)links.push('</api/user/orders?page='+last+'>; rel="last"');if(links.length)headers.push({name:'Link',value:links.join(', ')});
+        if(headerless){body=JSON.stringify(Array.from({length:total},(_,n)=>summary(n)));headers=[{name:'Content-Type',value:'application/json'}];}
       }else if(url.origin==='https://www.fanatical.com'&&/^\/api\/user\/orders\/synthetic-order-\d+$/.test(url.pathname)){
         assert.equal(request.method,'GET');paths.push(url.pathname);active++;maxActive=Math.max(maxActive,active);await pause(3);code=200;body=JSON.stringify(detail(Number(url.pathname.split('-').at(-1))));
         // End server work when handing off the response; DevTools acknowledgement can arrive after the next fetch starts.
@@ -184,6 +185,24 @@ try{
   assert.equal(paths.filter(p=>p.includes('synthetic-order')).length,1);
   console.log('PASS installed Chrome: 499/500 partial orders saved atomically, repeat is idempotent, unresolved order alone retried and complete coverage recovered');
   if(centralSession)console.log('PASS installed Chrome: repeated partial FAN additions reach GL without duplicating origins or modifying unrelated provider records');
+  const completeBefore=await evaluate('chrome.storage.local.get("fanaticalImportSummary").then(s=>s.fanaticalImportSummary)',options);
+  headerless=true;total=501;paths.length=0;
+  for(let repeat=0;repeat<2;repeat++){
+    await evaluate("document.querySelector('[data-import-mode=new]').click();true",page);await wait("!document.querySelector('[data-import-mode=new]').disabled",page);
+    saved=await evaluate('chrome.storage.local.get(null)',options);assert.equal(saved.fanaticalLastScanAttempt.acquisitionComplete,true);assert.deepEqual(saved.fanaticalImportSummary,completeBefore);assert.equal(saved.fanaticalScannedOrderFingerprints.length,501);
+    assert.equal(saved.fanaticalLastScanAttempt.verifiedPurchasesSaved,repeat===0?1:0);
+    assert.match(await evaluate("document.querySelector('#fanatical-library-importer output').textContent",page),/^Import finished[.]/);
+    if(repeat===0)assert.equal(paths.filter(p=>p.includes('synthetic-order')).length,1);
+  }
+  console.log('PASS installed Chrome: headerless acquisition finishes normally, preserves complete history and subsequent Quick skips validated details');
+  if(centralSession){
+    const originsExpression="(async()=>{const S=await import('./src/lib/storage.js');return Object.values((await S.getDatabase()).providerItems).filter(i=>i.provider==='fanatical'&&(i.providerItemId==='product-123456'||i.providerItemId.startsWith('product-synthetic-'))).reduce((n,i)=>n+(i.metadata.purchaseOrigins?.length??0),0);})()";
+    for(let n=0;n<300;n++){if(await evaluate(originsExpression,centralSession)===501)break;await pause(20);}
+    assert.equal(await evaluate(originsExpression,centralSession),501);
+    assert.equal(await evaluate("(async()=>{const S=await import('./src/lib/storage.js');return JSON.stringify(Object.values((await S.getDatabase()).providerItems).filter(i=>i.provider!=='fanatical'));})()",centralSession),otherProviders);
+    console.log('PASS installed Chrome: headerless acquisition additions reach GL idempotently without changing unrelated providers');
+  }
+
 
 }finally{
   if(child){child.kill();await Promise.race([exited,pause(3000)]);}

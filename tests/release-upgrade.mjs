@@ -68,7 +68,43 @@ try{
   const restored=await evaluate("return await chrome.storage.local.get(['fanaticalLibraryItems','mediaTypeOverrides','fanaticalProfileArchives','fanaticalScannedOrderFingerprints','fanaticalImportSummary']);");
   assert.equal(restored.fanaticalLibraryItems[0].sourceItemId,'quota-product-0');assert.equal(restored.mediaTypeOverrides['quota-product-0'],'comic');assert.equal(restored.fanaticalProfileArchives.length,1);assert.deepEqual(restored.fanaticalScannedOrderFingerprints,[]);assert.equal(restored.fanaticalImportSummary,null);
   console.log(`PASS ${from}: restored backup preserves purchases/corrections/profiles and resets private checkpoint authority`);
-  console.log(`6 installed ${firefox?'Firefox':'Chrome'} upgrade checks passed (${from} -> 1.0.2).`);
+  // Run the actual installed package's acquisition/validation/writer in each
+  // native engine too. Fetch is synthetic; Firefox provider MAIN admission is
+  // separately covered by the packaged-browser serialized-function checks.
+  const acquired=await evaluate(`
+    const {importFanaticalOrdersInPage:acquire}=await import('./order-importer.mjs');
+    const {createSyncStore,validateScanResult}=await import('./library-data.mjs');
+    const originalFetch=window.fetch,originalAuth=localStorage.getItem('bsauth');
+    const games=Array.from({length:47},(_,i)=>({_id:'upgrade-product-'+i,name:'Synthetic book '+i,type:'book'}));
+    const order={_id:'upgrade-order-47',status:'COMPLETE',items:[{_id:'upgrade-bundle-47',name:'Synthetic bundle',bundles:[{games}]}]};
+    const summary={_id:order._id,status:'COMPLETE',items:[{name:'Synthetic bundle',bundles:[{games:games.map(({name})=>({name}))}]}]};
+    const paths=[],store=createSyncStore(chrome.storage.local),results=[];
+    await chrome.storage.local.set({fanaticalLibraryItems:[],fanaticalHistoricalItems:[],fanaticalScannedOrderFingerprints:[],fanaticalImportSummary:null,fanaticalLastScanAttempt:null});
+    try{
+      localStorage.setItem('bsauth',JSON.stringify({token:'SYNTHETIC'}));
+      window.fetch=async path=>{paths.push(path);return new Response(JSON.stringify(path==='/api/user/orders'?[summary]:order),{status:200,headers:{'content-type':'application/json'}});};
+      for(const fullScan of [false,false,true]){
+        paths.length=0;const scan=await store.execute('begin',[{profileLabel:'fixture',confirmed:true,fullScan},99]);
+        const actualFull=fullScan||scan.forceFull,known=scan.state.fanaticalScannedOrderFingerprints;
+        const receipt=validateScanResult(await acquire({allowPartial:true,returnFailure:true,fullScan:actualFull,knownOrderFingerprints:known}),{fullScan:actualFull,knownOrderFingerprints:known});
+        const saved=await store.execute('commitPartial',[scan.token,receipt,99]);
+        const state=await chrome.storage.local.get(['fanaticalLibraryItems','fanaticalImportSummary']);
+        results.push({mode:saved.scanMode,verified:saved.verifiedPurchasesSaved,added:saved.addedProducts,finished:saved.acquisitionComplete,coverage:receipt.coverage.complete,count:state.fanaticalLibraryItems.length,completeSummary:state.fanaticalImportSummary,requests:paths.length});
+      }
+      return results;
+    }finally{window.fetch=originalFetch;if(originalAuth===null)localStorage.removeItem('bsauth');else localStorage.setItem('bsauth',originalAuth);}
+  `);
+  assert.deepEqual(acquired,[
+    {mode:'full',verified:1,added:47,finished:true,coverage:false,count:47,completeSummary:null,requests:2},
+    {mode:'quick',verified:0,added:0,finished:true,coverage:false,count:47,completeSummary:null,requests:1},
+    {mode:'full',verified:1,added:0,finished:true,coverage:false,count:47,completeSummary:null,requests:2}
+  ]);
+  if(firefox)await driver.send('WebDriver:Navigate',{url});else{await driver.send('Page.enable',{},session);await driver.send('Page.reload',{},session);}
+  await ready();assert.match(await evaluate("return document.querySelector('#history-note').textContent;"),/^Last import finished successfully[.]/);
+  assert.equal(await evaluate("return document.querySelector('#history-note').textContent.includes('Last scan was partial');"),false);
+  console.log(`PASS ${from}: actual installed package saves one headerless purchase and 47 products without false coverage`);
+  console.log(`PASS ${from}: installed Quick skips verified details and Full revalidates without product duplication`);
+  console.log(`8 installed ${firefox?'Firefox':'Chrome'} upgrade checks passed (${from} -> 1.0.2).`);
 }finally{
   if(firefox&&driver)try{await driver.send('Marionette:Quit',{flags:['eForceQuit']});}catch{}
   child?.kill();driver?.close?.();if(exited)await exited;
