@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "minimum_chrome_version": "111",
   "name": "Fanatical Library",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Locally mark Fanatical products and bundles you already own.",
   "permissions": [
     "storage",

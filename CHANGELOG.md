@@ -1,9 +1,9 @@
 # Release notes
 
-## Unreleased
+## 1.0.2
 
 - Save independently verified Fanatical orders atomically when another order or pagination fails. Partial scans preserve earlier purchases, corrections, history and the last complete-scan timestamp; unresolved orders remain retryable. Session/account conflicts still reject the entire save. Companion sharing continues to use the existing additions-only partial purchase protocol.
-- Preserve specific purchase-scan failure categories across Chrome's page-script boundary instead of replacing them with a generic completeness warning. Orders now offers an explicitly downloaded scan report containing only aggregate counts, scan mode and failure categories. Existing completeness checks and transactional saves are unchanged.
+- Preserve specific purchase-scan failure categories across Chrome's page-script boundary instead of replacing them with a generic completeness warning. Orders now offers an explicitly downloaded scan report containing only aggregate counts, scan mode and failure categories. Ownership validation and transactional saves remain enforced.
 - Initialize named accounts with a full scan when successful scan metadata or valid skip history is missing, including after restore. Established quick scans remain incremental.
 - Validated partial imports can establish per-order skip eligibility without claiming a complete-library baseline. Bare responses without independent pagination/end evidence remain partial; backups retain their purchases but never restore private checkpoint authority.
 
