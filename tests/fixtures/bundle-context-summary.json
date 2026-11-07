@@ -1,0 +1,9 @@
+{
+  "fixtureVersion": 2,
+  "summaryBasis": "Bottom rightBottom leftTop rightTop leftMinimizeFanatical Library — ExpandBundle ownershipOwned 0 · Owned elsewhere 1 · New 1 · Partial 0 · Possible 1Possible needs review; Partial overlaps some known contents. New means no match in available data.OwnedOwned elsewhereNewPartialPossibleCheck incompleteGalactic Library: checked linked libraries. Hide owned items$5.00 tier: 1 new / 3 · $5.00/newOwned elsewhere (1)Beneath the Trees Where Nobody Sees — Kindle  WishlistNew (1)Independent New Story  WishlistPossible matches (1)Beneath the Trees Where Nobody Sees: Rite of Spring Why?  WishlistAdvancedWishlist and purchase planningPlans do not change ownership or select anything in the store. Unknown units never count as newly covered. A unit goal can use verified additional contents of a partial offer.Confirmed-new productsAdditional full issues/volumesWishlist items Include Possible itemsTargets: 1 products / 0 distinct additional units; 1 uncertain products excluded; 0 unavailable offers excluded.$5.00: 3 slots/items; 0 wishlist priority points; 0 distinct additional units; goal satisfied.Lowest tier satisfying this goal: $5.00Manage wishes for this bundlePage 1; showing up to 50 of 3 offers.Previous itemsNext itemsBeneath the Trees Where Nobody Sees Add to wishlistRemove wishBeneath the Trees Where Nobody Sees: Rite of Spring Add to wishlistRemove wishIndependent New Story Add to wishlistRemove wishGalactic Library detailsAvailable. 3 items checked; not found means not found in synced libraries.Retry checks missing or failed results. Recheck queries Galactic Library again, including successful checks. Local evidence is retained.Download complete item listReview in Galactic LibraryEvidence reminders (3)Download complete item list",
+  "requests": [
+    "FANATICAL_GET_PUBLIC_BUNDLE",
+    "PING",
+    "MATCH_ITEMS"
+  ]
+}
