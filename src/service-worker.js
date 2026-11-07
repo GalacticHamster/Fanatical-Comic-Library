@@ -98,6 +98,10 @@ function scanReport({code,diagnostic={},requestedFull=false,actualFull=null,stor
 async function importPurchases({ fullScan = false, profileLabel='', confirmed=false, switchProfile=false, progressId='', useSavedAccount=false, tab:requestedTab } = {}) {
   const requestedFull=fullScan;
   const tab=requestedTab??await activeFanaticalTab();
+  const progressPhase=phase=>{
+    if(!/^[a-f0-9]{32}$/u.test(progressId))return;
+    try{void chrome.tabs.sendMessage(tab.id,{type:'FANATICAL_IMPORT_STATUS',progressId,phase}).catch(()=>{});}catch{/* Optional, same-extension UI only. */}
+  };
   const account=useSavedAccount?(await syncStore.execute('syncAccounts'))[0]:null;
   const scan=await syncStore.execute('begin',[{fullScan,profileLabel:useSavedAccount?account?.label??'':profileLabel,confirmed,switchProfile,...(account?{reuseAccount:true,accountId:account.stableId}:{})},tab.id]);
   fullScan=fullScan||scan.forceFull;const stored=scan.state;
@@ -114,6 +118,7 @@ async function importPurchases({ fullScan = false, profileLabel='', confirmed=fa
     args: [{ fullScan, knownOrderFingerprints, scanHistoryMissing, returnFailure:true,allowPartial:true,accountOrderFingerprints,progressId:/^[a-f0-9]{32}$/u.test(progressId)?progressId:'' }]
   });
   stage='validation';
+  progressPhase('validation');
   if (!Array.isArray(result) || result.length !== 1) throw new Error('Fanatical scan did not return a complete result. Your library was not changed.');
   if(result[0]?.result?.fanaticalImportFailure===1){
     const envelope=result[0].result;
@@ -124,6 +129,7 @@ async function importPurchases({ fullScan = false, profileLabel='', confirmed=fa
   if(projected.partialScanVersion&&projected.outcome!=='complete'){
     pageDiagnostic={listingEvidence:projected.coverage.listingEvidence,accountAffinity:projected.coverage.accountAffinity,stage:projected.failures[0].stage,pagesAttempted:projected.coverage.pagesFetched,pagesParsed:projected.coverage.pagesParsed,ordersRecognized:projected.coverage.listedOrders,detailsParsed:projected.ordersScanned,retries:projected.coverage.retries,terminalReached:projected.coverage.discoveryComplete,paginationEvidence:projected.coverage.paginationEvidence,authentication:'accepted-response'};
     stage='storage';
+    progressPhase('saving');
     const partial=await syncStore.execute('commitPartial',[scan.token,projected,tab.id]);
     return {...partial,failureExplanation:SCAN_FAILURES[projected.failures[0].code],scanDiagnostic:scanReport({code:projected.failures[0].code,diagnostic:pageDiagnostic,requestedFull,actualFull:fullScan,localAccountConfirmed:true,storageAdmission:'committed',outcome:partial.outcome,verifiedPurchasesSaved:partial.verifiedPurchasesSaved,verifiedProductRecordsSaved:projected.items.length,unresolvedOrders:partial.unresolvedOrders,failures:projected.failures,acquisitionComplete:partial.acquisitionComplete})};
   }
@@ -146,6 +152,7 @@ async function importPurchases({ fullScan = false, profileLabel='', confirmed=fa
     coverage: projected.coverage
   };
   stage='storage';
+  progressPhase('saving');
   await syncStore.execute('commit',[scan.token,{
     [STORAGE_ITEMS]: [...merged.values()].sort((a, b) => a.sourceItemId.localeCompare(b.sourceItemId)),
     [STORAGE_ORDER_FINGERPRINTS]: projected.orderFingerprints,

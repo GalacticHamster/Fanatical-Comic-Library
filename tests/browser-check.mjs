@@ -54,7 +54,7 @@ globalThis.centralMode = 'normal';
 globalThis.centralDelayMs = ${slowCentral?4500:0};
 if(${slowCentral})values.fanaticalSummaryPreferences={minimized:true,position:'top-left'};
 globalThis.requests = [];
-globalThis.chrome = {runtime:{getManifest:()=>({name:'Fanatical Library'}),onMessage:{addListener(){}},id:'a'.repeat(32),sendMessage:async(first,second)=>{
+globalThis.chrome = {runtime:{getManifest:()=>({name:'Fanatical Library',version:'1.0.2'}),getURL:path=>location.origin+'/'+path,onMessage:{addListener(){},removeListener(){}},id:'a'.repeat(32),sendMessage:async(first,second)=>{
   const message=second||first; requests.push(message);
   if(message.type==='MATCH_ITEMS'&&centralDelayMs)await new Promise(resolve=>setTimeout(resolve,centralDelayMs));
   if(message.type==='FANATICAL_STORE'){

@@ -374,17 +374,19 @@ test('serialized importer emits only aggregate progress and explains missing sav
   const run=harness({pageOverrides});
   const result=await run.scan(false,progressId);
   assert.equal(result.scanHistoryMissing,true);
-  assert.deepEqual(messages.map(message=>message.data.progress.phase),['list','plan','details']);
-  assert.equal(messages[1].data.progress.scanHistoryMissing,true);
-  assert.equal(messages[2].data.progress.completed,1);
+  const legacy=messages.filter(message=>message.data.progress.phase!=='activity');
+  assert.deepEqual(legacy.map(message=>message.data.progress.phase),['list','plan','details']);
+  assert.equal(legacy[1].data.progress.scanHistoryMissing,true);
+  assert.equal(legacy[2].data.progress.completed,1);
   assert.ok(messages.every(message=>message.origin==='https://www.fanatical.com'&&message.data.progressId===progressId));
   const text=JSON.stringify(messages);
   for(const value of ['SECRET-TOKEN',orderId,'New purchase','product-123456'])assert.equal(text.includes(value),false);
   messages.length=0;
   const known=harness({pageOverrides,known:[fingerprint(orderId)]});
   assert.equal((await known.scan(false,progressId)).scanHistoryMissing,false);
-  assert.equal(messages.at(-1).data.progress.total,0);
-  assert.equal(messages.at(-1).data.progress.skipped,1);
+  const plan=messages.find(message=>message.data.progress.phase==='plan');
+  assert.equal(plan.data.progress.total,0);
+  assert.equal(plan.data.progress.skipped,1);
   assert.equal(messages.some(message=>message.data.progress.phase==='details'),false);
 });
 

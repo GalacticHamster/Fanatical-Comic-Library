@@ -1335,6 +1335,12 @@
 
   function purchaseImportProgress(progress) {
     if (!progress || typeof progress !== 'object') return null;
+    if(progress.phase==='activity'){
+      const p=purchaseActivity(progress);if(!p)return null;
+      if(p.stage==='listing')return `Reading purchase pages: ${p.pages} read; ${p.discovered} purchases found`;
+      if(p.stage==='validating')return 'Checking acquired purchase information';
+      return `${p.stage==='retry'?'Retrying a purchase request':'Reading purchase details'}: ${p.completed} of ${p.scheduled} checked; ${p.active} active${p.failed?`; ${p.failed} unreadable`:''}${p.retries?`; ${p.retries} retries`:''}`;
+    }
     const count = (value, max = 100000) => Number.isSafeInteger(value) && value >= 0 && value <= max;
     if (progress.phase === 'list') return count(progress.page,1000) && progress.page > 0 ? `Loading your purchase list: page ${progress.page}\u2026` : null;
     if (progress.phase === 'retry') return [2,3].includes(progress.attempt) ? `Retrying a purchase request (attempt ${progress.attempt} of 3)\u2026` : null;
@@ -1354,6 +1360,16 @@
     return `${action}: purchase ${progress.completed} of ${progress.total}\u2026`;
   }
 
+  function purchaseActivity(value){
+    if(value?.phase!=='activity'||!['listing','details','retry','validating'].includes(value.stage))return null;
+    const p={phase:'activity',stage:value.stage};
+    for(const key of ['sequence','pages','discovered','scheduled','completed','failed','active','retries','validatedItems','elapsedMs']){
+      const max=key==='elapsedMs'?Number.MAX_SAFE_INTEGER:key==='validatedItems'?500000:key==='retries'?300000:key==='sequence'?1000000:100000;
+      if(!Number.isSafeInteger(value[key])||value[key]<0||value[key]>max)return null;p[key]=value[key];
+    }
+    if(p.completed>p.scheduled||p.failed>p.completed||p.active>3||p.completed+p.active>p.scheduled)return null;return p;
+  }
+
   function normalizeSummaryPreferences(value={},strict=false) {
     const positions=['bottom-right','bottom-left','top-right','top-left'];
     if(strict&&(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(key=>!['minimized','position'].includes(key))||Object.hasOwn(value,'minimized')&&typeof value.minimized!=='boolean'||Object.hasOwn(value,'position')&&!positions.includes(value.position)))throw new Error('Invalid bundle summary preferences.');
@@ -1361,7 +1377,7 @@
   }
 
   async function storageSet(updates){const response=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'patch',args:[updates]});if(!response?.ok)throw new Error(response?.error??'Settings storage is unavailable.');}
-  global.FanaticalLibrary = { purchaseImportScope, purchaseImportProgress, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, isCompleteBundleCatalogue, isBundleOverlapProduct, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, sendGalacticMatch, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, COMPANION_IDENTITIES, companionBrowser, builtinGalacticId, resolveGalacticId, galacticAvailability, galacticPermissionDenied, trustedGalacticSender, companionTargetProblem, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft, isComicItem, mediaOverrideKey };
+  global.FanaticalLibrary = { purchaseImportScope, purchaseImportProgress, purchaseActivity, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, isCompleteBundleCatalogue, isBundleOverlapProduct, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, sendGalacticMatch, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, COMPANION_IDENTITIES, companionBrowser, builtinGalacticId, resolveGalacticId, galacticAvailability, galacticPermissionDenied, trustedGalacticSender, companionTargetProblem, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft, isComicItem, mediaOverrideKey };
 }(globalThis));
 
 /* Account picker; all changes use the serialized writer. */

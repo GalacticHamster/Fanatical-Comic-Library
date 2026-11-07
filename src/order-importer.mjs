@@ -6,14 +6,25 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   const diagnostic = {listingEvidence,stage:'authentication',pagesAttempted:0,pagesParsed:0,ordersRecognized:0,detailsParsed:0,retries:0,terminalReached:false,authentication:'unknown',httpStatus:null};
   const unresolved=new Set(),ineligible=new Set(),verified=new Set(),failureCounts=new Map();
   let discoveryComplete=true,unidentifiedRecords=0;
+  const activity={sequence:0,phase:'activity',stage:'listing',pages:0,discovered:0,scheduled:0,completed:0,failed:0,active:0,retries:0,validatedItems:0},began=Date.now();
+  let progressAt=0,progressStage='';
+  const activityProgress=(stage=activity.stage,force=false)=>{
+    activity.stage=stage;const now=Date.now();if(!force&&stage===progressStage&&now-progressAt<150)return;
+    progressAt=now;progressStage=stage;
+    if(!/^[a-f0-9]{32}$/u.test(progressId)||typeof window==='undefined')return;
+    try{window.postMessage({type:'FANATICAL_IMPORT_PROGRESS',progressId,progress:{...activity,sequence:++activity.sequence,elapsedMs:now-began}},'https://www.fanatical.com');}catch{/* Progress cannot affect acquisition. */}
+  };
   const fatal=error=>['authentication-missing','authentication-rejected','session-changed','order-identity-conflict','account-scope-conflict'].includes(error?.fanaticalFailureCode);
   const note=(error,stage)=>{const code=error?.fanaticalFailureCode??'details-unreadable',key=stage+':'+code,old=failureCounts.get(key);failureCounts.set(key,{code,stage,count:(old?.count??0)+1});};
   const failure = (code, message) => Object.assign(new Error(message), {fanaticalFailureCode:code});
   try {
   // Progress is informational only. Send aggregate counts, never account data,
   // order identifiers, titles, authentication tokens or redemption values.
+  let legacyProgressAt=0;
   const reportProgress = (progress) => {
     if (!/^[a-f0-9]{32}$/u.test(progressId) || typeof window === 'undefined') return;
+    if(progress.phase==='details'&&progress.completed!==progress.total&&Date.now()-legacyProgressAt<150)return;
+    legacyProgressAt=Date.now();
     try { window.postMessage({type:'FANATICAL_IMPORT_PROGRESS',progressId,progress}, 'https://www.fanatical.com'); } catch { /* Progress must not affect scan results. */ }
   };
   const safeTextInPage = (value, max = 500) => typeof value === 'string' ? value.trim().slice(0, max) : '';
@@ -333,6 +344,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
       retries++;
       diagnostic.retries=retries;
       reportProgress({phase:'retry',attempt:attempt+2});
+      activity.retries=retries;activityProgress('retry',true);
       if ([429, 503].includes(response?.status)) cooldownUntil = Math.max(cooldownUntil, Date.now() + delay);
       await pause(delay);
     }
@@ -411,6 +423,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     visitedPages.add(path);
     diagnostic.pagesAttempted=visitedPages.size;
     reportProgress({phase:'list',page:visitedPages.size});
+    activity.pages=diagnostic.pagesParsed;activity.discovered=diagnostic.ordersRecognized;activityProgress('listing',true);
     const { data, headers } = await request(path);
     listingEvidence[Array.isArray(data)?'arrayPages':data&&typeof data==='object'?'objectPages':'otherPages']++;
     if(typeof headers?.get==='function'){
@@ -524,7 +537,9 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   reportProgress({phase:'plan',...scope});
   let completedDetails = 0;
   diagnostic.stage='details';
+  activity.pages=diagnostic.pagesParsed;activity.discovered=summaries.length;activity.scheduled=toInspect.length;activityProgress('details',true);
   const details = await boundedMap(toInspect, async ({ order: listedOrder, fingerprint }) => {
+    activity.active++;activityProgress('details',activity.completed===0&&activity.active===Math.min(3,activity.scheduled));
     try {
     const { data: order } = await request(`/api/user/orders/${encodeURIComponent(listedOrder._id)}`);
     if(allowPartial&&typeof order?._id==='string'&&order._id!==listedOrder._id)throw failure('order-identity-conflict','A purchase response belonged to a different order.');
@@ -547,9 +562,12 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     }
     reportProgress({phase:'details',...scope,completed:++completedDetails});
     diagnostic.detailsParsed=completedDetails;verified.add(fingerprint);
+    activity.validatedItems+=projectedItems.length;
     return projectedItems;
-    }catch(error){if(!allowPartial||fatal(error))throw error;unresolved.add(fingerprint);note(error,'details');return [];}
+    }catch(error){activity.failed++;if(!allowPartial||fatal(error))throw error;unresolved.add(fingerprint);note(error,'details');return [];}
+    finally{activity.active--;activity.completed++;activityProgress('details',activity.completed===activity.scheduled);}
   });
+  activityProgress('validating',true);
   const items = combineProducts(details.flat());
   let currentToken='';try{currentToken=String(JSON.parse(localStorage.getItem('bsauth')||'{}')?.token||'');}catch{}
   diagnostic.stage='session';

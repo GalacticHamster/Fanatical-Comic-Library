@@ -372,11 +372,12 @@
     const scanDetailsTitle=document.createElement('summary');scanDetailsTitle.textContent='Scan diagnostics';
     const scanInfo=document.createElement('p');
     const exportScan=document.createElement('button');exportScan.type='button';exportScan.textContent='Export scan report';
-    let scanReport=null;
+    let scanReport=null,lastActivity=null,activityEvents=0,uiUpdates=0,startedAt=null;
     exportScan.addEventListener('click',()=>{
       if(!scanReport||!active())return;
-      const link=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(scanReport,null,2)],{type:'application/json'}));
+      try{const link=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(scanReport,null,2)],{type:'application/json'}));
       link.href=url;link.download='fanatical-scan-report.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),0);
+      }catch{exportScan.textContent='Export unavailable; retry';}
     });
     scanDetails.append(scanDetailsTitle,scanInfo,exportScan);
     panel.append(intro,profileControls,footer,scanDetails);
@@ -394,6 +395,7 @@
         if(!active())return;
         status.textContent=response?.ok?importerResult(response.summary,response.summary.scanMode==='full'):(response?.error??'Import failed.');
         scanReport=response?.scanDiagnostic??response?.summary?.scanDiagnostic??null;
+        if(scanReport)scanReport={...scanReport,progress:lastActivity,progressEvents:activityEvents,uiUpdates,elapsedMs:startedAt===null?null:Date.now()-startedAt};
         scanDetails.hidden=!scanReport;
         if(scanReport)scanInfo.textContent=(scanReport.acquisitionComplete===true&&scanReport.discoveryComplete===false?'The import finished successfully. Fanatical did not provide enough information to independently verify that the entire purchase history was returned. Existing purchases were preserved. ':'')+`${scanReport.code} · ${scanReport.stage}. The report contains scan counts and failure categories, not titles, order numbers, account details or credentials. Export it before leaving or reloading Orders.`;
         buttons.forEach(control=>{control.disabled=false;});
@@ -407,12 +409,23 @@
       status.textContent='Loading your purchase list\u2026';
       scanReport=null;scanDetails.hidden=true;
       const progressId=[...crypto.getRandomValues(new Uint8Array(16))].map(value=>value.toString(16).padStart(2,'0')).join('');
+      lastActivity=null;activityEvents=0;uiUpdates=0;startedAt=Date.now();let lastChanged=startedAt,lastMessage=status.textContent,workerPhase=0,listening=true;
       const onProgress=event=>{
-        if(!active()||event.source!==window||event.origin!==location.origin||event.data?.type!=='FANATICAL_IMPORT_PROGRESS'||event.data.progressId!==progressId)return;
-        const message=F.purchaseImportProgress(event.data.progress);if(message)status.textContent=message;
+        if(!listening||!active()||workerPhase||event.source!==window||event.origin!==location.origin||event.data?.type!=='FANATICAL_IMPORT_PROGRESS'||event.data.progressId!==progressId)return;
+        if(event.data.progress?.phase==='activity'){
+          const p=F.purchaseActivity(event.data.progress);if(!p||p.sequence<=(lastActivity?.sequence??0))return;
+          lastActivity=p;activityEvents++;
+        }
+        const message=F.purchaseImportProgress(event.data.progress);if(message){status.textContent=message;lastMessage=message;lastChanged=Date.now();uiUpdates++;}
       };
       window.addEventListener('message',onProgress);
-      removeProgress=()=>window.removeEventListener('message',onProgress);
+      const onWorkerPhase=(message,sender)=>{
+        if(!listening||!active()||sender?.id!==chrome.runtime.id||message?.type!=='FANATICAL_IMPORT_STATUS'||message.progressId!==progressId||!['validation','saving'].includes(message.phase))return;
+        const rank=message.phase==='saving'?2:1;if(rank<=workerPhase)return;workerPhase=rank;lastMessage=message.phase==='saving'?'Comparing and saving verified purchases':'Validating the acquired purchases';status.textContent=lastMessage;lastChanged=Date.now();uiUpdates++;
+      };
+      chrome.runtime.onMessage.addListener(onWorkerPhase);
+      const heartbeat=setInterval(()=>{if(listening&&active()){status.textContent=lastMessage+' | '+Math.floor((Date.now()-startedAt)/1000)+' seconds elapsed.'+(Date.now()-lastChanged>=1000?' Waiting for the import to respond; it is still pending.':'');uiUpdates++;}},1000);
+      removeProgress=()=>{listening=false;clearInterval(heartbeat);window.removeEventListener('message',onProgress);chrome.runtime.onMessage.removeListener(onWorkerPhase);};
       // The worker owns the atomic import. Navigation detaches its UI, not its save.
       const operation=Promise.resolve().then(()=>chrome.runtime.sendMessage({type:'FANATICAL_IMPORT_PURCHASES',fullScan,progressId,useSavedAccount:!profileControls.querySelector('[data-profile-switch]').checked,profileLabel:profileControls.querySelector('[data-profile-label]').value,confirmed:profileControls.querySelector('[data-profile-confirm]').checked,switchProfile:profileControls.querySelector('[data-profile-switch]').checked}))
         .then(response=>response?.ok?{...response,summary:{...response.summary,scanMode:fullScan?'full':response.summary.scanMode}}:response)
