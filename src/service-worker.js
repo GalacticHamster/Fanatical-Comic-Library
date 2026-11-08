@@ -17,15 +17,16 @@ const STORAGE_ITEMS = 'fanaticalLibraryItems';
 const STORAGE_SUMMARY = 'fanaticalImportSummary';
 const STORAGE_ORDER_FINGERPRINTS = 'fanaticalScannedOrderFingerprints';
 
-// Inbound status/review only. No external library, storage or importer endpoint.
+// Inbound status/review only, including UI presence. No external acquisition or storage endpoint.
 chrome.runtime.onMessageExternal?.addListener((message,sender,respond)=>{
-  if(!['PING','GET_STATUS','OPEN_REVIEW'].includes(message?.type))return false;
+  if(!['PING','GET_STATUS','OPEN_REVIEW','GET_IMPORTER_STATUS'].includes(message?.type))return false;
   (async()=>{
     const F=globalThis.FanaticalLibrary,stored=await chrome.storage.local.get({galacticLibraryExtensionId:''});
     if(!F.trustedGalacticSender(sender?.id,stored.galacticLibraryExtensionId,chrome.runtime))return {ok:false,error:'Companion is not allowed.'};
     if(message.apiVersion!==1&&!(message.apiVersion===undefined&&['PING','GET_STATUS'].includes(message.type)))return {ok:false,error:'Unsupported companion API version.'};
+    if(message.type==='GET_IMPORTER_STATUS'){if(!Number.isInteger(message.tabId))return {ok:false};try{const r=await chrome.tabs.sendMessage(message.tabId,{type:'GH_IMPORTER_PAGE_STATUS'});return {ok:true,present:r?.present===true};}catch{return {ok:true,present:false};}}
     if(message.type==='OPEN_REVIEW')await chrome.runtime.openOptionsPage();
-    return {ok:true,apiVersion:1,appVersion:chrome.runtime.getManifest?.().version??'1.0.3',ready:true,purchaseProvider:'fanatical',capabilities:{centralReview:true}};
+    return {ok:true,apiVersion:1,appVersion:chrome.runtime.getManifest?.().version??'1.0.3',ready:true,purchaseProvider:'fanatical',capabilities:{centralReview:true,providerImporter:1,importerPageStatus:1}};
   })().then(respond,()=>respond({ok:false,error:'Companion request unavailable.'}));return true;
 });
 

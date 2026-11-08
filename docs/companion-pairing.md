@@ -4,6 +4,14 @@ Compatible official installations connect automatically. In Settings, check the 
 
 ## Managed identities
 
+On Fanatical Orders, Fanatical Library remains the importer when a compatible
+Galactic Library is also installed. GL hides its duplicate panel. Use **Import
+new purchases**, **Rescan all purchases**, and **Scan diagnostics → Export scan
+report** in Fanatical Library. Purchase sharing still needs **Connect and sync**;
+discovery alone does not authorize it. Already-saved purchases can sync without
+a store rescan. Reload an already-open Orders page after an extension installation
+or update when prompted. Fanatical Library continues working without GL.
+
 | Product | Chrome Web Store listing ID | Existing Firefox Gecko ID |
 | --- | --- | --- |
 | Humble Comic Library | bjjpfofmcmiipeghcbhdfjedpldmkcii | humble-comic-library@galactichamster.com |

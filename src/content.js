@@ -353,6 +353,8 @@
     const panel = document.createElement('section');
     panel.id = 'fanatical-library-importer';
     panel.className = 'fanatical-library-importer';
+    const pageStatus=(message,sender,respond)=>{if(message?.type!=='GH_IMPORTER_PAGE_STATUS'||sender.id!==chrome.runtime.id)return false;respond({present:active()});return false;};
+    chrome.runtime.onMessage.addListener(pageStatus);
     const heading = document.createElement('strong'); heading.textContent = 'Fanatical Library';
     const description = document.createElement('span'); description.textContent = 'Import purchases from the Fanatical account signed in to this browser.';
     const actions = document.createElement('div'); actions.className = 'fanatical-library-import-actions';
@@ -388,7 +390,7 @@
     profileControls.querySelector('[data-profile-label]').addEventListener('input',()=>{profileControls.querySelector('[data-profile-confirm]').checked=false;});
     const buttons = [quick, full];
     let removeProgress=()=>{};
-    disposeOrderPanel=()=>{removeProgress();accounts.destroy?.();panel.remove();};
+    disposeOrderPanel=()=>{chrome.runtime.onMessage.removeListener(pageStatus);removeProgress();accounts.destroy?.();panel.remove();};
     const watch=promise=>{
       buttons.forEach(control=>{control.disabled=true;});
       promise.then(response=>{
