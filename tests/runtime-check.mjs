@@ -55,10 +55,10 @@ try{
       return ['real allow-listed software matching excludes central Fanatical copies','real central feed keeps activation and reported key expiry distinct','installed reminder controls consume the central worker'];
     })()`,options);pairedChecks.forEach(check=>console.log('PASS installed Chrome: '+check));
     const hbRoot=resolve('..','HB'),hbPackage=join(temporary,'hb-package'),hbStage=join(temporary,'hb-runtime');await mkdir(hbPackage);
-    execFileSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',join(hbRoot,'scripts/package-release.ps1'),'-OutputDirectory',hbPackage],{windowsHide:true,stdio:'pipe'});
+    if(!process.env.HB_RUNTIME_PACKAGE)execFileSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',join(hbRoot,'scripts/package-release.ps1'),'-OutputDirectory',hbPackage],{windowsHide:true,stdio:'pipe'});
     const hbManifest=JSON.parse(await readFile(join(hbRoot,'manifest.json'),'utf8')),extract=join(temporary,'extract-hb.ps1');
     await writeFile(extract,'param($Archive,$Destination)\nAdd-Type -AssemblyName System.IO.Compression.FileSystem\n[System.IO.Compression.ZipFile]::ExtractToDirectory($Archive,$Destination)\n');
-    execFileSync('powershell.exe',['-NoProfile','-File',extract,join(hbPackage,'Humble-Comic-Library-'+hbManifest.version+'.zip'),hbStage],{windowsHide:true,stdio:'pipe'});
+    execFileSync('powershell.exe',['-NoProfile','-File',extract,process.env.HB_RUNTIME_PACKAGE??join(hbPackage,'Humble-Comic-Library-'+hbManifest.version+'.zip'),hbStage],{windowsHide:true,stdio:'pipe'});
     const hb=await driver.send('Extensions.loadUnpacked',{path:hbStage}),hbPage=await attach('chrome-extension://'+hb.id+'/options.html');await wait("typeof HumbleComicLibrary!=='undefined'",hbPage);
     await evaluate('(async()=>{const S=await import("./src/lib/storage.js");await S.addAllowedExternalClientId('+JSON.stringify(hb.id)+');return true;})()',centralPage);
     await evaluate('(async()=>{await HumbleComicLibrary.storageSet({galacticLibraryExtensionId:'+JSON.stringify(paired.id)+'});return true;})()',hbPage);

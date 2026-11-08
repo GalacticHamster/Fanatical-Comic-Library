@@ -1,4 +1,4 @@
-# Fanatical Library 1.0.2
+# Fanatical Library 1.0.3
 
 Fanatical Library is an unofficial Chrome and Firefox extension that helps you
 compare Fanatical standard/tiered bundles and Pick & Mix offers with your saved
@@ -14,7 +14,7 @@ It is not affiliated with or endorsed by Fanatical.
 
 ## Installation and availability
 
-Version **1.0.2** supports Chrome and Firefox desktop 140+. Version 1.0.1 is published in the Chrome Web Store and Firefox AMO. Version 1.0.2 is prepared for submission; availability of the update depends on each store. Verified store links will be added when available. Normal Firefox distribution requires signing.
+Version **1.0.3** supports Chrome and Firefox desktop 140+. The owner confirms 1.0.2 is published; 1.0.3 is a local release candidate and has not been submitted by this preparation. Verified store links will be added when available. Normal Firefox distribution requires signing.
 
 For source installation or temporary Firefox testing, see [Development and testing](#development-and-testing).
 
@@ -239,7 +239,7 @@ These installs are for development and testing, not signed store distribution.
 
 ### Firefox desktop
 
-Run `npm run package:firefox`, extract `dist/FanaticalLibrary-1.0.2-firefox.zip`, then select its manifest through `about:debugging#/runtime/this-firefox`. This is a temporary development install; permanent distribution requires signing. Firefox 140+ is supported with a module event page and the same runtime assets as Chrome.
+Run `npm run package:firefox` and extract `dist/FanaticalLibrary-1.0.3-firefox.zip`, or use the isolated candidate procedure in [release and pairing](docs/release-and-pairing.md). Select the extracted manifest through `about:debugging#/runtime/this-firefox`. This is a temporary development install; permanent distribution requires signing. Firefox 140+ is supported with a module event page and the same runtime assets as Chrome.
 
 Compatible builds automatically pair using the existing `fanatical-library@galactichamster.com` and `galactic-library@galactichamster.com` IDs. Use **Check connection**. Advanced / Developer pairing retains custom IDs; signing/listing continuity must be confirmed before publication. Firefox central review asks the allowed GL extension to open its own options; it needs no native helper or private URL. Older GL versions show toolbar instructions.
 

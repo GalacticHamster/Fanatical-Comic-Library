@@ -1,5 +1,11 @@
 # Release notes
 
+## 1.0.3 — Release candidate
+
+- Show bounded progress and waiting feedback during long-running purchase imports, helping distinguish active work from delayed order responses.
+
+This is a small maintenance update since published 1.0.2. The remaining changes improve regression coverage; they do not add matching, ownership, import or purchase-synchronization features. Prepared locally for review; not submitted or published. Permissions and protocols are unchanged.
+
 ## 1.0.2
 
 - Distinguish a clean purchase acquisition from verified full-history coverage. Headerless array responses can finish normally and support incremental updates without erasing purchases or claiming a complete scan. Actual order and pagination failures retain partial-import behavior. Clean acquisitions use concise success counts; technical coverage qualifications remain in Scan diagnostics. Scan reports now include privacy-safe response-shape and pagination-header presence counts.
