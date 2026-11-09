@@ -8,14 +8,15 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   const issue=key=>{compatibility.counts[key]++;};
   const valueType=v=>v===undefined?'missing':v===null?'null':Array.isArray(v)?'array':['object','string','number','boolean'].includes(typeof v)?typeof v:'other';
   // Bounded shapes at the failing boundary, never provider keys or values.
-  const bundleShape=(parent)=>{
+  const bundleShape=(parent,reason,selectedChild)=>{
     const shapes=compatibility.bundleShapes??={version:1,records:[],truncated:false};
-    if(shapes.records.length>=8){shapes.truncated=true;return;}
+    if(shapes.records.length>=8){shapes.truncated=true;const summary=diagnostic.stage==='details'?shapes.records.findIndex(r=>r.stage==='summaries'):-1;if(summary<0)return;shapes.records.splice(summary,1);}
     const type=valueType;
     const bundles=parent?.bundles;let child,size=null;
     if(Array.isArray(bundles)){size=bundles.length;child=bundles[0];}
     else if(bundles&&typeof bundles==='object'){size=0;for(const key in bundles)if(Object.hasOwn(bundles,key)){if(size===0)child=bundles[key];if(++size===2)break;}}
-    shapes.records.push({stage:diagnostic.stage==='summaries'?'summaries':'details',reason:bundles==null?'missing':Array.isArray(bundles)?'empty-array':'non-array',
+    if(selectedChild)child=selectedChild.value;
+    shapes.records.push({stage:diagnostic.stage==='summaries'?'summaries':'details',reason:reason??(bundles==null?'missing':Array.isArray(bundles)?'empty-array':'non-array'),
       parentType:type(parent),bundlesType:type(bundles),bundlesSize:size===null?'not-container':size===0?'empty':size===1?'one':'many',
       parentId:type(parent?._id),parentName:type(parent?.name),parentGames:type(parent?.games),parentProducts:type(parent?.products),parentItems:type(parent?.items),parentTiers:type(parent?.tiers),
       bundleGames:type(bundles?.games),bundleProducts:type(bundles?.products),bundleItems:type(bundles?.items),bundleTiers:type(bundles?.tiers),
@@ -521,16 +522,16 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     return {names,ids};
   };
   const productCounts = (parents) => {
-    const bad=key=>{issue(diagnostic.stage==='summaries'?key:'detailStructure');throw unreadable();};
+    const bad=(key,parent,child,reason=key)=>{if(diagnostic.stage==='details')bundleShape(parent,reason,{value:child});issue(diagnostic.stage==='summaries'?key:'detailStructure');throw unreadable();};
     if (!Array.isArray(parents) || !parents.length) bad(parents==null?'missingItems':'invalidItems');
     const counts = new Map();
     for (const parent of parents) {
-      if (!safeTextInPage(parent?.name)) bad('missingNames');
-      if (!Array.isArray(parent?.bundles) || !parent.bundles.length){bundleShape(parent);bad(parent?.bundles==null?'missingBundles':'invalidBundles');}
+      if (!safeTextInPage(parent?.name)) bad('missingNames',parent,undefined,'missing-parent-name');
+      if (!Array.isArray(parent?.bundles) || !parent.bundles.length){if(diagnostic.stage==='summaries')bundleShape(parent);bad(parent?.bundles==null?'missingBundles':'invalidBundles',parent);}
       for (const group of parent.bundles) {
-        if (!Array.isArray(group?.games) || !group.games.length) bad(group?.games==null?'missingGames':'invalidGames');
+        if (!Array.isArray(group?.games) || !group.games.length) bad(group?.games==null?'missingGames':'invalidGames',parent,group);
         for (const leaf of group.games) {
-          if (!safeTextInPage(leaf?.name)) bad('missingNames');
+          if (!safeTextInPage(leaf?.name)) bad('missingNames',parent,leaf,'missing-leaf-name');
           const key = JSON.stringify([safeTextInPage(parent.name), safeTextInPage(leaf.name)]);
           counts.set(key, (counts.get(key) || 0) + 1);
         }
@@ -548,7 +549,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
         // A sparse summary can locate an authenticated detail request, but is
         // never product evidence or authority to skip that detail on Quick.
         const sparse=allowPartial&&Array.isArray(order.items)&&order.items.length>0&&order.items.every(parent=>parent&&typeof parent==='object'&&!Array.isArray(parent)&&typeof parent.name==='string'&&safeTextInPage(parent.name)&&Array.isArray(parent.bundles)&&parent.bundles.length===0&&(parent._id===undefined||typeof parent._id==='string'&&safeIdInPage(parent._id))&&['games','products','items','tiers'].every(key=>!Object.hasOwn(parent,key)));
-        if(sparse){sparseSummaries.set(order._id,parentEvidence(order.items));expectedProducts.set(order._id,null);order.items.forEach(bundleShape);}
+        if(sparse){sparseSummaries.set(order._id,parentEvidence(order.items));expectedProducts.set(order._id,null);order.items.forEach(parent=>bundleShape(parent));}
         else {const counts=productCounts(order.items);expectedProducts.set(order._id,counts);if([...counts.values()].some(n=>n>1))issue('multipleCopies');}
       }
       else if(allowPartial){

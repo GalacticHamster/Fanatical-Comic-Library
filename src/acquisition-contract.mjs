@@ -28,7 +28,7 @@ export function fanaticalCompatibilityReport(value){
     const typed=['parentType','bundlesType','parentId','parentName','parentGames','parentProducts','parentItems','parentTiers','bundleGames','bundleProducts','bundleItems','bundleTiers','childType','childId','childName','childGames','childProducts','childItems','childTiers'];
     const keys=['stage','reason','bundlesSize',...typed];
     if(!shapes||shapes.version!==1||Object.keys(shapes).length!==3||Object.keys(shapes).some(k=>!['version','records','truncated'].includes(k))||typeof shapes.truncated!=='boolean'||!Array.isArray(shapes.records)||shapes.records.length>8)return null;
-    if(shapes.records.some(r=>!r||Object.keys(r).length!==keys.length||Object.keys(r).some(k=>!keys.includes(k))||!['summaries','details'].includes(r.stage)||!['missing','empty-array','non-array'].includes(r.reason)||!['not-container','empty','one','many'].includes(r.bundlesSize)||typed.some(k=>!types.includes(r[k]))))return null;
+    if(shapes.records.some(r=>!r||Object.keys(r).length!==keys.length||Object.keys(r).some(k=>!keys.includes(k))||!['summaries','details'].includes(r.stage)||!['missing','empty-array','non-array','missingItems','invalidItems','missing-parent-name','missing-leaf-name','missingBundles','invalidBundles','missingGames','invalidGames'].includes(r.reason)||!['not-container','empty','one','many'].includes(r.bundlesSize)||typed.some(k=>!types.includes(r[k]))))return null;
     result.bundleShapes={version:1,records:shapes.records.map(r=>Object.fromEntries(keys.map(k=>[k,r[k]]))),truncated:shapes.truncated};
   }
   return result;

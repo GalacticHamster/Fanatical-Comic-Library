@@ -9,7 +9,8 @@ const code = fs.readFileSync(new URL('../src/options.js', import.meta.url), 'utf
 const item = (title, id = 'product-123456') => ({ source: 'fanatical', sourceItemId: id, title, mediaType: 'game', bundle: { sourceItemId: 'bundle-123456', title: 'Test bundle' }, purchaseDate: null });
 
 async function optionsHarness(initial = {}) {
-  const stored = structuredClone(initial); const writes = []; const messages = []; const nodes = new Map();
+  const stored = structuredClone(initial); const writes = []; const messages = []; const nodes = new Map();const storageListeners=[];
+  let accountChanged;
   const sessionData = new Map();
   const sessionStorage = {
     getItem(key) { return sessionData.get(key) ?? null; },
@@ -23,18 +24,20 @@ async function optionsHarness(initial = {}) {
   const context = vm.createContext({
     document: { querySelector: get, createElement: element },
     sessionStorage,
-    chrome: { runtime: { id: 'a'.repeat(32), async sendMessage(id, message) { messages.push({ id, message }); if (config.failure) throw new Error('PRIVATE transport failure'); return config.respond ? config.respond(message) : config.response; } }, storage: { local: {
+    chrome: { runtime: { id: 'a'.repeat(32), async sendMessage(id, message) { messages.push({ id, message }); if (config.failure) throw new Error('PRIVATE transport failure'); return config.respond ? config.respond(message) : config.response; } }, storage: {onChanged:{addListener:fn=>storageListeners.push(fn)}, local: {
       async get(defaults) { return { ...defaults, ...stored }; },
       async set(value) { writes.push(structuredClone(value)); Object.assign(stored, structuredClone(value)); },
       async remove(keys) { for (const key of Array.isArray(keys) ? keys : [keys]) delete stored[key]; }
     } }, tabs: { create() {} } },
-    confirm: () => config.confirm, LibraryTitleSort:globalThis.LibraryTitleSort, LibraryAccountProfiles:globalThis.LibraryAccountProfiles, FanaticalLibrary: globalThis.FanaticalLibrary,
+    confirm: () => config.confirm, LibraryTitleSort:globalThis.LibraryTitleSort, LibraryAccountProfiles:{mount(host,options){accountChanged=options.onActiveChange;return {refresh:async()=>{}};}}, FanaticalLibrary: globalThis.FanaticalLibrary,
     backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitleCatalog, Blob, URL, setTimeout, clearTimeout, Intl
   });
   const store=createSyncStore(context.chrome.storage.local);const oldSend=context.chrome.runtime.sendMessage;
   context.chrome.runtime.sendMessage=async (...args)=>{const message=args[0];if(message?.type!=='FANATICAL_STORE')return oldSend(...args);try{return {ok:true,result:await store.execute(message.operation,message.args)};}catch(error){return {ok:false,error:error.message};}};
   await vm.runInContext(code, context);
   return { stored, writes, messages, get, config, context, sessionData,
+    accountChanged:()=>accountChanged(),
+    changeStorage:(changes,area='local')=>Promise.all(storageListeners.map(fn=>fn(changes,area))),
     async click(selector) { await get(selector).listeners.click?.(); },
     async input(selector, val) { const el = get(selector); el.value = val; await el.listeners.input?.(); },
     async change(selector, val) { const el = get(selector); if (val !== undefined) el.value = val; await el.listeners.change?.(); },
@@ -45,6 +48,17 @@ async function optionsHarness(initial = {}) {
     }
   };
 }
+
+test('already-open Library refreshes committed partial purchases coherently without overwriting settings drafts',async()=>{
+ const ui=await optionsHarness();assert.match(ui.get('#library-count').textContent,/0 unique items/);ui.get('#galactic-id').value='unsaved setting';ui.get('#summary-position').value='bottom-left';
+ const items=Array.from({length:24},(_,i)=>item('Synthetic '+i,'product-'+String(i).padStart(6,'0')));
+ Object.assign(ui.stored,{fanaticalLibraryItems:items,fanaticalProfileLabel:'Default account',fanaticalProfileArchives:[],fanaticalLastScanAttempt:{status:'partial',verifiedPurchasesSaved:3,unresolvedOrders:3,discoveryComplete:false},fanaticalImportSummary:null});
+ await ui.changeStorage({fanaticalLibraryItems:{newValue:items}},'sync');assert.match(ui.get('#library-count').textContent,/0 unique items/);
+ await ui.changeStorage({fanaticalLibraryItems:{newValue:items},fanaticalProfileLabel:{newValue:'Default account'}});
+ assert.match(ui.get('#library-count').textContent,/Default account.*24 unique items/);assert.match(ui.get('#history-note').textContent,/3 verified purchases saved; 3 purchases unresolved/);assert.match(ui.get('#history-note').textContent,/No complete order-history/);assert.equal(ui.get('#galactic-id').value,'unsaved setting');assert.equal(ui.get('#summary-position').value,'bottom-left');assert.equal(ui.writes.length,0);
+ await ui.accountChanged();assert.equal(ui.get('#galactic-id').value,'unsaved setting');assert.equal(ui.get('#summary-position').value,'bottom-left');
+ Object.assign(ui.stored,{fanaticalLibraryItems:[],fanaticalProfileLabel:'Separate account'});await ui.changeStorage({fanaticalLibraryItems:{newValue:[]},fanaticalProfileLabel:{newValue:'Separate account'}});assert.match(ui.get('#library-count').textContent,/Separate account.*0 unique items/);
+});
 
 test('options preview is bounded, naturally ordered, and displays bundle provenance safely', async () => {
   const ui = await optionsHarness({ fanaticalLibraryItems: [item('Comic #10'), item('Comic #2'), ...Array.from({ length: 50 }, (_, index) => item(`Z ${index}`))] });

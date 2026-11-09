@@ -729,24 +729,28 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     renderLibraryBrowser();
   });
 
-  async function refresh() {
+  let refreshChain=Promise.resolve();
+  function refresh(options) {const next=refreshChain.then(()=>refreshNow(options));refreshChain=next.catch(()=>{});return next;}
+  async function refreshNow({libraryOnly=false}={}) {
+    const state=await chrome.storage.local.get({fanaticalImportSummary:null,fanaticalLibraryItems:[],galacticLibraryExtensionId:'',fanaticalShowDiagnostics:false,fanaticalLastScanAttempt:null,fanaticalProfileLabel:'',fanaticalProfileArchives:[],fanaticalHistoricalItems:[]});
     const {
       fanaticalImportSummary: summary = null,
       fanaticalLibraryItems: items = [],
       galacticLibraryExtensionId: extensionId = '',
       fanaticalShowDiagnostics: diagnostics = false,
       fanaticalLastScanAttempt: attempt = null
-    } = await chrome.storage.local.get({ fanaticalImportSummary: null, fanaticalLibraryItems: [], galacticLibraryExtensionId: '', fanaticalShowDiagnostics: false, fanaticalLastScanAttempt: null });
+    } = state;
     $('#last-import').textContent = summary
       ? `Last ${summary.scanMode === 'full' ? 'full' : 'quick'} scan: ${summary.addedProducts} item${summary.addedProducts === 1 ? '' : 's'} added; ${summary.ordersScanned} order${summary.ordersScanned === 1 ? '' : 's'} scanned${summary.ordersSkipped ? ` and ${summary.ordersSkipped} already-scanned order${summary.ordersSkipped === 1 ? '' : 's'} skipped` : ''} on ${new Date(summary.importedAt).toLocaleString()}.`
       : 'No Fanatical import has run yet.';
-    const scope=await chrome.storage.local.get({fanaticalProfileLabel:'',fanaticalProfileArchives:[],fanaticalHistoricalItems:[]});
+    const scope=state;
     $('#library-count').textContent = `Active account nickname: ${scope.fanaticalProfileLabel||'Not yet named'}. ${scope.fanaticalProfileArchives.length} other saved accounts (selectable above; excluded from active matching). ${items.length} unique item${items.length === 1 ? '' : 's'} stored locally.`;
     const missing=scope.fanaticalHistoricalItems.filter(entry=>entry.profileLabel===scope.fanaticalProfileLabel).length;
     if(missing) $('#library-count').textContent += ' '+missing+' previously recorded products were not found in the latest scan; these warn as Check ownership and do not prove ownership.';
     $('#history-note').textContent = `${attempt?.status==='partial'&&attempt.acquisitionComplete===true?'Last import finished successfully. ':attempt?.status==='partial'?`Last scan was partial: ${attempt.verifiedPurchasesSaved} verified purchases saved; ${attempt.unresolvedOrders} purchases unresolved. ${attempt.discoveryComplete?'The listing was read, but some purchases remain unresolved.':'The end of the library was not verified.'} Earlier purchases and the last complete check were kept. `:attempt?.status === 'incomplete' ? 'Last scan incomplete: complete order-history coverage could not be confirmed. Previous purchases and the last successful scan were kept. ' : ''}${summary?.historyCoverage ?? 'No complete order-history check has been saved yet.'}`;
     if(diagnostics&&attempt?.status==='partial'&&attempt.acquisitionComplete===true) $('#history-note').textContent += ' Fanatical did not provide enough information to independently verify that the entire purchase history was returned. Existing purchases were preserved.';
     if (diagnostics && summary?.coverage) $('#history-note').textContent += ` ${summary.coverage.retries} retries; at most ${summary.coverage.concurrency} concurrent detail requests.`;
+    if(!libraryOnly){
     $('#galactic-id').value = extensionId;
     $('#builtin-galactic-id').textContent=FanaticalLibrary.builtinGalacticId(chrome.runtime);
     $('#galactic-status').textContent = extensionId ? 'Saved override retained. Connection not yet verified; check the connection.' : 'Automatic Galactic Library pairing ready. Connection not yet verified; check the connection.';
@@ -754,6 +758,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     $('#show-diagnostics').checked = Boolean(diagnostics);
     const display=await chrome.storage.local.get({fanaticalSummaryPreferences:{}}),prefs=FanaticalLibrary.normalizeSummaryPreferences(display.fanaticalSummaryPreferences);$('#summary-minimized').checked=prefs.minimized;$('#summary-position').value=prefs.position;
     const wishes=await chrome.storage.local.get({fanaticalWishlistItems:[]});wishlist=FanaticalLibrary.normalizeWishlist(wishes.fanaticalWishlistItems);renderWishlist();
+    }
     const { rejectedPurchaseItems = [], mediaTypeOverrides = {} } = await chrome.storage.local.get({ rejectedPurchaseItems: [], mediaTypeOverrides: {} });
     const overrideCount = Object.keys(mediaTypeOverrides).length;
     const comics = items.filter((item) => item.mediaType === 'comic' || FanaticalLibrary.isComicItem(item)).length;
@@ -999,7 +1004,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     finally { setLibraryBusy(false); }
   });
 
-  LibraryAccountProfiles.mount($('#account-profiles'),{request:mutate,keys:['fanaticalProfileLabel','fanaticalProfileArchives'],onActiveChange:()=>refresh().catch(()=>{})});
+  LibraryAccountProfiles.mount($('#account-profiles'),{request:mutate,keys:['fanaticalProfileLabel','fanaticalProfileArchives'],onActiveChange:()=>refresh({libraryOnly:true}).catch(()=>{})});
   globalThis.LibraryBrowser = {
     consolidateFanaticalItemInto,
     filterAndSortLibrary,
@@ -1008,5 +1013,13 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     setState: (next) => { Object.assign(libraryBrowserState, next); saveLibraryState(libraryBrowserState); renderLibraryBrowser(); },
     render: () => renderLibraryBrowser()
   };
+  let liveDirty=false,liveRefresh=null;
+  const libraryKeys=['fanaticalLibraryItems','fanaticalImportSummary','fanaticalLastScanAttempt','fanaticalProfileLabel','fanaticalProfileArchives','fanaticalHistoricalItems','rejectedPurchaseItems','mediaTypeOverrides'];
+  chrome.storage.onChanged?.addListener((changes,area)=>{
+    if(area!=='local'||!libraryKeys.some(key=>Object.hasOwn(changes,key)))return;
+    liveDirty=true;
+    if(!liveRefresh)liveRefresh=(async()=>{do{liveDirty=false;await refresh({libraryOnly:true});}while(liveDirty);})().catch(()=>{$('#local-status').textContent='Could not refresh the library. Reload this page to read the latest saved purchases.';}).finally(()=>{liveRefresh=null;});
+    return liveRefresh;
+  });
   try { await refresh(); } catch { $('#local-status').textContent = 'Could not load local library settings. Reload this page and try again.'; }
 }());
