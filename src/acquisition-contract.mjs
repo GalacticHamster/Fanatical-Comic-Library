@@ -14,6 +14,11 @@ export function acquisitionContract({provider,finished,verified=[],unresolved=[]
 
 // Self-contained boundary validator, also embedded beside GL's serialized
 // adapter. Legacy writer validation still checks products and save-time leases.
+export function fanaticalCompatibilityReport(value){
+  const fields=['unsupportedStatus','invalidStatus','missingItems','invalidItems','missingBundles','invalidBundles','missingGames','invalidGames','missingNames','summaryConflict','detailRequest','detailStructure','detailIdentity','detailStatus','detailProductMismatch','detailProductIdentity','detailProjection','scheduled','knownSkipped','multipleCopies'];
+  if(!value||value.version!==1||Object.keys(value).some(k=>!['version','counts'].includes(k))||!value.counts||typeof value.counts!=='object'||Array.isArray(value.counts)||Object.keys(value.counts).length!==fields.length||fields.some(k=>!Number.isSafeInteger(value.counts[k])||value.counts[k]<0||value.counts[k]>100000))return null;
+  return {version:1,counts:Object.fromEntries(fields.map(k=>[k,value.counts[k]]))};
+}
 export function assertFanaticalAcquisitionContract(raw,options={}){
   const invalid=()=>{throw Error('Invalid or contradictory Fanatical acquisition contract. Earlier purchases were kept.');};
   const keys=(value,allowed)=>value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).every(key=>allowed.includes(key));
@@ -21,6 +26,8 @@ export function assertFanaticalAcquisitionContract(raw,options={}){
   const same=(a,b)=>{if(!ids(a)||!ids(b)||a.length!==b.length)return false;const set=new Set(b);return a.every(id=>set.has(id));};
   if(!keys(raw,['acquisitionContract','partialScanVersion','outcome','verifiedOrderFingerprints','unresolvedOrderFingerprints','ineligibleOrderFingerprints','observedOrderFingerprints','failures','unidentifiedRecords','schemaVersion','coverage','ordersScanned','ordersAvailable','orderFingerprints','items'])||raw.schemaVersion!==1||raw.partialScanVersion!==1)invalid();
   const c=raw.acquisitionContract,coverage=raw.coverage;
+  const compatibility=coverage?.compatibility===undefined?null:fanaticalCompatibilityReport(coverage.compatibility);
+  if(coverage?.compatibility!==undefined&&!compatibility)invalid();
   if(!keys(c,['version','provider','acquisition','verified','unresolved','ineligible','coverage','scope','retry','persistence','reconciliation'])||c.version!==1||c.provider!=='fanatical'
     ||!keys(c.acquisition,['outcome'])||!keys(c.coverage,['status','evidence'])||!keys(c.scope,['authority'])||!keys(c.persistence,['outcome'])||!keys(c.reconciliation,['authority'])
     ||c.persistence.outcome!=='not-attempted'||c.reconciliation.authority!=='none'
@@ -39,5 +46,5 @@ export function assertFanaticalAcquisitionContract(raw,options={}){
   if(c.scope.authority!==authority||coverage.accountAffinity!==authority||saved.size&&observed.length&&!overlap)invalid();
   const known=new Set(options.fullScan?[]:normalizedKnown),verified=new Set(c.verified),processed=new Set(raw.orderFingerprints);
   if(raw.ordersScanned!==c.verified.length||raw.orderFingerprints.some(id=>!verified.has(id)&&!known.has(id))||c.verified.some(id=>!processed.has(id)))invalid();
-  return {finished,coverage:status,scope:authority};
+  return {finished,coverage:status,scope:authority,...(compatibility?{compatibility}:{})};
 }

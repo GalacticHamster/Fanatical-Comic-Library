@@ -3,7 +3,10 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   // Chrome does not propagate MAIN-world exceptions to InjectionResult. Keep
   // errors in an explicit, aggregate-only envelope when called by the worker.
   const listingEvidence={arrayPages:0,objectPages:0,otherPages:0,headersReadablePages:0,linkHeaderPages:0,totalCountHeaderPages:0,contentRangeHeaderPages:0,nextReferencePages:0};
-  const diagnostic = {listingEvidence,stage:'authentication',pagesAttempted:0,pagesParsed:0,ordersRecognized:0,detailsParsed:0,retries:0,terminalReached:false,authentication:'unknown',httpStatus:null};
+  // Fixed counters only: never export provider statuses, keys, field names or values.
+  const compatibility={version:1,counts:Object.fromEntries(['unsupportedStatus','invalidStatus','missingItems','invalidItems','missingBundles','invalidBundles','missingGames','invalidGames','missingNames','summaryConflict','detailRequest','detailStructure','detailIdentity','detailStatus','detailProductMismatch','detailProductIdentity','detailProjection','scheduled','knownSkipped','multipleCopies'].map(key=>[key,0]))};
+  const issue=key=>{compatibility.counts[key]++;};
+  const diagnostic = {listingEvidence,compatibility,stage:'authentication',pagesAttempted:0,pagesParsed:0,ordersRecognized:0,detailsParsed:0,retries:0,terminalReached:false,authentication:'unknown',httpStatus:null};
   const unresolved=new Set(),ineligible=new Set(),verified=new Set(),failureCounts=new Map();
   let discoveryComplete=true,unidentifiedRecords=0;
   const activity={sequence:0,phase:'activity',stage:'listing',pages:0,discovered:0,scheduled:0,completed:0,failed:0,active:0,retries:0,validatedItems:0},began=Date.now();
@@ -401,6 +404,16 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   };
   const summaries = []; const visitedPages = new Set(); const pageOrderIds = new Set();
   const summaryById=new Map(),conflictingIds=new Set();
+  // JSON object member order is not purchase evidence. All members and array
+  // order still participate; changed statuses, gift metadata or quantities conflict.
+  const sameSummary=(a,b,budget={left:10000},depth=0)=>{
+    if(--budget.left<0||depth>32)return false;
+    if(a===b)return true;
+    if(!a||!b||typeof a!=='object'||typeof b!=='object'||Array.isArray(a)!==Array.isArray(b))return false;
+    if(Array.isArray(a)&&a.length!==b.length)return false;
+    const ak=Object.keys(a),bk=Object.keys(b);
+    return ak.length===bk.length&&ak.every(key=>Object.hasOwn(b,key)&&sameSummary(a[key],b[key],budget,depth+1));
+  };
   let path = '/api/user/orders'; let expectedTotal = null; let ranged = false; let linked = false; let declaredLast = null;
   const acceptTotal = (value) => {
     if (!Number.isSafeInteger(value) || value < 0 || value > maxOrders || (expectedTotal !== null && value !== expectedTotal)) throw incomplete('Pagination totals changed or were unreadable.','pagination-total');
@@ -415,7 +428,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
       const previous=summaryById.get(order._id);
       if(previous){
         if(!allowPartial)throw incomplete('Pagination returned a repeated order.','pagination-order');
-        discoveryComplete=false;note(failure('pagination-order','Repeated purchase identity.'),'listing');if(JSON.stringify(previous)!==JSON.stringify(order))conflictingIds.add(order._id);continue;
+        discoveryComplete=false;note(failure('pagination-order','Repeated purchase identity.'),'listing');if(JSON.stringify(previous)!==JSON.stringify(order)&&!sameSummary(previous,order))conflictingIds.add(order._id);continue;
       }
       ids.add(order._id);summaryById.set(order._id,order);accepted.push(order);
     }
@@ -487,14 +500,16 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   const listed = new Set();
   const expectedProducts = new Map();
   const productCounts = (parents) => {
-    if (!Array.isArray(parents) || !parents.length) throw unreadable();
+    const bad=key=>{issue(diagnostic.stage==='summaries'?key:'detailStructure');throw unreadable();};
+    if (!Array.isArray(parents) || !parents.length) bad(parents==null?'missingItems':'invalidItems');
     const counts = new Map();
     for (const parent of parents) {
-      if (!safeTextInPage(parent?.name) || !Array.isArray(parent?.bundles) || !parent.bundles.length) throw unreadable();
+      if (!safeTextInPage(parent?.name)) bad('missingNames');
+      if (!Array.isArray(parent?.bundles) || !parent.bundles.length) bad(parent?.bundles==null?'missingBundles':'invalidBundles');
       for (const group of parent.bundles) {
-        if (!Array.isArray(group?.games) || !group.games.length) throw unreadable();
+        if (!Array.isArray(group?.games) || !group.games.length) bad(group?.games==null?'missingGames':'invalidGames');
         for (const leaf of group.games) {
-          if (!safeTextInPage(leaf?.name)) throw unreadable();
+          if (!safeTextInPage(leaf?.name)) bad('missingNames');
           const key = JSON.stringify([safeTextInPage(parent.name), safeTextInPage(leaf.name)]);
           counts.set(key, (counts.get(key) || 0) + 1);
         }
@@ -506,11 +521,11 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     if (!order || typeof order._id !== 'string' || !safeIdInPage(order._id) || listed.has(order._id)) throw unreadable();
     listed.add(order._id);
     try{
-      if(conflictingIds.has(order._id))throw unreadable();
-      if(typeof order.status!=='string'||!/^[A-Z][A-Z_]*$/u.test(order.status))throw unreadable();
-      if(order.status==='COMPLETE')expectedProducts.set(order._id,productCounts(order.items));
+      if(conflictingIds.has(order._id)){issue('summaryConflict');throw unreadable();}
+      if(typeof order.status!=='string'||!/^[A-Z][A-Z_]*$/u.test(order.status)){issue('invalidStatus');throw unreadable();}
+      if(order.status==='COMPLETE'){const counts=productCounts(order.items);expectedProducts.set(order._id,counts);if([...counts.values()].some(n=>n>1))issue('multipleCopies');}
       else if(allowPartial){
-        if(!['REFUNDED','CANCELLED','CANCELED','PENDING','FAILED'].includes(order.status))throw unreadable();
+        if(!['REFUNDED','CANCELLED','CANCELED','PENDING','FAILED'].includes(order.status)){issue('unsupportedStatus');throw unreadable();}
         ineligible.add(await fingerprintOrderInPage(order._id));
       }
     }catch(error){if(!allowPartial||fatal(error))throw error;unresolved.add(await fingerprintOrderInPage(order._id));note(error,'summaries');}
@@ -546,6 +561,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     if(!allowPartial)throw error;discoveryComplete=false;note(error,'listing');
   }
   const toInspect = fullScan ? completeWithFingerprints : completeWithFingerprints.filter(({ fingerprint }) => !known.has(fingerprint));
+  compatibility.counts.scheduled=toInspect.length;compatibility.counts.knownSkipped=complete.length-toInspect.length;
   const scope = {fullScan,scanHistoryMissing,total:toInspect.length,skipped:complete.length-toInspect.length};
   reportProgress({phase:'plan',...scope});
   let completedDetails = 0;
@@ -553,23 +569,27 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   activity.pages=diagnostic.pagesParsed;activity.discovered=summaries.length;activity.scheduled=toInspect.length;activityProgress('details',true);
   const details = await boundedMap(toInspect, async ({ order: listedOrder, fingerprint }) => {
     activity.active++;activityProgress('details',activity.completed===0&&activity.active===Math.min(3,activity.scheduled));
+    let detailRead=false;
     try {
     const { data: order } = await request(`/api/user/orders/${encodeURIComponent(listedOrder._id)}`);
-    if(allowPartial&&typeof order?._id==='string'&&order._id!==listedOrder._id)throw failure('order-identity-conflict','A purchase response belonged to a different order.');
+    detailRead=true;
+    if(allowPartial&&typeof order?._id==='string'&&order._id!==listedOrder._id){issue('detailIdentity');throw failure('order-identity-conflict','A purchase response belonged to a different order.');}
     const projectedItems = [];
-    if (!order || order._id !== listedOrder._id || order.status !== 'COMPLETE' || !Array.isArray(order.items) || !order.items.length) throw unreadable();
+    if (!order || order._id !== listedOrder._id){issue('detailIdentity');throw unreadable();}
+    if(order.status!=='COMPLETE'){issue('detailStatus');throw unreadable();}
+    if(!Array.isArray(order.items)||!order.items.length){issue('detailStructure');throw unreadable();}
     const expected = expectedProducts.get(order._id);
     const actual = productCounts(order.items);
-    if (actual.size !== expected.size || [...expected].some(([key, quantity]) => actual.get(key) !== quantity)) throw unreadable();
+    if (actual.size !== expected.size || [...expected].some(([key, quantity]) => actual.get(key) !== quantity)){issue('detailProductMismatch');throw unreadable();}
     let occurrence=0;
     for (const parent of order.items) {
       if (!parent || typeof parent._id !== 'string' || !safeIdInPage(parent._id) || !safeTextInPage(parent.name) || !Array.isArray(parent.bundles) || !parent.bundles.length) throw unreadable();
       for (const group of parent.bundles) {
         if (!group || !Array.isArray(group.games) || !group.games.length) throw unreadable();
         for (const leaf of group.games) {
-          if (typeof leaf?._id !== 'string') throw unreadable();
+          if (typeof leaf?._id !== 'string'){issue('detailProductIdentity');throw unreadable();}
           const projected = projectLeafInPage(leaf, parent, order, fingerprint);
-          if (!projected) throw unreadable();
+          if (!projected){issue('detailProjection');throw unreadable();}
           projected.occurrences=[{occurrenceRef:await fingerprintOrderInPage(`${order._id}\u0000${occurrence++}\u0000${parent._id}\u0000${leaf._id}`),orderRef:fingerprint,bundleId:parent._id,bundleTitle:safeTextInPage(parent.name),purchasedAt:safeDateInPage(order.date)}];
           projectedItems.push(projected);
         }
@@ -579,7 +599,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     diagnostic.detailsParsed=completedDetails;verified.add(fingerprint);
     activity.validatedItems+=projectedItems.length;
     return projectedItems;
-    }catch(error){activity.failed++;if(!allowPartial||fatal(error))throw error;unresolved.add(fingerprint);note(error,'details');return [];}
+    }catch(error){if(!detailRead)issue('detailRequest');activity.failed++;if(!allowPartial||fatal(error))throw error;unresolved.add(fingerprint);note(error,'details');return [];}
     finally{activity.active--;activity.completed++;activityProgress('details',activity.completed===activity.scheduled);}
   });
   activityProgress('validating',true);
@@ -594,7 +614,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     acquisitionContract:{version:1,provider:'fanatical',acquisition:{outcome:finished?'finished':'interrupted'},verified:[...verified].sort(),unresolved:[...unresolved].sort(),ineligible:[...ineligible].sort(),coverage:{status:outcome==='complete'?'verified':finished?'unverified':'incomplete',evidence:[diagnostic.paginationEvidence]},scope:{authority:accountOverlap?'saved-order-match':'declared-scope'},retry:[...unresolved].sort(),persistence:{outcome:'not-attempted'},reconciliation:{authority:'none'}},
     ...(allowPartial?{partialScanVersion:1,outcome,verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...listedFingerprints],failures:[...failureCounts.values()],unidentifiedRecords}:{}),
     schemaVersion: 1,
-    coverage: { complete: allowPartial?outcome==='complete':true,...(allowPartial?{listingEvidence,discoveryComplete,pagesParsed:diagnostic.pagesParsed,accountAffinity:accountOverlap?'saved-order-match':'declared-scope'}:{}), listedOrders: summaries.length, validatedOrders: allowPartial?verified.size:details.length, emptyAccount: summaries.length === 0,
+    coverage: { complete: allowPartial?outcome==='complete':true,...(allowPartial?{listingEvidence,compatibility,discoveryComplete,pagesParsed:diagnostic.pagesParsed,accountAffinity:accountOverlap?'saved-order-match':'declared-scope'}:{}), listedOrders: summaries.length, validatedOrders: allowPartial?verified.size:details.length, emptyAccount: summaries.length === 0,
       pagesFetched: visitedPages.size, expectedTotal, paginationEvidence: ranged ? 'range' : expectedTotal !== null ? 'count' : linked ? 'link' : 'array-only', retries, concurrency },
     ordersScanned: allowPartial?verified.size:toInspect.length,
     ordersAvailable: complete.length,

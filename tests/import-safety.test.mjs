@@ -18,6 +18,25 @@ const detail = { _id: orderId, status: 'COMPLETE', items: [{ _id: 'bundle-123456
 const summary = { _id: orderId, status: 'COMPLETE', items: [{ name: 'Bundle', bundles: [{ games: [{ name: 'New purchase' }] }] }] };
 const previous = { fanaticalLibraryItems: [{ source: 'fanatical', sourceItemId: 'product-654321', title: 'Previously imported', mediaType: 'game', bundle: { sourceItemId: 'bundle-654321', title: 'Previous bundle' } }], fanaticalImportSummary: { importedAt: 'previous', scanMode: 'full' }, fanaticalScannedOrderFingerprints: [] };
 
+test('mixed summary failures take precedence over unverified coverage without changing purchase or retry authority',async()=>{
+  const unknown={...structuredClone(summary),_id:'unknown-order',status:'PRIVATE_UNKNOWN_STATUS'},missing={...structuredClone(summary),_id:'missing-order',items:null};
+  const run=harness({list:[summary,unknown,missing]}),reply=await run.send(true),d=reply.summary.scanDiagnostic;
+  assert(reply.ok,reply.error);assert.equal(d.code,'summaries-unreadable');assert.equal(d.stage,'summaries');assert.equal(d.compatibility.counts.unsupportedStatus,1);assert.equal(d.compatibility.counts.missingItems,1);assert.equal(d.compatibility.counts.scheduled,1);
+  assert.deepEqual(structuredClone(d.failures.map(f=>f.code)),['discovery-unverified','summaries-unreadable']);assert.equal(d.verifiedPurchasesSaved,1);assert.equal(d.unresolvedOrders,2);assert(!d.completeCheckpointAdvanced);assert(!/PRIVATE|unknown-order|missing-order/.test(JSON.stringify(d)));
+  assert.deepEqual(run.stored.fanaticalImportSummary,run.before.fanaticalImportSummary);assert.deepEqual(run.stored.fanaticalScannedOrderFingerprints,[fingerprint(orderId)]);
+  assert(!JSON.stringify(run.stored.fanaticalLibraryItems).includes('compatibility'),'diagnostics do not become purchase data');
+  await new Promise(r=>setImmediate(r));const quick=await run.send(false);assert.equal(quick.summary.scanDiagnostic.compatibility.counts.knownSkipped,1);assert.equal(quick.summary.scanDiagnostic.compatibility.counts.scheduled,0);assert.equal(quick.summary.unresolvedOrders,2);
+});
+
+test('FAN failure-report boundary drops injected compatibility fields and retains safe counts only',async()=>{
+ const good=harness(),saved=await good.send(true),clean=saved.summary.scanDiagnostic.compatibility;
+ assert(clean);for(const mutate of [c=>c.raw='PRIVATE_ORDER',c=>c.counts.raw='PRIVATE_STATUS',c=>c.counts.scheduled=-1]){
+  const compatibility=structuredClone(clean);mutate(compatibility);
+  const run=harness({scriptResult:()=>[{result:{fanaticalImportFailure:1,code:'page-exception',diagnostic:{stage:'details',compatibility}}}]}),reply=await run.send(true);
+  assert(!reply.ok);assert(!reply.scanDiagnostic.compatibility);assert(!/PRIVATE/.test(JSON.stringify(reply)));assert.deepEqual(run.stored.fanaticalLibraryItems,run.before.fanaticalLibraryItems);
+ }
+});
+
 test('headerless one-order 47-product acquisition finishes without inventing complete coverage and Quick remains incremental',async()=>{
   const games=Array.from({length:47},(_,i)=>({_id:'synthetic-product-'+i,name:'Synthetic book '+i,type:'book'}));
   const oneDetail={...detail,items:[{...detail.items[0],bundles:[{games}]}]},oneSummary={...summary,items:[{name:'Bundle',bundles:[{games:games.map(({name})=>({name}))}]}]};
@@ -332,12 +351,12 @@ test('complete candidate gate exercises real acquisition and guarded worker; mis
     assert.deepEqual(invalid.stored.fanaticalScannedOrderFingerprints,invalid.before.fanaticalScannedOrderFingerprints);
   }
   await gate(workerRuntime);
-  const baseline=await prepareWorker({url,source:source.replace(/^import \{assertFanaticalAcquisitionContract\}[^\n]*\n/mu,'')});
+  const baseline=await prepareWorker({url,source:source.replace(/^import \{assertFanaticalAcquisitionContract[^\n]*\n/mu,'')});
   await assert.rejects(gate(baseline),/guarded worker must import/);
-  const missing=source.replace(/^import \{assertFanaticalAcquisitionContract\}[^\n]*\n/mu,'');
+  const missing=source.replace(/^import \{assertFanaticalAcquisitionContract[^\n]*\n/mu,'');
   await assert.rejects(gate(await prepareWorker({url,source:missing})),/guarded worker must import/);
   await assert.rejects(prepareWorker({url,load:async target=>{if(target.endsWith('/acquisition-contract.mjs'))throw Error('deliberately missing');return import(target);}}),/Worker dependency could not load/);
-  const noop=await prepareWorker({url,load:async target=>target.endsWith('/acquisition-contract.mjs')?{assertFanaticalAcquisitionContract:()=>({finished:true})}:import(target)});
+  const noop=await prepareWorker({url,load:async target=>target.endsWith('/acquisition-contract.mjs')?{...await import(target),assertFanaticalAcquisitionContract:()=>({finished:true})}:import(target)});
   await assert.rejects(gate(noop),/Missing expected rejection/);
   const bypass=source.replace('const authority=assertFanaticalAcquisitionContract(result[0]?.result,{fullScan,knownOrderFingerprints,accountOrderFingerprints});','const authority={finished:true};');
   assert.notEqual(bypass,source,'negative control must actually remove validation');

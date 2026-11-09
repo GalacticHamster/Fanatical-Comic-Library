@@ -2,9 +2,11 @@
 
 ## 1.0.3 — Release candidate
 
+- Accept identical purchase summaries with reordered JSON fields, without relaxing status, product or account checks. Scan reports separate unreadable statuses, product structures and detail failures using aggregate counts only; actionable order failures take precedence over technical coverage limitations. Unrecognized purchases remain retryable and earlier purchases are kept.
+
 - Show bounded progress and waiting feedback during long-running purchase imports, helping distinguish active work from delayed order responses.
 
-This is a small maintenance update since published 1.0.2. The remaining changes improve regression coverage; they do not add matching, ownership, import or purchase-synchronization features. Prepared locally for review; not submitted or published. Permissions and protocols are unchanged.
+This is a maintenance update since published 1.0.2. Additional local corrections improve import compatibility and diagnostics without changing ownership or purchase-synchronization rules. Prepared locally for review; not submitted or published. Permissions and protocols are unchanged.
 
 ## 1.0.2
 
