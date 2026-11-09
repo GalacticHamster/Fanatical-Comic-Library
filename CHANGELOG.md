@@ -2,6 +2,8 @@
 
 ## 1.0.3 — Release candidate
 
+- Check identity-bearing sparse completed summaries through authenticated order details instead of rejecting empty summary bundle arrays before requesting detail. Products still require matching identity/status/parent evidence and normal validation; unresolved details remain retryable with privacy-safe recovery counters.
+
 - Add bounded, value-free structural diagnostics for rejected purchase bundle containers, distinguishing empty arrays from non-array representations without admitting unverified pick-and-mix products or changing import behavior.
 
 - Accept identical purchase summaries with reordered JSON fields, without relaxing status, product or account checks. Scan reports separate unreadable statuses, product structures and detail failures using aggregate counts only; actionable order failures take precedence over technical coverage limitations. Unrecognized purchases remain retryable and earlier purchases are kept.

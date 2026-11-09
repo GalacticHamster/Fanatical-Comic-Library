@@ -16,8 +16,13 @@ export function acquisitionContract({provider,finished,verified=[],unresolved=[]
 // adapter. Legacy writer validation still checks products and save-time leases.
 export function fanaticalCompatibilityReport(value){
   const fields=['unsupportedStatus','invalidStatus','missingItems','invalidItems','missingBundles','invalidBundles','missingGames','invalidGames','missingNames','summaryConflict','detailRequest','detailStructure','detailIdentity','detailStatus','detailProductMismatch','detailProductIdentity','detailProjection','scheduled','knownSkipped','multipleCopies'];
-  if(!value||value.version!==1||Object.keys(value).some(k=>!['version','counts','bundleShapes'].includes(k))||!value.counts||typeof value.counts!=='object'||Array.isArray(value.counts)||Object.keys(value.counts).length!==fields.length||fields.some(k=>!Number.isSafeInteger(value.counts[k])||value.counts[k]<0||value.counts[k]>100000))return null;
+  if(!value||value.version!==1||Object.keys(value).some(k=>!['version','counts','bundleShapes','summaryRecovery'].includes(k))||!value.counts||typeof value.counts!=='object'||Array.isArray(value.counts)||Object.keys(value.counts).length!==fields.length||fields.some(k=>!Number.isSafeInteger(value.counts[k])||value.counts[k]<0||value.counts[k]>100000))return null;
   const result={version:1,counts:Object.fromEntries(fields.map(k=>[k,value.counts[k]]))};
+  if(value.summaryRecovery!==undefined){
+    const r=value.summaryRecovery,counts=['eligible','scheduled','recovered','unresolved','emptyDetailItems'],types=['missing','null','array','object','string','number','boolean','other'],bounded=n=>Number.isSafeInteger(n)&&n>=0&&n<=100000;
+    if(!r||r.version!==1||Object.keys(r).length!==7||Object.keys(r).some(k=>!['version','detailItemTypes',...counts].includes(k))||counts.some(k=>!bounded(r[k]))||!r.detailItemTypes||Object.keys(r.detailItemTypes).length!==types.length||types.some(k=>!bounded(r.detailItemTypes[k]))||r.scheduled>r.eligible||r.recovered+r.unresolved>r.scheduled||r.emptyDetailItems>r.detailItemTypes.array||types.reduce((n,k)=>n+r.detailItemTypes[k],0)>r.scheduled)return null;
+    result.summaryRecovery={version:1,...Object.fromEntries(counts.map(k=>[k,r[k]])),detailItemTypes:Object.fromEntries(types.map(k=>[k,r.detailItemTypes[k]]))};
+  }
   if(value.bundleShapes!==undefined){
     const shapes=value.bundleShapes,types=['missing','null','array','object','string','number','boolean','other'];
     const typed=['parentType','bundlesType','parentId','parentName','parentGames','parentProducts','parentItems','parentTiers','bundleGames','bundleProducts','bundleItems','bundleTiers','childType','childId','childName','childGames','childProducts','childItems','childTiers'];
