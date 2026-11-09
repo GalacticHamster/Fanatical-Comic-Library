@@ -2,6 +2,8 @@
 
 ## 1.0.3 — Release candidate
 
+- Add bounded, value-free structural diagnostics for rejected purchase bundle containers, distinguishing empty arrays from non-array representations without admitting unverified pick-and-mix products or changing import behavior.
+
 - Accept identical purchase summaries with reordered JSON fields, without relaxing status, product or account checks. Scan reports separate unreadable statuses, product structures and detail failures using aggregate counts only; actionable order failures take precedence over technical coverage limitations. Unrecognized purchases remain retryable and earlier purchases are kept.
 
 - Show bounded progress and waiting feedback during long-running purchase imports, helping distinguish active work from delayed order responses.

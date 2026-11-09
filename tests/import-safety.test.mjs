@@ -18,6 +18,20 @@ const detail = { _id: orderId, status: 'COMPLETE', items: [{ _id: 'bundle-123456
 const summary = { _id: orderId, status: 'COMPLETE', items: [{ name: 'Bundle', bundles: [{ games: [{ name: 'New purchase' }] }] }] };
 const previous = { fanaticalLibraryItems: [{ source: 'fanatical', sourceItemId: 'product-654321', title: 'Previously imported', mediaType: 'game', bundle: { sourceItemId: 'bundle-654321', title: 'Previous bundle' } }], fanaticalImportSummary: { importedAt: 'previous', scanMode: 'full' }, fanaticalScannedOrderFingerprints: [] };
 
+test('two orders with 47 verified products and an invalid bundle export bounded structure without granting catalog ownership',async()=>{
+  const games=Array.from({length:47},(_,i)=>({_id:'synthetic-product-'+i,name:'Synthetic '+i,type:'book'}));
+  const good={...detail,items:[{...detail.items[0],bundles:[{games}]}]},bad={_id:'synthetic-unresolved-order',status:'COMPLETE',items:[{_id:'PRIVATE_ID',name:'Synthetic selection',bundles:[],products:[{_id:'PRIVATE_ID',name:'PRIVATE_TITLE',token:'PRIVATE_TOKEN'}],tiers:[{quantity:2}]}]};
+  const list=[good,bad],details={[orderId]:good,[bad._id]:bad},run=harness({list,details,initial:{fanaticalLibraryItems:[],fanaticalImportSummary:null}});
+  const reply=await run.send(true);assert(reply.ok,reply.error);const d=reply.summary.scanDiagnostic;
+  assert.equal(d.purchaseRecordsRecognized,2);assert.equal(d.detailsParsed,1);assert.equal(d.verifiedProductRecordsSaved,47);assert.equal(d.unresolvedOrders,1);assert.equal(d.compatibility.counts.invalidBundles,1);
+  const shape=d.compatibility.bundleShapes.records[0];assert.equal(shape.reason,'empty-array');assert.equal(shape.bundlesType,'array');assert.equal(shape.parentProducts,'array');assert.equal(shape.parentTiers,'array');assert(!/PRIVATE/.test(JSON.stringify(d)));assert.equal(run.stored.fanaticalLibraryItems.length,47);assert(!JSON.stringify(run.stored).includes('bundleShapes'));assert(!d.completeCheckpointAdvanced);
+  await new Promise(r=>setImmediate(r));const quick=await run.send(false);assert.equal(quick.summary.scanDiagnostic.compatibility.counts.scheduled,0);assert.equal(quick.summary.scanDiagnostic.compatibility.counts.knownSkipped,1);assert.equal(quick.summary.scanDiagnostic.compatibility.bundleShapes.records[0].reason,'empty-array');assert.equal(run.stored.fanaticalLibraryItems.length,47);
+  // A later *known, valid* purchase representation can be retried; the unknown
+  // public selection pool above must never be imported as purchased products.
+  bad.items=[{...detail.items[0],bundles:[{games:[{_id:'synthetic-recovered-product',name:'Recovered selection',type:'game'}]}]}];
+  await new Promise(r=>setImmediate(r));const repaired=await run.send(false);assert(repaired.ok,repaired.error);assert.equal(repaired.summary.ordersScanned,1);assert.equal(run.stored.fanaticalLibraryItems.length,48);assert(!repaired.summary.scanDiagnostic.compatibility.bundleShapes);assert.equal(repaired.summary.scanDiagnostic.discoveryComplete,false);
+});
+
 test('mixed summary failures take precedence over unverified coverage without changing purchase or retry authority',async()=>{
   const unknown={...structuredClone(summary),_id:'unknown-order',status:'PRIVATE_UNKNOWN_STATUS'},missing={...structuredClone(summary),_id:'missing-order',items:null};
   const run=harness({list:[summary,unknown,missing]}),reply=await run.send(true),d=reply.summary.scanDiagnostic;

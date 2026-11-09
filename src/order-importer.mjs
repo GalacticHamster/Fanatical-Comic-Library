@@ -6,6 +6,20 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   // Fixed counters only: never export provider statuses, keys, field names or values.
   const compatibility={version:1,counts:Object.fromEntries(['unsupportedStatus','invalidStatus','missingItems','invalidItems','missingBundles','invalidBundles','missingGames','invalidGames','missingNames','summaryConflict','detailRequest','detailStructure','detailIdentity','detailStatus','detailProductMismatch','detailProductIdentity','detailProjection','scheduled','knownSkipped','multipleCopies'].map(key=>[key,0]))};
   const issue=key=>{compatibility.counts[key]++;};
+  // Bounded shapes at the failing boundary, never provider keys or values.
+  const bundleShape=(parent)=>{
+    const shapes=compatibility.bundleShapes??={version:1,records:[],truncated:false};
+    if(shapes.records.length>=8){shapes.truncated=true;return;}
+    const type=v=>v===undefined?'missing':v===null?'null':Array.isArray(v)?'array':['object','string','number','boolean'].includes(typeof v)?typeof v:'other';
+    const bundles=parent?.bundles;let child,size=null;
+    if(Array.isArray(bundles)){size=bundles.length;child=bundles[0];}
+    else if(bundles&&typeof bundles==='object'){size=0;for(const key in bundles)if(Object.hasOwn(bundles,key)){if(size===0)child=bundles[key];if(++size===2)break;}}
+    shapes.records.push({stage:diagnostic.stage==='summaries'?'summaries':'details',reason:bundles==null?'missing':Array.isArray(bundles)?'empty-array':'non-array',
+      parentType:type(parent),bundlesType:type(bundles),bundlesSize:size===null?'not-container':size===0?'empty':size===1?'one':'many',
+      parentId:type(parent?._id),parentName:type(parent?.name),parentGames:type(parent?.games),parentProducts:type(parent?.products),parentItems:type(parent?.items),parentTiers:type(parent?.tiers),
+      bundleGames:type(bundles?.games),bundleProducts:type(bundles?.products),bundleItems:type(bundles?.items),bundleTiers:type(bundles?.tiers),
+      childType:type(child),childId:type(child?._id),childName:type(child?.name),childGames:type(child?.games),childProducts:type(child?.products),childItems:type(child?.items),childTiers:type(child?.tiers)});
+  };
   const diagnostic = {listingEvidence,compatibility,stage:'authentication',pagesAttempted:0,pagesParsed:0,ordersRecognized:0,detailsParsed:0,retries:0,terminalReached:false,authentication:'unknown',httpStatus:null};
   const unresolved=new Set(),ineligible=new Set(),verified=new Set(),failureCounts=new Map();
   let discoveryComplete=true,unidentifiedRecords=0;
@@ -505,7 +519,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     const counts = new Map();
     for (const parent of parents) {
       if (!safeTextInPage(parent?.name)) bad('missingNames');
-      if (!Array.isArray(parent?.bundles) || !parent.bundles.length) bad(parent?.bundles==null?'missingBundles':'invalidBundles');
+      if (!Array.isArray(parent?.bundles) || !parent.bundles.length){bundleShape(parent);bad(parent?.bundles==null?'missingBundles':'invalidBundles');}
       for (const group of parent.bundles) {
         if (!Array.isArray(group?.games) || !group.games.length) bad(group?.games==null?'missingGames':'invalidGames');
         for (const leaf of group.games) {
