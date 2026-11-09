@@ -1,4 +1,4 @@
-import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitleCatalog } from './library-data.mjs';
+import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitleCatalog } from './library-data.mjs';
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Galactic Hamster
 
@@ -19,6 +19,25 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     }));
   }
 
+  let localReminderRows=[],localReminderItems=[],localReminderAccount=null,localReminderPage=0,localReminderTimer;
+  function renderLocalReminders(){
+    clearTimeout(localReminderTimer);localReminderRows=localKeyReminders(localReminderItems);
+    const deadlines=localReminderRows.filter(r=>r.review?.action==='snoozed'&&Date.parse(r.review.until)>Date.now()).map(r=>Date.parse(r.review.until)-Date.now());
+    if(deadlines.length){localReminderTimer=setTimeout(renderLocalReminders,Math.min(60000,Math.max(1,Math.min(...deadlines)+5)));localReminderTimer?.unref?.();}
+    const active=localReminderRows.filter(r=>r.status==='unrevealed'&&!r.hidden).length;$('#local-key-status').textContent=`${active.toLocaleString()} active purchase ${active===1?'reminder':'reminders'} for this account. Reminders work without Galactic Library. Rescan all purchases refreshes older observations; no keys are revealed.`;
+    const filter=$('#local-reminder-filter').value||'pending',all=localReminderRows.filter(r=>filter==='hidden'?r.hidden:!r.hidden&&(filter==='unknown'?r.status==='unknown':r.status==='unrevealed'));
+    localReminderPage=Math.min(localReminderPage,Math.max(0,Math.ceil(all.length/50)-1));
+    $('#local-reminder-count').textContent=`${all.length.toLocaleString()} ${filter==='unknown'?'purchase record':'reminder'}${all.length===1?'':'s'} ${filter==='hidden'?'dismissed or snoozed':filter==='unknown'?'with unknown key status':'for unrevealed keys'}; page ${localReminderPage+1} of ${Math.max(1,Math.ceil(all.length/50))}.`;
+    $('#local-reminder-previous').disabled=localReminderPage===0;$('#local-reminder-next').disabled=(localReminderPage+1)*50>=all.length;
+    $('#local-reminder-list').replaceChildren(...all.slice(localReminderPage*50,localReminderPage*50+50).map(row=>{
+      const accountId=localReminderAccount,li=document.createElement('li'),label=document.createElement('p');li.dataset&&(li.dataset.reminderRef=row.ref);
+      label.textContent=`${row.title} - ${row.bundle||'Individual purchase'}; ${row.purchasedAt?new Date(row.purchasedAt).toLocaleDateString():'purchase date not recorded'}; ${row.quantity} ${row.quantity===1?'copy':'copies'}. ${row.status==='unrevealed'?'Key reported unrevealed':'Key reveal status unknown'}; checked ${new Date(row.checkedAt).toLocaleString()}. Activation is unknown.`;li.append(label);
+      const act=(text,action)=>{const b=document.createElement('button');b.type='button';b.textContent=text;b.disabled=!localReminderAccount;b.addEventListener('click',async()=>{b.disabled=true;try{await mutate('reviewKeyReminder',{accountId,ref:row.ref,basis:row.status,expectedReview:row.review??null,action,...(action==='snoozed'?{until:new Date(Date.now()+7*86400000).toISOString()}:{})});await refresh({libraryOnly:true});$('#local-reminder-action-status').textContent='Reminder review saved. Purchases and keys are unchanged.';}catch(error){$('#local-reminder-action-status').textContent=error.message;b.disabled=false;}});li.append(b);};
+      if(row.hidden)act('Restore reminder','active');else{act('Dismiss reminder','dismissed');act('Snooze 7 days','snoozed');}return li;
+    }));
+  }
+  $('#local-reminder-filter').addEventListener('change',()=>{localReminderPage=0;renderLocalReminders();});
+  $('#local-reminder-previous').addEventListener('click',()=>{localReminderPage--;renderLocalReminders();});$('#local-reminder-next').addEventListener('click',()=>{localReminderPage++;renderLocalReminders();});
   let reminderGeneration=0,reminderNext=null,reminderHistory=[];
   function resetReminders(){reminderGeneration++;reminderNext=null;reminderHistory=[];$('#reminder-list').replaceChildren();$('#reminder-status').textContent='Reminders have not been checked.';$('#reminder-previous').disabled=$('#reminder-next').disabled=true;$('#load-reminders').disabled=false;}
   async function loadReminders(offset=0,history=[]){
@@ -732,7 +751,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
   let refreshChain=Promise.resolve();
   function refresh(options) {const next=refreshChain.then(()=>refreshNow(options));refreshChain=next.catch(()=>{});return next;}
   async function refreshNow({libraryOnly=false}={}) {
-    const state=await chrome.storage.local.get({fanaticalImportSummary:null,fanaticalLibraryItems:[],galacticLibraryExtensionId:'',fanaticalShowDiagnostics:false,fanaticalLastScanAttempt:null,fanaticalProfileLabel:'',fanaticalProfileArchives:[],fanaticalHistoricalItems:[]});
+    const state=await chrome.storage.local.get({fanaticalImportSummary:null,fanaticalLibraryItems:[],galacticLibraryExtensionId:'',fanaticalShowDiagnostics:false,fanaticalLastScanAttempt:null,fanaticalProfileLabel:'',fanaticalAccountId:null,fanaticalProfileArchives:[],fanaticalHistoricalItems:[]});
     const {
       fanaticalImportSummary: summary = null,
       fanaticalLibraryItems: items = [],
@@ -747,7 +766,8 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     $('#library-count').textContent = `Active account nickname: ${scope.fanaticalProfileLabel||'Not yet named'}. ${scope.fanaticalProfileArchives.length} other saved accounts (selectable above; excluded from active matching). ${items.length} unique item${items.length === 1 ? '' : 's'} stored locally.`;
     const missing=scope.fanaticalHistoricalItems.filter(entry=>entry.profileLabel===scope.fanaticalProfileLabel).length;
     if(missing) $('#library-count').textContent += ' '+missing+' previously recorded products were not found in the latest scan; these warn as Check ownership and do not prove ownership.';
-    const pendingKeys=items.filter(item=>item.purchaseOrigins?.some(o=>o.keyStatus==='unrevealed')).length;$('#local-key-status').textContent=pendingKeys?`${pendingKeys} saved product${pendingKeys===1?' has':'s have'} an unrevealed Steam-key observation. Rescan all purchases refreshes older observations. Connect and sync saved purchases with GL, then load its reminders.`:'No unrevealed key observations are saved for the active account. This does not prove keys were revealed or activated. Rescan all purchases to check older purchases.';
+    localReminderAccount=scope.fanaticalAccountId;localReminderItems=items;renderLocalReminders();
+
     $('#history-note').textContent = `${attempt?.status==='partial'&&attempt.acquisitionComplete===true?'Last import finished successfully. ':attempt?.status==='partial'?`Last scan was partial: ${attempt.verifiedPurchasesSaved} verified purchases saved; ${attempt.unresolvedOrders} purchases unresolved. ${attempt.discoveryComplete?'The listing was read, but some purchases remain unresolved.':'The end of the library was not verified.'} Earlier purchases and the last complete check were kept. `:attempt?.status === 'incomplete' ? 'Last scan incomplete: complete order-history coverage could not be confirmed. Previous purchases and the last successful scan were kept. ' : ''}${summary?.historyCoverage ?? 'No complete order-history check has been saved yet.'}`;
     if(diagnostics&&attempt?.status==='partial'&&attempt.acquisitionComplete===true) $('#history-note').textContent += ' Fanatical did not provide enough information to independently verify that the entire purchase history was returned. Existing purchases were preserved.';
     if (diagnostics && summary?.coverage) $('#history-note').textContent += ` ${summary.coverage.retries} retries; at most ${summary.coverage.concurrency} concurrent detail requests.`;
@@ -1005,7 +1025,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     finally { setLibraryBusy(false); }
   });
 
-  LibraryAccountProfiles.mount($('#account-profiles'),{request:mutate,keys:['fanaticalProfileLabel','fanaticalProfileArchives'],onActiveChange:()=>refresh({libraryOnly:true}).catch(()=>{})});
+  LibraryAccountProfiles.mount($('#account-profiles'),{request:mutate,keys:['fanaticalProfileLabel','fanaticalAccountId','fanaticalProfileArchives'],onActiveChange:()=>refresh({libraryOnly:true}).catch(()=>{})});
   globalThis.LibraryBrowser = {
     consolidateFanaticalItemInto,
     filterAndSortLibrary,
@@ -1015,7 +1035,7 @@ import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitl
     render: () => renderLibraryBrowser()
   };
   let liveDirty=false,liveRefresh=null;
-  const libraryKeys=['fanaticalLibraryItems','fanaticalImportSummary','fanaticalLastScanAttempt','fanaticalProfileLabel','fanaticalProfileArchives','fanaticalHistoricalItems','rejectedPurchaseItems','mediaTypeOverrides'];
+  const libraryKeys=['fanaticalLibraryItems','fanaticalImportSummary','fanaticalLastScanAttempt','fanaticalProfileLabel','fanaticalAccountId','fanaticalProfileArchives','fanaticalHistoricalItems','rejectedPurchaseItems','mediaTypeOverrides'];
   chrome.storage.onChanged?.addListener((changes,area)=>{
     if(area!=='local'||!libraryKeys.some(key=>Object.hasOwn(changes,key)))return;
     liveDirty=true;

@@ -51,3 +51,5 @@ Existing companion transfer limits still apply. For example, an unusually large 
 A purchased game can appear directly in the authenticated order's `items` array with an empty `bundles` array. The importer validates that game itself rather than treating it as an empty bundle or consulting the public selection catalog. Its native identity and order evidence are retained. The `pickAndMix` label only groups products in Fanatical's display; it is not used as a product or bundle identifier. Direct items use their own identity as the stored parent reference. Other unsupported empty containers remain unresolved.
 
 Backups preserve supported dated Fanatical key observations with purchase provenance. They contain no redemption-key values. Restoring does not authorize companion synchronization; Full rescan refreshes older observations.
+
+Full backups also retain local key reminder reviews on each purchase, including dismissed, snoozed and restored state for active and archived accounts. Restore resets scan/sync authority as before; it does not discard those reviews or authorize sharing. Older backups lacking reviews start without local review decisions.

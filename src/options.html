@@ -41,9 +41,14 @@
         </details>
       </section>
       <section>
-        <h2>Key and access reminders</h2>
-        <p>Supported Steam game purchases report unrevealed keys from the authenticated order page data without reading or requesting key values. Other cases stay unknown. Import new purchases checks new orders; Rescan all purchases refreshes older key observations. Connect and sync saved purchases with Galactic Library, then load its reminders. Key revelation does not prove activation on Steam. Dismissal and snoozing are managed in Galactic Library.</p>
-        <p id="local-key-status">Key observations have not been loaded.</p>
+        <h2>Fanatical key reminders</h2>
+        <p>These reminders use this account's saved purchases and work without Galactic Library. Unrevealed is different from unknown or activated. No key value is read or revealed. Import new purchases checks new orders; Rescan all purchases refreshes older observations.</p>
+        <p id="local-key-status"></p>
+        <label>Show <select id="local-reminder-filter"><option value="pending">Unrevealed keys</option><option value="unknown">Unknown key status</option><option value="hidden">Dismissed and snoozed</option></select></label>
+        <p id="local-reminder-count" role="status"></p><p id="local-reminder-action-status" role="status"></p>
+        <button id="local-reminder-previous" type="button">Previous local reminders</button><button id="local-reminder-next" type="button">Next local reminders</button><ol id="local-reminder-list"></ol>
+        <h3>Optional Galactic Library reminders</h3>
+        <p>This separate list can include other providers and the same Fanatical purchases. Compatible GL and FAN share purchase-specific reviews only after you enable purchase sync for the matching accounts. Until sync finishes, views may differ. Older GL versions share observations but not reviews. FAN sends no desktop notifications; optional desktop reminders are managed in GL.</p>
         <label>Source <select id="reminder-provider"><option value="fanatical">Fanatical</option><option value="">All providers</option></select></label>
         <button id="load-reminders" type="button">Load reminders</button><button id="review-reminders" type="button">Review in Galactic Library</button>
         <p id="reminder-status" role="status">Reminders have not been checked.</p><button id="reminder-previous" type="button" disabled>Previous reminders</button><button id="reminder-next" type="button" disabled>Next reminders</button><ol id="reminder-list"></ol>

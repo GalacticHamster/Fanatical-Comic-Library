@@ -1,17 +1,21 @@
-# Central reminders and reading gaps (FAN-18)
+# Key and access reminders
 
-Settings can manually load current entitlement reminders from the saved Galactic Library pairing. The default filter is Fanatical; All providers includes reported rentals, subscriptions and the separate Humble companion feed. Pages contain at most 50 reminders with explicit next/previous controls. No background full-library transfer or local duplicate reminder database is created.
+## Local Fanatical reminders
 
-The view requires the advertised entitlementReminders capability and validates API version, success, page length, offsets, provider, reminder kind and dates. Rejected, incomplete or malformed responses say Not checked, never zero matches. Unknown deadlines remain unknown. Only reported expiry dates are displayed; purchase and key revelation never establish destination-platform activation. Humble companion reports are identified separately and do not establish ownership.
+Fanatical Library automatically shows reminders from the active saved account's purchase-specific key observations. Galactic Library is not required. Use **Unrevealed keys**, **Unknown key status**, or **Dismissed and snoozed** to choose the list, with 50 purchases per page. Each row includes its bundle, purchase date and copy count. Two purchases of the same game remain separate; multiple copies in one purchase are reviewed together.
 
-Only titles, media/provider, reminder kind, reported dates, optional bounded key-status observations, severity and opaque references cross this reminder boundary. Extra response fields are dropped. Pairing changes and provider-filter changes clear the display and invalidate pending responses. Review in Galactic Library opens the trusted stored pairing; dismissal, snooze and reconciliation remain central. Notifications are handled by Galactic Library, not duplicated here.
+**Dismiss reminder**, **Snooze 7 days**, and **Restore reminder** change only the review. They never reveal a key, establish activation or change ownership. Reviews survive imports, partial recovery, account renames/switches, restarts and full backups. A refreshed check date alone does not undo dismissal. Changed reveal status is reviewed separately. Unknown does not mean unrevealed, redeemed, or activated.
 
-Bundle summaries separately show central ownership/freshness/contents reminders and bounded series gaps through existing matching evidence. Issue/volume coverage respects run, language, specials and uncertainty; it is a compared span, not a publisher bibliography.
+Quick imports check new orders; Rescan all purchases refreshes older observations. Unsupported fulfillment types remain unknown or lack observations. No key value is accessed to determine status.
 
-## Fanatical key observations
+## Optional Galactic Library aggregation
 
-Supported ordinary Steam purchases can record a dated unrevealed-key observation without revealing or reading a key. A present key field or ambiguous evidence is treated as unknown, not as proof of activation. Other product types are not inferred from ownership alone.
+The separately labeled GL list can show other providers and the same Fanatical purchases. It is loaded only on request and is not needed for local reminders. Provider filtering and 50-record next/previous pages remain available. Errors say Not checked rather than reporting zero reminders.
 
-Quick imports check new purchases; Full rescans refresh older observations. After importing, use Connect and sync for the intended Fanatical account, then Load reminders. Compatible GL receives the dated observations through that existing purchase-sharing permission and returns the reminder list. Older companions still share purchases but omit these optional observations.
+After explicit purchase-sync consent for matching accounts, compatible GL and FAN share observations and purchase-specific reviews. The newest saved review wins; restoration is saved explicitly so older data cannot re-dismiss a restored reminder. Until synchronization finishes, the views may differ. GL's item-level review applies to its recorded purchase observations; FAN can review each purchase separately. Neither pairing alone nor loading the aggregate list authorizes review/purchase writes.
 
-The local count shows saved products with unrevealed observations. GL's count may differ because reminders can be dismissed or snoozed. Dismissing a reminder does not reveal a key or change ownership. Unchanged observations stay dismissed when refreshed; changed evidence can require a new review.
+Older companions can still exchange purchases and supported observations, but cannot share reviews. Their aggregate list may differ from FAN's local list; use the current versions for coordinated reviews. FAN creates no desktop notifications. GL remains the sole optional desktop reminder notifier, so this feature adds no second notification channel.
+
+The reminder interface exchanges only bounded titles, media/provider, reminder kind, dates/status, severity and opaque references. Purchase synchronization separately carries permitted purchase provenance and review actions/dates. Neither carries key values. Humble's manual reminder feed remains separate and unchanged.
+
+Bundle summaries and reading-gap evidence continue to use existing identity/coverage rules, not a publisher bibliography.

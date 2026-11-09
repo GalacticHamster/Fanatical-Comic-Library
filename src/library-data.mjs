@@ -20,17 +20,32 @@ export function keySummary(origins=[]){
   const pending=observed.filter(o=>o.keyStatus==='unrevealed'),selected=pending.length?pending:observed;
   return {keyStatus:pending.length?'unrevealed':'unknown',keyCheckedAt:selected.map(o=>o.keyCheckedAt).sort()[0]};
 }
+/** Purchase groups, not titles or scan timestamps, identify local reminders. */
+export function localKeyReminders(items,now=Date.now()){
+ const rows=[];for(const item of items??[])for(const origin of item.purchaseOrigins??[]){
+  if(!origin.purchaseRef||!['unrevealed','unknown'].includes(origin.keyStatus)||!safeDate(origin.keyCheckedAt))continue;
+  const ref=JSON.stringify([item.sourceItemId,origin.purchaseRef,origin.bundle.sourceItemId]);
+  rows.push({ref,title:item.title,bundle:origin.bundle.title,purchasedAt:origin.purchaseDate,quantity:origin.quantity??1,status:origin.keyStatus,checkedAt:origin.keyCheckedAt,hidden:GalacticPurchaseSnapshot.keyReviewHidden(origin,now),review:GalacticPurchaseSnapshot.keyReview(origin.keyReview)});
+ }return rows.sort((a,b)=>a.title.localeCompare(b.title)||a.ref.localeCompare(b.ref));
+}
+// Review state belongs to the purchase, including when it returns from history.
+function retainKeyReviews(items,previous){
+ const origins=new Map(),key=(item,o)=>JSON.stringify([item.sourceItemId,o.purchaseRef,o.bundle.sourceItemId]);
+ for(const item of previous)for(const o of item.purchaseOrigins??[]){const id=key(item,o),old=origins.get(id);const review=GalacticPurchaseSnapshot.mergeKeyReview(old?.keyReview,o.keyReview),observation=old?.keyCheckedAt&&(!o.keyCheckedAt||Date.parse(old.keyCheckedAt)>Date.parse(o.keyCheckedAt))?old:o;origins.set(id,{...observation,...(review?{keyReview:review}:{})});}
+ return items.map(item=>({...item,...(item.purchaseOrigins?{purchaseOrigins:item.purchaseOrigins.map(o=>{const old=origins.get(key(item,o)),review=GalacticPurchaseSnapshot.mergeKeyReview(old?.keyReview,o.keyReview);return {...o,...(review&&!o.keyCheckedAt&&old?.keyCheckedAt?keyObservation(old):{}),...(review?{keyReview:review}:{})};})}:{})}));
+}
 function purchaseOrigins(value,strict=false){
   if(value===undefined)return undefined;
   if(!Array.isArray(value)||value.length>100000)throw new Error('Invalid purchase origins.');
   return value.map(origin=>{
     if(!origin||typeof origin!=='object'||origin.purchaseRef!==undefined&&origin.purchaseRef!==null&&!/^[a-f0-9]{64}$/iu.test(origin.purchaseRef)||!Number.isSafeInteger(origin.quantity??1)||(origin.quantity??1)<1||(origin.quantity??1)>100000)throw new Error('Invalid purchase origin.');
     if(strict&&(origin.bundle?.sourceItemId&&!safeId(origin.bundle.sourceItemId)||origin.purchaseDate!=null&&!safeDate(origin.purchaseDate)))throw new Error('Invalid purchase provenance.');
+    if(origin.keyReview!==undefined&&!origin.keyCheckedAt)throw Error('Key reminder review needs a dated observation.');
     return {
       ...(origin.purchaseRef?{purchaseRef:origin.purchaseRef.toLowerCase()}:{}),
       bundle:{sourceItemId:safeId(origin.bundle?.sourceItemId),title:safeText(origin.bundle?.title),...(safeText(origin.bundle?.slug,300)?{slug:safeText(origin.bundle.slug,300)}:{})},
       purchaseDate:safeDate(origin.purchaseDate),
-      quantity:origin.quantity??1,...keyObservation(origin),
+      quantity:origin.quantity??1,...keyObservation(origin),...(origin.keyReview!==undefined?{keyReview:GalacticPurchaseSnapshot.keyReview(origin.keyReview)}:{}),
       ...(origin.delivery ? { delivery: safeText(origin.delivery) } : {}),
       ...(origin.streaming ? { streaming: true } : {}),
       ...(Array.isArray(origin.drm) && origin.drm.length ? { drm: safeList(origin.drm) } : {}),
@@ -57,6 +72,7 @@ function mergeProduct(previous,incoming){
         ...prev,
         ...origin,
         quantity: Math.max(prev.quantity || 1, origin.quantity || 1),
+        ...(GalacticPurchaseSnapshot.mergeKeyReview(prev.keyReview,origin.keyReview)?{keyReview:GalacticPurchaseSnapshot.mergeKeyReview(prev.keyReview,origin.keyReview)}:{}),
         ...keyObservation(Date.parse(origin.keyCheckedAt)>=Date.parse(prev.keyCheckedAt)||!prev.keyCheckedAt?origin:prev),
         ...(mergedDelivery ? { delivery: mergedDelivery } : {}),
         ...(mergedStreaming ? { streaming: true } : {}),
@@ -286,12 +302,23 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
       if(target?.newLabel){const label=String(target.newLabel).trim();if(!label||label.length>100||A.fanScopes(state).some(value=>value.label===label)||target.expectedActiveLabel!==state.fanaticalProfileLabel)throw Error('Invalid or stale new account choice.');scope={label,items:[],state:{accountId:crypto.randomUUID()},fresh:true};}
       else scope=await A.selected('fan',state,target?.accountRef);
       if(operation==='handoffImport'&&target?.autoSync){const accountId=scope.stableId;await globalThis.GalacticPurchaseSync.assertCommit(area,data.provider,target,accountId);}
-      const result=A.fanMerge(scope.items,data.records,Boolean(target?.autoSync)),items=parseLibraryBackup({schemaVersion:1,items:result.items});
+      const result=A.fanMerge(scope.items,data.records,Boolean(target?.autoSync)),items=parseLibraryBackup({schemaVersion:1,items:retainKeyReviews(result.items,[...(scope.label===state.fanaticalProfileLabel?state.fanaticalHistoricalItems:scope.state?.historicalItems??[]).map(h=>h.item),...scope.items])});
       if(operation==='handoffPreview')return {readOnly:true,sourceRecords:data.records.length,destinationRecords:scope.items.length,...result.stats,...A.previewTitles(scope.items,result.items.slice(scope.items.length)),updateBreakdownKnown:false,limitations:data.limitations};
       if(!result.stats.added&&!result.stats.updated&&!scope.fresh)return result.stats;
       if(scope.label===state.fanaticalProfileLabel||!state.fanaticalProfileLabel&&!state.fanaticalLibraryItems.length)await area.set({fanaticalAccountId:scope.state.accountId??scope.stableId,fanaticalLibraryItems:items,fanaticalProfileLabel:scope.label});
       else {const archives=state.fanaticalProfileArchives.filter(p=>p.profileLabel!==scope.label);archives.push({...scope.state,accountId:scope.stableId??scope.state.accountId,profileLabel:scope.label,items,historicalItems:scope.state?.historicalItems??[],archivedAt:new Date().toISOString()});if(archives.length>100)throw Error('Too many saved accounts.');await area.set({fanaticalProfileArchives:archives});}
       return result.stats;
+    }
+    if(operation==='reviewKeyReminder'){
+      const [request]=args,state=await area.get(defaults);
+      if(!request||request.accountId!==state.fanaticalAccountId||!GalacticPurchaseSync.accountUuid(request.accountId))throw Error('The saved account changed. Refresh reminders before reviewing.');
+      const row=localKeyReminders(state.fanaticalLibraryItems).find(r=>r.ref===request.ref);
+      if(!row||request.basis!==row.status||JSON.stringify(request.expectedReview??null)!==JSON.stringify(row.review??null))throw Error('This reminder changed. Refresh before reviewing.');
+      if(!['active','dismissed','snoozed'].includes(request.action))throw Error('Invalid reminder action.');
+      if(request.action==='snoozed'&&(!safeDate(request.until)||Date.parse(request.until)<=Date.now()||Date.parse(request.until)>Date.now()+366*86400000))throw Error('Snooze must end within the next year.');
+      const review=GalacticPurchaseSnapshot.keyReview({action:request.action,basis:row.status,until:request.action==='snoozed'?request.until:null,updatedAt:new Date(Math.max(Date.now(),Date.parse(row.review?.updatedAt??'')+1||0)).toISOString()});
+      const items=state.fanaticalLibraryItems.map(item=>({...item,...(item.purchaseOrigins?{purchaseOrigins:item.purchaseOrigins.map(o=>JSON.stringify([item.sourceItemId,o.purchaseRef,o.bundle.sourceItemId])===row.ref?{...o,keyReview:review}:o)}:{})}));
+      await area.set({fanaticalLibraryItems:items});return true;
     }
     if(operation==='profiles'){
       const state=await area.get(defaults),unique=new Map(state.fanaticalProfileArchives.map(entry=>[entry.profileLabel,entry]));
@@ -368,7 +395,9 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
       if(!partial&&control.fullScan&&updates.fanaticalImportSummary?.scanMode!=='full')throw new Error('This profile requires a full scan.');
       const parsedIncoming=parseLibraryBackup({schemaVersion:1,items:updates.fanaticalLibraryItems});
       const overrides = state.mediaTypeOverrides ?? {};
-      const incoming = parsedIncoming.map(item => {
+      const reviewItems=control.changing?[]:[...state.fanaticalHistoricalItems.filter(h=>h.profileLabel===state.fanaticalProfileLabel).map(h=>h.item),...state.fanaticalLibraryItems];
+      const withReviews=retainKeyReviews(parsedIncoming,reviewItems);
+      const incoming = withReviews.map(item => {
         const override = overrides[item.sourceItemId] || (item.title && overrides[`manual:${globalThis.FanaticalLibrary.titleKey(item.title)}`]);
         if (override) {
           return { ...item, mediaType: override, manualMediaType: override, automaticMediaType: item.automaticMediaType || item.mediaType || 'unclassified' };

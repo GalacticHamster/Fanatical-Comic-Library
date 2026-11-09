@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import {spawn,execFileSync} from 'node:child_process';import {access,mkdtemp,mkdir,writeFile,rm,readFile} from 'node:fs/promises';import {createServer} from 'node:http';import {tmpdir} from 'node:os';import {join,resolve,sep,dirname} from 'node:path';import {setTimeout as pause} from 'node:timers/promises';import {chromePipe,freePort,firefoxMarionette} from './native-protocol.mjs';import {createRelease,runtimeZip,readRuntimeZip} from '../scripts/release.mjs';
-import {verifyFanaticalKeyCompatibility,verifyFanaticalKeyReminders,verifyFanaticalNativeSync} from '../../GalacticLibrary/tests/fanatical-native-sync.mjs';
+import {verifyStandaloneFanaticalReminders,verifyFanaticalKeyCompatibility,verifyFanaticalKeyReminders,verifyFanaticalNativeSync} from '../../GalacticLibrary/tests/fanatical-native-sync.mjs';
 import {createRelease as glRelease,readRuntimeZip as readGLZip} from '../../GalacticLibrary/scripts/release.mjs';
 import {candidateFiles} from '../../GalacticLibrary/tests/provider-candidate-build.mjs';
 const firefox=process.argv.includes('--firefox'),release=await createRelease(undefined,undefined,firefox?'firefox':'chrome');
-const legacyPeer=process.argv.includes('--legacy-peer'),legacyKeys=legacyPeer||process.argv.includes('--pre-key-observations');
+const legacyPeer=process.argv.includes('--legacy-peer'),legacyKeys=legacyPeer||process.argv.includes('--pre-key-observations')||process.argv.includes('--observation-peer');
 const sourceFiles=legacyKeys?readRuntimeZip(await readFile(process.env.FAN_LEGACY_RUNTIME_PACKAGE??(()=>{throw Error('Explicit legacy FAN runtime package required');})())):release.files;
 const files=process.argv.includes('--candidate')?await candidateFiles('FAN',sourceFiles):new Map(sourceFiles);
 const baseline=process.argv.includes('--baseline');
@@ -139,8 +139,9 @@ try{
    sparseDetailFailure=false;await openOrders();await scan('new');assert.equal(counts.details,1);directSaved=await saved();assert.equal(directSaved.count,37);assert.equal(directSaved.fingerprints.length,4);
    driver.close?.();child.kill();await exited;await startBrowser();await navigate(optionsUrl);await wait('return !!globalThis.LibraryBrowser&&document.querySelector("#library-count").textContent.includes("37 unique items");','Direct purchased games lost after restart');
    console.log('PASS installed FAN direct games: ten selections, earlier 24 preserved, unchanged Quick, failed-detail retry, restart and no false complete checkpoint');
-   assert.equal(directSaved.items.filter(i=>i.keyStatus==='unrevealed').length,legacyKeys?0:10);
-   if(central&&(legacyKeys||process.argv.includes('--legacy-central')))await verifyFanaticalKeyCompatibility({browser:firefox?'Firefox':'Chrome',peerId:fanId,navigate,evaluate,wait,glUrl:centralOptionsUrl,fanUrl:optionsUrl,restart:async()=>{driver.close?.();child.kill();await exited;await startBrowser();}});
+   assert.equal(directSaved.items.filter(i=>i.keyStatus==='unrevealed').length,legacyKeys&&!process.argv.includes('--observation-peer')?0:10);
+   if(!legacyKeys)await verifyStandaloneFanaticalReminders({navigate,evaluate,wait,fanUrl:optionsUrl,openOrders,scan,restart:async()=>{driver.close?.();child.kill();await exited;await startBrowser();}});
+   if(central&&(legacyKeys||process.argv.includes('--legacy-central')))await verifyFanaticalKeyCompatibility({observationsSupported:process.argv.includes('--observation-peer')||process.argv.includes('--legacy-observations'),browser:firefox?'Firefox':'Chrome',peerId:fanId,navigate,evaluate,wait,glUrl:centralOptionsUrl,fanUrl:optionsUrl,restart:async()=>{driver.close?.();child.kill();await exited;await startBrowser();}});
    if(central&&!legacyKeys&&!process.argv.includes('--legacy-central'))await verifyFanaticalKeyReminders({browser:firefox?'Firefox':'Chrome',peerId:fanId,navigate,evaluate,wait,glUrl:centralOptionsUrl,fanUrl:optionsUrl,openOrders,scan,setKeysPresent:()=>{directKeysPresent=true;},restart:async()=>{driver.close?.();child.kill();await exited;await startBrowser();}});
 
  }

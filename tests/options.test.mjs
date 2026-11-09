@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
-import { backupRestoreState, createLibraryBackup, parseLibraryBackup, createSyncStore, createTitleCatalog } from '../src/library-data.mjs';
+import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibraryBackup, createSyncStore, createTitleCatalog } from '../src/library-data.mjs';
 import '../src/shared.js';
 
 const code = fs.readFileSync(new URL('../src/options.js', import.meta.url), 'utf8').replace(/^import .*;\r?\n/u, '');
@@ -30,7 +30,7 @@ async function optionsHarness(initial = {}) {
       async remove(keys) { for (const key of Array.isArray(keys) ? keys : [keys]) delete stored[key]; }
     } }, tabs: { create() {} } },
     confirm: () => config.confirm, LibraryTitleSort:globalThis.LibraryTitleSort, LibraryAccountProfiles:{mount(host,options){accountChanged=options.onActiveChange;return {refresh:async()=>{}};}}, FanaticalLibrary: globalThis.FanaticalLibrary,
-    backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitleCatalog, Blob, URL, setTimeout, clearTimeout, Intl
+    localKeyReminders, backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitleCatalog, Blob, URL, setTimeout, clearTimeout, Intl
   });
   const store=createSyncStore(context.chrome.storage.local);const oldSend=context.chrome.runtime.sendMessage;
   context.chrome.runtime.sendMessage=async (...args)=>{const message=args[0];if(message?.type!=='FANATICAL_STORE')return oldSend(...args);try{return {ok:true,result:await store.execute(message.operation,message.args)};}catch(error){return {ok:false,error:error.message};}};
@@ -146,7 +146,7 @@ test('reminder view supports pages, filters, unavailable capability and pairing 
   ui.config.respond=()=>({ok:true,apiVersion:1});await ui.click('#load-reminders');assert.match(ui.get('#reminder-status').textContent,/not checked.*does not advertise/);assert.equal(ui.get('#reminder-next').disabled,true);
 });
 test('dated unrevealed observations display locally and centrally without implying redemption; profile changes clear stale results',async()=>{
- const product={...item('Steam game'),purchaseOrigins:[{keyStatus:'unrevealed',keyCheckedAt:'2026-11-09T12:00:00.000Z'}]},ui=await optionsHarness({fanaticalLibraryItems:[product],galacticLibraryExtensionId:'b'.repeat(32)});assert.match(ui.get('#local-key-status').textContent,/1 saved product has an unrevealed/);
+ const product={...item('Steam game'),purchaseOrigins:[{purchaseRef:'a'.repeat(64),bundle:{sourceItemId:'bundle-123456',title:'Bundle'},keyStatus:'unrevealed',keyCheckedAt:'2026-11-09T12:00:00.000Z'}]},ui=await optionsHarness({fanaticalLibraryItems:[product],galacticLibraryExtensionId:'b'.repeat(32)});assert.match(ui.get('#local-key-status').textContent,/1 active purchase reminder/);
  ui.config.respond=message=>message.type==='GET_STATUS'?{ok:true,apiVersion:1,capabilities:{entitlementReminders:true}}:{ok:true,apiVersion:1,total:1,nextOffset:null,reminders:[{reminderRef:'opaque-reminder',itemRef:'opaque-item',title:'Steam game',provider:'fanatical',mediaType:'game',kind:'activation',dueAt:null,severity:'information',keyStatus:'unrevealed',keyCheckedAt:'2026-11-09T12:00:00.000Z'}]};ui.get('#reminder-provider').value='fanatical';await ui.click('#load-reminders');assert.match(ui.get('#reminder-list').children[0].textContent,/Key reported unrevealed/);assert.match(ui.get('#reminder-list').children[0].textContent,/Activation on Steam is not verified/);await ui.changeStorage({fanaticalProfileLabel:{newValue:'Other'}});assert.equal(ui.get('#reminder-list').children.length,0);assert.equal(ui.writes.length,0);
 });
 
@@ -574,4 +574,14 @@ test('src/ui.css configures tabular numbers and comfortable disclosure spacing',
   assert.match(css, /\.library-item-summary\s*\{[^}]*padding:\s*0\.15rem\s+0\s+0\.15rem\s+0\.35rem/);
   assert.match(css, /\.library-provenance-primary\s*\{/);
   assert.match(css, /\.library-provenance-secondary\s*\{/);
+});
+
+test('FAN-only local reminder controls need no GL and stale rendered buttons cannot target another account',async()=>{
+ const account='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',other='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',product={...item('Local Steam game'),purchaseOrigins:[{purchaseRef:'a'.repeat(64),bundle:{sourceItemId:'bundle-123456',title:'Bundle'},keyStatus:'unrevealed',keyCheckedAt:'2026-11-09T12:00:00.000Z',quantity:1}]};
+ const ui=await optionsHarness({fanaticalAccountId:account,fanaticalLibraryItems:[product],fanaticalProfileLabel:'A'});ui.config.failure=true;assert.equal(ui.get('#local-reminder-list').children.length,1);const stale=ui.get('#local-reminder-list').children[0].children[1];const calls=ui.messages.length;await stale.listeners.click();assert.equal(ui.get('#local-reminder-list').children.length,0,ui.get('#local-reminder-action-status').textContent);assert.equal(ui.messages.length,calls);assert.equal(ui.stored.fanaticalLibraryItems[0].mediaType,'game');
+ await ui.change('#local-reminder-filter','hidden');await ui.get('#local-reminder-list').children[0].children[1].listeners.click();assert.equal(ui.stored.fanaticalLibraryItems[0].purchaseOrigins[0].keyReview.action,'active');await ui.change('#local-reminder-filter','pending');const oldButton=ui.get('#local-reminder-list').children[0].children[1];
+ ui.stored.fanaticalAccountId=other;ui.stored.fanaticalLibraryItems=[product];await ui.changeStorage({fanaticalAccountId:{newValue:other},fanaticalLibraryItems:{newValue:[product]}});await oldButton.listeners.click();assert.match(ui.get('#local-reminder-action-status').textContent,/account changed/);assert.equal(ui.stored.fanaticalLibraryItems[0].purchaseOrigins[0].keyReview,undefined);
+});
+test('local reminder list is paginated and separates unknown evidence from actionable unrevealed keys',async()=>{
+ const products=Array.from({length:52},(_,i)=>({...item('Game '+i,'product-'+String(i).padStart(6,'0')),purchaseOrigins:[{purchaseRef:'a'.repeat(64),bundle:{sourceItemId:'bundle-123456',title:'Bundle'},keyStatus:i===51?'unknown':'unrevealed',keyCheckedAt:'2026-11-09T12:00:00.000Z'}]}));const ui=await optionsHarness({fanaticalLibraryItems:products});assert.equal(ui.get('#local-reminder-list').children.length,50);await ui.click('#local-reminder-next');assert.equal(ui.get('#local-reminder-list').children.length,1);await ui.change('#local-reminder-filter','unknown');assert.equal(ui.get('#local-reminder-list').children.length,1);assert.match(ui.get('#local-reminder-list').children[0].children[0].textContent,/status unknown/);
 });

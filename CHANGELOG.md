@@ -2,6 +2,8 @@
 
 ## 1.0.3 — Release candidate
 
+- Make Fanatical key reminders standalone, with purchase-specific dismissal, snooze, restoration, backup persistence and account isolation. Compatible consented GL sync shares the same reviews; GL remains the only optional desktop notifier.
+
 - Record dated unrevealed-key observations for supported Steam purchases without reading or revealing keys. Share them through compatible, consented GL purchase sync and show them in Key and access reminders. Quick checks new purchases; Full refreshes older observations.
 
 - Recognize standalone purchased game items with empty bundle arrays in authenticated orders, including pick-and-mix selections. Require exact order/product evidence and retain duplicate occurrences, partial-save safeguards and unverified array-only coverage.
