@@ -2,6 +2,8 @@
 
 ## 1.0.3 — Release candidate
 
+- Recognize standalone purchased game items with empty bundle arrays in authenticated orders, including pick-and-mix selections. Require exact order/product evidence and retain duplicate occurrences, partial-save safeguards and unverified array-only coverage.
+
 - Refresh an already-open Library when imports commit in another tab, reading item/account context together and retaining unsaved settings drafts. Preserve exact detail-failure diagnostics when repeated sparse summary shapes reach the report limit.
 
 - Check identity-bearing sparse completed summaries through authenticated order details instead of rejecting empty summary bundle arrays before requesting detail. Products still require matching identity/status/parent evidence and normal validation; unresolved details remain retryable with privacy-safe recovery counters.

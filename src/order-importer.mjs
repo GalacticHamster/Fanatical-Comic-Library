@@ -174,6 +174,15 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     if (type.includes('audio')) return 'audio';
     return 'unclassified';
   };
+  // Fanatical's authenticated order UI renders an empty-bundles game item
+  // itself (game=item), grouping pickAndMix only for display. This is not a
+  // public selection pool. Keep this admission narrow; other empty containers
+  // still need independently validated details and remain unresolved.
+  const isDirectPurchasedGame = parent => parent && typeof parent === 'object' && !Array.isArray(parent)
+    && parent.type === 'game' && (parent.display_type === undefined || parent.display_type === 'game')
+    && typeof parent._id === 'string' && !!safeIdInPage(parent._id) && !!safeTextInPage(parent.name)
+    && Array.isArray(parent.bundles) && parent.bundles.length === 0
+    && ['games','products','items','tiers'].every(key => !Object.hasOwn(parent,key));
   const isPromotionalLeaf = (leaf) => {
     const name = safeTextInPage(leaf?.name).toLowerCase();
     return /\b(?:how to redeem|terms and conditions|discount code|coupon|voucher|bonus voucher|wallet top-up)\b/iu.test(name);
@@ -271,7 +280,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     const completeIds=new Set((Array.isArray(orderSummaries)?orderSummaries:[]).filter(order=>order?.status==='COMPLETE').map(order=>safeIdInPage(order._id)).filter(Boolean)),products=[],seen=new Set(),rejectedList=[];
     for(const order of Array.isArray(orderDetails)?orderDetails:[]){
       const id=safeIdInPage(order?._id);if(!id||seen.has(id)||!completeIds.has(id)||order.status!=='COMPLETE')continue;seen.add(id);const purchaseRef=await fingerprintOrderInPage(id);
-      for(const parent of Array.isArray(order.items)?order.items:[])for(const group of Array.isArray(parent?.bundles)?parent.bundles:[])for(const leaf of Array.isArray(group?.games)?group.games:[]){
+      for(const parent of Array.isArray(order.items)?order.items:[])for(const group of isDirectPurchasedGame(parent)?[{games:[parent]}]:Array.isArray(parent?.bundles)?parent.bundles:[])for(const leaf of Array.isArray(group?.games)?group.games:[]){
         if (isPromotionalLeaf(leaf)) {
           const leafFormats = formatsInPage(leaf);
           const hasDownloads = (Array.isArray(leaf?.downloads) && leaf.downloads.length > 0)
@@ -517,9 +526,9 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   const expectedProducts = new Map();
   const sparseSummaries=new Map();
   const parentEvidence=parents=>{
-    const names=new Map(),ids=new Map();
-    for(const parent of parents){const name=safeTextInPage(parent.name);names.set(name,(names.get(name)??0)+1);if(parent._id!==undefined){const key=JSON.stringify([name,parent._id]);ids.set(key,(ids.get(key)??0)+1);}}
-    return {names,ids};
+    const names=new Map(),ids=new Map(),direct=new Map();
+    for(const parent of parents){const name=safeTextInPage(parent.name);names.set(name,(names.get(name)??0)+1);if(parent._id!==undefined){const key=JSON.stringify([name,parent._id]);ids.set(key,(ids.get(key)??0)+1);}if(isDirectPurchasedGame(parent)){const key=JSON.stringify([parent._id,name]);direct.set(key,(direct.get(key)??0)+1);}}
+    return {names,ids,direct};
   };
   const productCounts = (parents) => {
     const bad=(key,parent,child,reason=key)=>{if(diagnostic.stage==='details')bundleShape(parent,reason,{value:child});issue(diagnostic.stage==='summaries'?key:'detailStructure');throw unreadable();};
@@ -527,6 +536,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     const counts = new Map();
     for (const parent of parents) {
       if (!safeTextInPage(parent?.name)) bad('missingNames',parent,undefined,'missing-parent-name');
+      if(isDirectPurchasedGame(parent)){const key=JSON.stringify(['direct-game',parent._id,safeTextInPage(parent.name)]);counts.set(key,(counts.get(key)||0)+1);continue;}
       if (!Array.isArray(parent?.bundles) || !parent.bundles.length){if(diagnostic.stage==='summaries')bundleShape(parent);bad(parent?.bundles==null?'missingBundles':'invalidBundles',parent);}
       for (const group of parent.bundles) {
         if (!Array.isArray(group?.games) || !group.games.length) bad(group?.games==null?'missingGames':'invalidGames',parent,group);
@@ -549,7 +559,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
         // A sparse summary can locate an authenticated detail request, but is
         // never product evidence or authority to skip that detail on Quick.
         const sparse=allowPartial&&Array.isArray(order.items)&&order.items.length>0&&order.items.every(parent=>parent&&typeof parent==='object'&&!Array.isArray(parent)&&typeof parent.name==='string'&&safeTextInPage(parent.name)&&Array.isArray(parent.bundles)&&parent.bundles.length===0&&(parent._id===undefined||typeof parent._id==='string'&&safeIdInPage(parent._id))&&['games','products','items','tiers'].every(key=>!Object.hasOwn(parent,key)));
-        if(sparse){sparseSummaries.set(order._id,parentEvidence(order.items));expectedProducts.set(order._id,null);order.items.forEach(parent=>bundleShape(parent));}
+        if(sparse&&order.items.some(parent=>!isDirectPurchasedGame(parent))){sparseSummaries.set(order._id,parentEvidence(order.items));expectedProducts.set(order._id,null);order.items.forEach(parent=>bundleShape(parent));}
         else {const counts=productCounts(order.items);expectedProducts.set(order._id,counts);if([...counts.values()].some(n=>n>1))issue('multipleCopies');}
       }
       else if(allowPartial){
@@ -614,12 +624,12 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     const actual = productCounts(order.items);
     if(sparse){
       const actualParents=parentEvidence(order.items);
-      if(sparse.names.size!==actualParents.names.size||[...sparse.names].some(([name,n])=>actualParents.names.get(name)!==n)||[...sparse.ids].some(([key,n])=>(actualParents.ids.get(key)??0)<n)){issue('detailProductMismatch');throw unreadable();}
+      if(sparse.names.size!==actualParents.names.size||[...sparse.names].some(([name,n])=>actualParents.names.get(name)!==n)||[...sparse.ids].some(([key,n])=>(actualParents.ids.get(key)??0)<n)||[...sparse.direct].some(([key,n])=>(actualParents.direct.get(key)??0)<n)){issue('detailProductMismatch');throw unreadable();}
     }else if (actual.size !== expected.size || [...expected].some(([key, quantity]) => actual.get(key) !== quantity)){issue('detailProductMismatch');throw unreadable();}
     let occurrence=0;
     for (const parent of order.items) {
-      if (!parent || typeof parent._id !== 'string' || !safeIdInPage(parent._id) || !safeTextInPage(parent.name) || !Array.isArray(parent.bundles) || !parent.bundles.length) throw unreadable();
-      for (const group of parent.bundles) {
+      if (!parent || typeof parent._id !== 'string' || !safeIdInPage(parent._id) || !safeTextInPage(parent.name) || !Array.isArray(parent.bundles) || (!parent.bundles.length&&!isDirectPurchasedGame(parent))) throw unreadable();
+      for (const group of isDirectPurchasedGame(parent)?[{games:[parent]}]:parent.bundles) {
         if (!group || !Array.isArray(group.games) || !group.games.length) throw unreadable();
         for (const leaf of group.games) {
           if (typeof leaf?._id !== 'string'){issue('detailProductIdentity');throw unreadable();}
