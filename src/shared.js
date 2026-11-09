@@ -1211,7 +1211,8 @@
       if(!row||!safeText(row.reminderRef,256)||!safeText(row.itemRef,256)||!safeText(row.title,500)||seen.has(row.reminderRef)||!providers.includes(row.provider)||provider&&row.provider!==provider||!['game','game-addon','software','audiobook','book','movie','tv','unknown'].includes(row.mediaType)||!['activation','key-expiry','key-unavailable','access-expiry','temporary-access'].includes(row.kind)||!['information','due-soon','attention'].includes(row.severity))invalid();
       if(row.dueAt!==null&&(typeof row.dueAt!=='string'||!/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z)?$/.test(row.dueAt)||!Number.isFinite(Date.parse(row.dueAt))||new Date(row.dueAt).toISOString().slice(0,10)!==row.dueAt.slice(0,10)))invalid();
       if(['key-expiry','access-expiry'].includes(row.kind)&&row.dueAt===null)invalid();
-      seen.add(row.reminderRef);return {reminderRef:row.reminderRef,itemRef:row.itemRef,title:row.title,provider:row.provider,mediaType:row.mediaType,kind:row.kind,dueAt:row.dueAt,severity:row.severity,...(row.source==='humble-companion'?{source:'humble-companion',reviewAvailable:false}:{})};
+      if(row.keyStatus!==undefined||row.keyCheckedAt!==undefined){if(!['unknown','unrevealed'].includes(row.keyStatus)||typeof row.keyCheckedAt!=='string'||!Number.isFinite(Date.parse(row.keyCheckedAt)))invalid();}
+      seen.add(row.reminderRef);return {reminderRef:row.reminderRef,itemRef:row.itemRef,title:row.title,provider:row.provider,mediaType:row.mediaType,kind:row.kind,dueAt:row.dueAt,severity:row.severity,...(row.keyStatus!==undefined?{keyStatus:row.keyStatus,keyCheckedAt:row.keyCheckedAt}:{}),...(row.source==='humble-companion'?{source:'humble-companion',reviewAvailable:false}:{})};
     });return {total:response.total,nextOffset:response.nextOffset,reminders};
   }
 

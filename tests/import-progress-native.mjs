@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict';
 import {spawn,execFileSync} from 'node:child_process';import {access,mkdtemp,mkdir,writeFile,rm,readFile} from 'node:fs/promises';import {createServer} from 'node:http';import {tmpdir} from 'node:os';import {join,resolve,sep,dirname} from 'node:path';import {setTimeout as pause} from 'node:timers/promises';import {chromePipe,freePort,firefoxMarionette} from './native-protocol.mjs';import {createRelease,runtimeZip,readRuntimeZip} from '../scripts/release.mjs';
-import {verifyFanaticalNativeSync} from '../../GalacticLibrary/tests/fanatical-native-sync.mjs';
+import {verifyFanaticalKeyCompatibility,verifyFanaticalKeyReminders,verifyFanaticalNativeSync} from '../../GalacticLibrary/tests/fanatical-native-sync.mjs';
 import {createRelease as glRelease,readRuntimeZip as readGLZip} from '../../GalacticLibrary/scripts/release.mjs';
 import {candidateFiles} from '../../GalacticLibrary/tests/provider-candidate-build.mjs';
 const firefox=process.argv.includes('--firefox'),release=await createRelease(undefined,undefined,firefox?'firefox':'chrome');
-const legacyPeer=process.argv.includes('--legacy-peer');
-const sourceFiles=legacyPeer?readRuntimeZip(await readFile(process.env.FAN_LEGACY_RUNTIME_PACKAGE??(()=>{throw Error('Explicit legacy FAN runtime package required');})())):release.files;
+const legacyPeer=process.argv.includes('--legacy-peer'),legacyKeys=legacyPeer||process.argv.includes('--pre-key-observations');
+const sourceFiles=legacyKeys?readRuntimeZip(await readFile(process.env.FAN_LEGACY_RUNTIME_PACKAGE??(()=>{throw Error('Explicit legacy FAN runtime package required');})())):release.files;
 const files=process.argv.includes('--candidate')?await candidateFiles('FAN',sourceFiles):new Map(sourceFiles);
 const baseline=process.argv.includes('--baseline');
 if(baseline)for(const name of ['src/content.js','src/order-importer.mjs','src/service-worker.js','src/shared.js'])files.set(name,execFileSync('git',['show','ea494ce6c0d8232142d519c4552243fc43062e21:'+name],{windowsHide:true,maxBuffer:8*1024*1024}));
-let sixOrders=false,directGames=false;
-const order=n=>directGames&&n===size-1?{_id:'synthetic-order-'+n,status:'COMPLETE',date:'2026-11-01',items:Array.from({length:10},(_,i)=>({_id:'direct-game-'+i,name:'Selected '+i,type:'game',bundles:[],pickAndMix:'Synthetic pick and mix',drm:{steam:true}}))}:({_id:'synthetic-order-'+n,status:'COMPLETE',date:'2026-10-01T00:00:00Z',items:[{_id:'bundle-123456',name:'Synthetic',bundles:[{games:sixOrders?Array.from({length:8},(_,j)=>({_id:'six-product-'+n+'-'+j,name:'Synthetic '+n+' '+j,type:n===2?'comic':'game'})):[{_id:'synthetic-product-'+n,name:'Synthetic '+n,type:'book'}]}]}]});
+let sixOrders=false,directGames=false,directKeysPresent=false;
+const order=n=>directGames&&n===size-1?{_id:'synthetic-order-'+n,status:'COMPLETE',date:'2026-11-01',items:Array.from({length:10},(_,i)=>({_id:'direct-game-'+i,name:'Selected '+i,type:'game',status:'fulfilled',bundles:[],pickAndMix:'Synthetic pick and mix',drm:{steam:true},...(directKeysPresent?{key:'SYNTHETIC_SECRET_DO_NOT_RETAIN'}:{})}))}:({_id:'synthetic-order-'+n,status:'COMPLETE',date:'2026-10-01T00:00:00Z',items:[{_id:'bundle-123456',name:'Synthetic',bundles:[{games:sixOrders?Array.from({length:8},(_,j)=>({_id:'six-product-'+n+'-'+j,name:'Synthetic '+n+' '+j,type:n===2?'comic':'game'})):[{_id:'synthetic-product-'+n,name:'Synthetic '+n,type:'book'}]}]}]});
 let size=3,delay=0,fail=false,denied=false,retry=false,headerless=false,summaryIssues=false,reorderedDuplicate=false,sparseSummary=false,sparseDetailFailure=false,counts={lists:0,details:0,completed:0,failed:0},attempts=new Map();
 const thin=o=>({...o,items:o.items.map(p=>({name:p.name,bundles:[]}))});
 const summaryRows=()=>{const rows=Array.from({length:size},(_,i)=>summaryIssues&&i===1?{...order(i),status:'UNKNOWN_STATUS'}:summaryIssues&&i===2?{...order(i),items:[{...order(i).items[0],bundles:[],products:[{name:'PRIVATE_TITLE',_id:'PRIVATE_ID'}],tiers:[{quantity:1}]}]}:order(i));if(sixOrders)for(let n=3;n<rows.length;n++)rows[n].items[0].bundles={};if(sparseSummary&&rows.length)rows[rows.length-1]=thin(rows.at(-1));if(reorderedDuplicate&&rows.length)rows.push(Object.fromEntries(Object.entries(rows[0]).reverse()));return rows;};
@@ -52,7 +52,7 @@ try{
   async function wait(script,message){for(let i=0;i<250;i++){const v=await evaluate(script);if(v)return v;await pause(100);}const state=await evaluate('return {url:location.href,ready:document.readyState,status:document.querySelector("#galactic-library-fanatical-importer")?.shadowRoot?.querySelector("[data-import-status]")?.textContent};');throw Error(message+' '+JSON.stringify(state));}
 
 
- const root='document.querySelector("#fanatical-library-importer")',checks=[];let reportUrl;
+ const root='document.querySelector("#fanatical-library-importer")',checks=[];let reportUrl,centralOptionsUrl;
  for(const scenario of [{name:'small',n:3,ms:0},{name:'large',n:90,ms:0},{name:'slow',n:12,ms:250},{name:'waiting',n:3,ms:3000},{name:'retry',n:3,ms:0,retry:true},{name:'partial',n:6,ms:50,fail:true},{name:'fatal',n:6,ms:0,denied:true}]){
   size=scenario.n;delay=scenario.ms;fail=!!scenario.fail;denied=!!scenario.denied;retry=!!scenario.retry;attempts.clear();counts={lists:0,details:0,completed:0,failed:0};
   await navigate(origin+'/en/orders');await wait('return !!document.querySelector("#fanatical-library-importer")?.querySelector("output");','No importer');
@@ -112,7 +112,7 @@ try{
    console.log('PASS installed FAN sparse summary: incomplete detail preserves purchases, Quick retries and rechecks known details without duplicating origins');
    if(central){
      let glUrl;if(firefox){await driver.send('Marionette:SetContext',{value:'chrome'});const result=await driver.send('WebDriver:ExecuteScript',{script:'return WebExtensionPolicy.getByID(arguments[0]).getURL(arguments[1]);',args:[centralId,'options.html'],newSandbox:true});glUrl=result.value??result;await driver.send('Marionette:SetContext',{value:'content'});}else glUrl='chrome-extension://'+centralId+'/options.html';
-     const fanUrl=reportUrl.replace('test-report.html','src/options.html');
+     centralOptionsUrl=glUrl;const fanUrl=reportUrl.replace('test-report.html','src/options.html');
      await verifyFanaticalNativeSync({browser:firefox?'Firefox':'Chrome',peerId:fanId,navigate,evaluate,wait,glUrl,fanUrl,openOrders,scan,restart:async()=>{driver.close?.();child.kill();await exited;await startBrowser();},setSource:value=>{size=value.size;fail=value.fail;headerless=false;denied=false;retry=false;}});
    }
    console.log('PASS installed FAN '+(firefox?'Firefox':'Chrome')+': partial Full, reload Quick retry, unchanged Quick, browser restart, empty Full/Quick preserve purchases, account, history and checkpoints');
@@ -139,6 +139,9 @@ try{
    sparseDetailFailure=false;await openOrders();await scan('new');assert.equal(counts.details,1);directSaved=await saved();assert.equal(directSaved.count,37);assert.equal(directSaved.fingerprints.length,4);
    driver.close?.();child.kill();await exited;await startBrowser();await navigate(optionsUrl);await wait('return !!globalThis.LibraryBrowser&&document.querySelector("#library-count").textContent.includes("37 unique items");','Direct purchased games lost after restart');
    console.log('PASS installed FAN direct games: ten selections, earlier 24 preserved, unchanged Quick, failed-detail retry, restart and no false complete checkpoint');
+   assert.equal(directSaved.items.filter(i=>i.keyStatus==='unrevealed').length,legacyKeys?0:10);
+   if(central&&(legacyKeys||process.argv.includes('--legacy-central')))await verifyFanaticalKeyCompatibility({browser:firefox?'Firefox':'Chrome',peerId:fanId,navigate,evaluate,wait,glUrl:centralOptionsUrl,fanUrl:optionsUrl,restart:async()=>{driver.close?.();child.kill();await exited;await startBrowser();}});
+   if(central&&!legacyKeys&&!process.argv.includes('--legacy-central'))await verifyFanaticalKeyReminders({browser:firefox?'Firefox':'Chrome',peerId:fanId,navigate,evaluate,wait,glUrl:centralOptionsUrl,fanUrl:optionsUrl,openOrders,scan,setKeysPresent:()=>{directKeysPresent=true;},restart:async()=>{driver.close?.();child.kill();await exited;await startBrowser();}});
 
  }
 }finally{driver?.close?.();child?.kill();if(exited)await exited;await new Promise(done=>server.close(done));const target=resolve(temporary),base=resolve(tmpdir());if(target.startsWith(base+sep)&&target.slice(base.length+1).startsWith('fan-progress-native-'))await rm(target,{recursive:true,force:true,maxRetries:5,retryDelay:200});}

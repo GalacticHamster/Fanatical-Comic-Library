@@ -187,6 +187,21 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     const name = safeTextInPage(leaf?.name).toLowerCase();
     return /\b(?:how to redeem|terms and conditions|discount code|coupon|voucher|bonus voucher|wallet top-up)\b/iu.test(name);
   };
+  // Only the observed ordinary Steam-key route is classified. Presence is
+  // tested without accessing the secret-bearing field's value (even a getter).
+  const keyEvidenceInPage = leaf => {
+    if(leaf?.type!=='game'||leaf?.drm?.steam!==true)return {};
+    const ordinary=leaf.status==='fulfilled'&&(leaf.display_type===undefined||leaf.display_type==='game')
+      && ['noKeyDelivery','mystery','mysteryV2','preorder_pending','preorderKeyTime','epic_ska','ubisoft_ska','origin_ska','vaultnKeyless'].every(k=>!leaf[k])
+      && (leaf.reveal_template===undefined||leaf.reveal_template==='store')&&leaf.serialExpiry==null;
+    return {keyStatus:ordinary&&!Object.hasOwn(leaf,'key')?'unrevealed':'unknown',keyCheckedAt:new Date().toISOString()};
+  };
+  const keySummaryInPage = origins => {
+    const observed=origins.filter(o=>o.keyCheckedAt&&['unrevealed','unknown'].includes(o.keyStatus));
+    if(!observed.length)return {};
+    const pending=observed.filter(o=>o.keyStatus==='unrevealed'),selected=pending.length?pending:observed;
+    return {keyStatus:pending.length?'unrevealed':'unknown',keyCheckedAt:selected.map(o=>o.keyCheckedAt).sort()[0]};
+  };
   const projectLeafInPage = (leaf, parent, order, purchaseRef) => {
     const sourceItemId = safeIdInPage(leaf?._id); const title = safeTextInPage(leaf?.name);
     if (!sourceItemId || !title) return null;
@@ -200,13 +215,13 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     const authors = Array.isArray(leaf?.authors) ? leaf.authors : typeof leaf?.author === 'string' ? [leaf.author] : [];
     const names = [...new Set(authors.map(value => safeTextInPage(value)).filter(Boolean))].slice(0, 50);
     if (names.length) catalog.authors = names;
-    const formats = formatsInPage(leaf);
+    const formats = formatsInPage(leaf), keyEvidence=keyEvidenceInPage(leaf);
     const hasDownloads = (Array.isArray(leaf?.downloads) && leaf.downloads.length > 0)
       || (leaf?.download && typeof leaf.download === 'object')
       || (Array.isArray(leaf?.files) && leaf.files.length > 0)
       || Boolean(leaf?.format || (Array.isArray(leaf?.formats) && leaf.formats.length > 0));
     return {
-      source: 'fanatical', sourceItemId, title,
+      source: 'fanatical', sourceItemId, title, ...keyEvidence,
       ...(safeTextInPage(leaf?.slug, 300) ? { slug: safeTextInPage(leaf.slug, 300) } : {}),
       mediaType: mediaTypeInPage(leaf?.display_type ?? leaf?.type),
       ...(safeTextInPage(leaf?.delivery) ? { delivery: safeTextInPage(leaf.delivery) } : {}),
@@ -219,7 +234,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
       bundle: { sourceItemId: safeIdInPage(parent?._id), title: safeTextInPage(parent?.name), ...(safeTextInPage(parent?.slug, 300) ? { slug: safeTextInPage(parent.slug, 300) } : {}) },
       purchaseDate: safeDateInPage(order?.date),
       purchaseOrigins: [{
-        purchaseRef,
+        purchaseRef,...keyEvidence,
         bundle: { sourceItemId: safeIdInPage(parent?._id), title: safeTextInPage(parent?.name), ...(safeTextInPage(parent?.slug, 300) ? { slug: safeTextInPage(parent.slug, 300) } : {}) },
         purchaseDate: safeDateInPage(order?.date),
         quantity: 1,
@@ -251,6 +266,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
             ...saved,
             ...origin,
             quantity: saved.quantity + origin.quantity,
+            ...keySummaryInPage([saved,origin]),
             ...(mergedDelivery ? { delivery: mergedDelivery } : {}),
             ...(mergedStreaming ? { streaming: true } : {}),
             ...(combinedFormats !== undefined ? { formats: combinedFormats } : {})
@@ -270,7 +286,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
         ...(mergedItemDelivery ? { delivery: mergedItemDelivery } : {}),
         ...(mergedItemStreaming ? { streaming: true } : {}),
         ...(combinedItemFormats !== undefined ? { formats: combinedItemFormats } : {}),
-        purchaseOrigins:[...origins.values()]
+        purchaseOrigins:[...origins.values()],...keySummaryInPage([...origins.values()])
         ,...(previous?.occurrences||product.occurrences?{occurrences:[...(previous?.occurrences??[]),...(product.occurrences??[])]}:{})
       });
     }
@@ -635,7 +651,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
           if (typeof leaf?._id !== 'string'){issue('detailProductIdentity');throw unreadable();}
           const projected = projectLeafInPage(leaf, parent, order, fingerprint);
           if (!projected){issue('detailProjection');throw unreadable();}
-          projected.occurrences=[{occurrenceRef:await fingerprintOrderInPage(`${order._id}\u0000${occurrence++}\u0000${parent._id}\u0000${leaf._id}`),orderRef:fingerprint,bundleId:parent._id,bundleTitle:safeTextInPage(parent.name),purchasedAt:safeDateInPage(order.date)}];
+          projected.occurrences=[{occurrenceRef:await fingerprintOrderInPage(`${order._id}\u0000${occurrence++}\u0000${parent._id}\u0000${leaf._id}`),orderRef:fingerprint,bundleId:parent._id,bundleTitle:safeTextInPage(parent.name),purchasedAt:safeDateInPage(order.date),...keyEvidenceInPage(leaf)}];
           projectedItems.push(projected);
         }
       }

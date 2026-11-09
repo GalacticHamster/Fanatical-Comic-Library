@@ -10,6 +10,16 @@ const safeDate = (value) => typeof value === 'string' && !Number.isNaN(Date.pars
 const safeList = (value) => [...new Set((Array.isArray(value) ? value : []).map((entry) => safeText(entry, 40)).filter(Boolean))].sort().slice(0, 30);
 const count = (value) => Number.isFinite(Number(value)) ? Math.max(0, Math.floor(Number(value))) : 0;
 
+export function keyObservation(value){
+  if(value?.keyStatus===undefined&&value?.keyCheckedAt===undefined)return {};
+  if(!['unknown','unrevealed'].includes(value.keyStatus)||!safeDate(value.keyCheckedAt))throw Error('Invalid key observation.');
+  return {keyStatus:value.keyStatus,keyCheckedAt:safeDate(value.keyCheckedAt)};
+}
+export function keySummary(origins=[]){
+  const observed=origins.filter(o=>o.keyCheckedAt&&['unknown','unrevealed'].includes(o.keyStatus));if(!observed.length)return {};
+  const pending=observed.filter(o=>o.keyStatus==='unrevealed'),selected=pending.length?pending:observed;
+  return {keyStatus:pending.length?'unrevealed':'unknown',keyCheckedAt:selected.map(o=>o.keyCheckedAt).sort()[0]};
+}
 function purchaseOrigins(value,strict=false){
   if(value===undefined)return undefined;
   if(!Array.isArray(value)||value.length>100000)throw new Error('Invalid purchase origins.');
@@ -20,7 +30,7 @@ function purchaseOrigins(value,strict=false){
       ...(origin.purchaseRef?{purchaseRef:origin.purchaseRef.toLowerCase()}:{}),
       bundle:{sourceItemId:safeId(origin.bundle?.sourceItemId),title:safeText(origin.bundle?.title),...(safeText(origin.bundle?.slug,300)?{slug:safeText(origin.bundle.slug,300)}:{})},
       purchaseDate:safeDate(origin.purchaseDate),
-      quantity:origin.quantity??1,
+      quantity:origin.quantity??1,...keyObservation(origin),
       ...(origin.delivery ? { delivery: safeText(origin.delivery) } : {}),
       ...(origin.streaming ? { streaming: true } : {}),
       ...(Array.isArray(origin.drm) && origin.drm.length ? { drm: safeList(origin.drm) } : {}),
@@ -47,6 +57,7 @@ function mergeProduct(previous,incoming){
         ...prev,
         ...origin,
         quantity: Math.max(prev.quantity || 1, origin.quantity || 1),
+        ...keyObservation(Date.parse(origin.keyCheckedAt)>=Date.parse(prev.keyCheckedAt)||!prev.keyCheckedAt?origin:prev),
         ...(mergedDelivery ? { delivery: mergedDelivery } : {}),
         ...(mergedStreaming ? { streaming: true } : {}),
         ...(combinedFormats !== undefined ? { formats: combinedFormats } : {})
@@ -64,7 +75,7 @@ function mergeProduct(previous,incoming){
     ...(mergedDelivery ? { delivery: mergedDelivery } : {}),
     ...(mergedStreaming ? { streaming: true } : {}),
     ...(combinedFormats !== undefined ? { formats: combinedFormats } : {}),
-    purchaseOrigins:[...origins.values()]
+    purchaseOrigins:[...origins.values()],...keySummary([...origins.values()])
   };
 }
 export function mergeLibraryItems(items){return sanitizeImportResult({items}).items;}
@@ -81,7 +92,7 @@ export function sanitizeImportResult(value) {
     if (/^\d{1,16}$/u.test(String(candidate?.externalIds?.steamAppId ?? ''))) externalIds.steamAppId = String(candidate.externalIds.steamAppId);
     if (/^[0-9X]{10,17}$/iu.test(String(candidate?.externalIds?.isbn ?? ''))) externalIds.isbn = String(candidate.externalIds.isbn).toUpperCase();
     const projected = {
-      source: 'fanatical', sourceItemId, title,
+      source: 'fanatical', sourceItemId, title,...keyObservation(candidate),
       ...(safeText(candidate?.slug, 300) ? { slug: safeText(candidate.slug, 300) } : {}),
       mediaType: ['game', 'book', 'comic', 'audiobook', 'software', 'audio', 'video', 'elearning', 'unclassified', 'other'].includes(candidate?.mediaType) ? candidate.mediaType : 'other',
       ...(candidate?.automaticMediaType ? { automaticMediaType: candidate.automaticMediaType } : {}),
@@ -118,7 +129,7 @@ export function parseLibraryBackup(value) {
   }
   if(value.schemaVersion>=3){if(value.format!=='fanatical-library-backup'||!Array.isArray(value.wishlistItems))throw Error('Invalid recoverable backup.');globalThis.FanaticalLibrary.normalizeWishlist(value.wishlistItems);}
   if(value.schemaVersion>=4)parseHistoricalItems(value.historicalItems,value.profileLabel);
-  for(const item of value.items){if(item.mediaType!==undefined&&!['game','book','comic','audiobook','software','audio','video','elearning','unclassified','other'].includes(item.mediaType))throw new Error('Invalid backup media type.');purchaseOrigins(item.purchaseOrigins,true);}
+  for(const item of value.items){keyObservation(item);if(item.mediaType!==undefined&&!['game','book','comic','audiobook','software','audio','video','elearning','unclassified','other'].includes(item.mediaType))throw new Error('Invalid backup media type.');purchaseOrigins(item.purchaseOrigins,true);}
   if (value.mediaTypeOverrides !== undefined) {
     if (typeof value.mediaTypeOverrides !== 'object' || Array.isArray(value.mediaTypeOverrides) || value.mediaTypeOverrides === null) throw new Error('Invalid backup media type overrides.');
     for (const [, v] of Object.entries(value.mediaTypeOverrides)) {

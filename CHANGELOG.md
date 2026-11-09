@@ -2,6 +2,8 @@
 
 ## 1.0.3 — Release candidate
 
+- Record dated unrevealed-key observations for supported Steam purchases without reading or revealing keys. Share them through compatible, consented GL purchase sync and show them in Key and access reminders. Quick checks new purchases; Full refreshes older observations.
+
 - Recognize standalone purchased game items with empty bundle arrays in authenticated orders, including pick-and-mix selections. Require exact order/product evidence and retain duplicate occurrences, partial-save safeguards and unverified array-only coverage.
 
 - Refresh an already-open Library when imports commit in another tab, reading item/account context together and retaining unsaved settings drafts. Preserve exact detail-failure diagnostics when repeated sparse summary shapes reach the report limit.
@@ -14,7 +16,7 @@
 
 - Show bounded progress and waiting feedback during long-running purchase imports, helping distinguish active work from delayed order responses.
 
-This is a maintenance update since published 1.0.2. Additional local corrections improve import compatibility and diagnostics without changing ownership or purchase-synchronization rules. Prepared locally for review; not submitted or published. Permissions and protocols are unchanged.
+This is a maintenance update since published 1.0.2. Additional local corrections improve import compatibility and diagnostics without changing ownership or purchase-synchronization rules. Prepared locally for review; not submitted or published. Permissions and protocol versions are unchanged.
 
 ## 1.0.2
 

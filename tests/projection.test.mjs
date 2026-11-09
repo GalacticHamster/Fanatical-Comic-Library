@@ -18,7 +18,7 @@ test('safe order projection keeps only an explicit ownership allowlist', async (
   }]);
   assert.equal(output.ordersScanned, 1);
   assert.equal(output.items.length, 1);
-  const {purchaseOrigins,...projected}=output.items[0];assert.equal(purchaseOrigins.length,1);assert.equal(purchaseOrigins[0].quantity,1);assert.match(purchaseOrigins[0].purchaseRef,/^[a-f0-9]{64}$/u);
+  const {purchaseOrigins,keyStatus,keyCheckedAt,...projected}=output.items[0];assert.equal(keyStatus,"unknown");assert(Number.isFinite(Date.parse(keyCheckedAt)));assert.equal(purchaseOrigins[0].keyStatus,"unknown");assert.equal(purchaseOrigins[0].keyCheckedAt,keyCheckedAt);assert.equal(purchaseOrigins.length,1);assert.equal(purchaseOrigins[0].quantity,1);assert.match(purchaseOrigins[0].purchaseRef,/^[a-f0-9]{64}$/u);
   assert.deepEqual(projected, {
     source: 'fanatical', sourceItemId: 'leaf-123456', title: 'Safe Game', slug: 'safe-game', mediaType: 'game',
     externalIds: { steamAppId: '42', isbn: '9781234567890' }, drm: ['steam'], platforms: ['windows'], formats: ['pdf'],

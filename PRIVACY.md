@@ -1,6 +1,6 @@
 # Privacy Policy for Fanatical Library
 
-Last updated: November 3, 2026
+Last updated: November 9, 2026
 
 Fanatical Library is an unofficial browser extension for comparing a person's Fanatical purchase library with product and bundle listings. It is not affiliated with or endorsed by Fanatical.
 
@@ -9,6 +9,8 @@ Fanatical Library is an unofficial browser extension for comparing a person's Fa
 When the user imports purchases, the extension reads the signed-in Fanatical order list and order details. It saves supported item titles, media types, formats, product identifiers, purchase references, dates, bundle associations, and purchase provenance in the browser profile. It also saves scan fingerprints and summaries, profile labels and archived accounts, historical purchases, wishlist/planning information, media-type corrections, excluded import records, preferences, and companion connection state.
 
 The importer temporarily reads the Fanatical session token from the site's signed-in state to authenticate requests to Fanatical's order API. The token is used in the page's import context, not retained in saved extension state, logs, backups, or companion transfers. Raw order responses are projected into supported metadata rather than saved wholesale. The extension does not request passwords or retain payment-card details or redemption-key values. This describes saved data handling, not a guarantee of immediate memory erasure.
+
+For supported ordinary Steam purchases, the importer saves a dated non-secret observation when the order indicates an unrevealed key. It checks whether a key field exists without reading its value. Ambiguous or unsupported reveal evidence remains unknown. Reveal status does not establish Steam activation, and the importer does not reveal or redeem keys.
 
 Historical purchases can support history-only warnings; they do not by themselves establish current access. The user can also explicitly select a manual title file or backup for import.
 
@@ -20,7 +22,7 @@ The extension does not send library data to a Galactic Hamster-operated server a
 
 With a compatible installed Galactic Library companion, listing comparisons send titles, media types, and available identity metadata through local extension messaging. GL returns bounded matching and access information from other providers. This comparison is separate from purchase synchronization and does not send a full library backup or credentials.
 
-After the user confirms a specific Fanatical account relationship, **Connect and sync** authorizes bidirectional exchange of saved Fanatical purchase records with GL. Transfers include account references and labels, item and bundle identifiers, titles, available dates, formats, and purchase provenance supported by the transfer format. Subsequent saved-purchase changes synchronize automatically, with background retries. Manual purchase transfers are also available. Recognizing an official companion does not alone authorize purchase writes.
+After the user confirms a specific Fanatical account relationship, **Connect and sync** authorizes bidirectional exchange of saved Fanatical purchase records with GL. Transfers include account references and labels, item and bundle identifiers, titles, available dates, formats, and purchase provenance supported by the transfer format, including dated non-secret key observations when both extensions support them. Subsequent saved-purchase changes synchronize automatically, with background retries. Manual purchase transfers are also available. Recognizing an official companion does not alone authorize purchase writes.
 
 Inbound companion communication includes status/review requests and authorized purchase transfer and synchronization operations. It is checked against companion identity, provider, account scope, and the authorization required for the operation. Fanatical Library does not publish Humble key-reminder feeds. These are local installed-extension exchanges, not developer-server uploads. Disconnecting stops ongoing synchronization but does not erase purchases already saved in either extension.
 
