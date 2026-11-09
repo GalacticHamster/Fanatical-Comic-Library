@@ -1,3 +1,5 @@
+import {assertProviderRuntime} from './provider-engine-integrity.mjs';
+const providerPin=JSON.parse(await readFile(new URL('./provider-engine-pin.json',import.meta.url),'utf8'));
 import {readFile,realpath,stat} from 'node:fs/promises';
 import {resolve,relative,dirname,extname,posix,sep,isAbsolute} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -86,6 +88,6 @@ export async function createRelease(root=projectRoot,allowlist,target="chrome"){
     files.set(path,bytes);total+=bytes.length;if(total>40*1024*1024)throw new Error('Runtime package exceeds bound.');
   }
   if(target==='firefox'){const overlay=JSON.parse(await readFile(resolve(base,'manifests/firefox.json'),'utf8')),manifest={...JSON.parse(files.get('manifest.json')),...overlay};delete manifest.minimum_chrome_version;files.set('manifest.json',Buffer.from(JSON.stringify(manifest,null,2)+'\n'));}
-  const manifest=validateRuntime(files),zip=runtimeZip(files),extracted=readRuntimeZip(zip);if(extracted.size!==files.size)throw new Error('Archive file count mismatch.');
+  const manifest=validateRuntime(files);assertProviderRuntime(files,providerPin);const zip=runtimeZip(files),extracted=readRuntimeZip(zip);if(extracted.size!==files.size)throw new Error('Archive file count mismatch.');
   const report={name:manifest.name,version:manifest.version,sha256:hash(zip),files:[...files].map(([path,bytes])=>({path,bytes:bytes.length,sha256:hash(bytes)}))};return {zip,files:extracted,report};
 }

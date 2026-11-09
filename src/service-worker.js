@@ -1,3 +1,4 @@
+import {assertFanaticalAcquisitionContract} from './acquisition-contract.mjs';
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Galactic Hamster
 /* Chrome MV3 entry point. The only main-world execution is the strict importer. */
@@ -126,7 +127,9 @@ async function importPurchases({ fullScan = false, profileLabel='', confirmed=fa
     const report=scanReport({code:Object.hasOwn(SCAN_FAILURES,envelope.code)?envelope.code:'page-exception',diagnostic:envelope.diagnostic,requestedFull,actualFull:fullScan,localAccountConfirmed:true});
     throw Object.assign(new Error('Fanatical scan incomplete. '+SCAN_FAILURES[report.code]+' Your library and scan history were not changed.'),{scanDiagnostic:report});
   }
+  const authority=assertFanaticalAcquisitionContract(result[0]?.result,{fullScan,knownOrderFingerprints,accountOrderFingerprints});
   const projected = validateScanResult(result[0]?.result, { fullScan, knownOrderFingerprints });
+  if(authority.finished!==(projected.acquisitionComplete??true))throw Error('Fanatical acquisition/writer completeness disagreement.');
   if(projected.partialScanVersion&&projected.outcome!=='complete'){
     pageDiagnostic={listingEvidence:projected.coverage.listingEvidence,accountAffinity:projected.coverage.accountAffinity,stage:projected.failures[0].stage,pagesAttempted:projected.coverage.pagesFetched,pagesParsed:projected.coverage.pagesParsed,ordersRecognized:projected.coverage.listedOrders,detailsParsed:projected.ordersScanned,retries:projected.coverage.retries,terminalReached:projected.coverage.discoveryComplete,paginationEvidence:projected.coverage.paginationEvidence,authentication:'accepted-response'};
     stage='storage';

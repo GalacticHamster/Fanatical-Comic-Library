@@ -5,6 +5,7 @@
   "src/shared.js",
   "src/service-worker.js",
   "src/order-importer.mjs",
+  "src/acquisition-contract.mjs",
   "src/library-data.mjs",
   "src/content.js",
   "src/content.css",

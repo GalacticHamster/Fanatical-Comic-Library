@@ -1,0 +1,16 @@
+{
+  "revision": "fanatical-v1-7e1083e911fde62a",
+  "contractVersion": 1,
+  "engine": "0f806fb6d8c3c4ea38b593e485e5172a9077039a8526d24a7884c5f0eb001cba",
+  "adapter": "a80022376b5ab3d8b67033529b5afd5ea1eeceac84e30a5b2653a56948fba5bb",
+  "contract": "d1a1e0d0875ba4575df63a4f5c055bfd2506d3b7be88a66f39452954a60151e4",
+  "consumers": {
+    "GL": "09281573ceec68a6548c50ffe559f2fe671a6d5db2237dc82d97f95db899c174",
+    "FAN": "0f806fb6d8c3c4ea38b593e485e5172a9077039a8526d24a7884c5f0eb001cba"
+  },
+  "runtime": {
+    "src/order-importer.mjs": "0f806fb6d8c3c4ea38b593e485e5172a9077039a8526d24a7884c5f0eb001cba",
+    "src/acquisition-contract.mjs": "d1a1e0d0875ba4575df63a4f5c055bfd2506d3b7be88a66f39452954a60151e4",
+    "src/service-worker.js": "4a1f5fddb022d3c43541ac240ce4a36367c33ac0033a158218fccacbe67761d3"
+  }
+}

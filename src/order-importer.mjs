@@ -1,5 +1,5 @@
 /* Self-contained: Chrome serializes this exact function into the Fanatical page. */
-export async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerprints = [], scanHistoryMissing = false, progressId = '', operation = 'import', orderSummaries = [], orderDetails = [], returnFailure = false, allowPartial = false, accountOrderFingerprints = [] } = {}) {
+export async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerprints = [], scanHistoryMissing = false, progressId = '', operation = 'import', orderSummaries = [], orderDetails = [], returnFailure = false, allowPartial = false, accountOrderFingerprints = [], progressFormat = 'fan' } = {}) {
   // Chrome does not propagate MAIN-world exceptions to InjectionResult. Keep
   // errors in an explicit, aggregate-only envelope when called by the worker.
   const listingEvidence={arrayPages:0,objectPages:0,otherPages:0,headersReadablePages:0,linkHeaderPages:0,totalCountHeaderPages:0,contentRangeHeaderPages:0,nextReferencePages:0};
@@ -12,7 +12,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     activity.stage=stage;const now=Date.now();if(!force&&stage===progressStage&&now-progressAt<150)return;
     progressAt=now;progressStage=stage;
     if(!/^[a-f0-9]{32}$/u.test(progressId)||typeof window==='undefined')return;
-    try{window.postMessage({type:'FANATICAL_IMPORT_PROGRESS',progressId,progress:{...activity,sequence:++activity.sequence,elapsedMs:now-began}},'https://www.fanatical.com');}catch{/* Progress cannot affect acquisition. */}
+    try{const value={...activity,sequence:++activity.sequence,elapsedMs:now-began};window.postMessage(progressFormat==='gl'?{channel:'gl-fanatical-progress',progressId,progress:{...value,phase:stage}}:{type:'FANATICAL_IMPORT_PROGRESS',progressId,progress:value},'https://www.fanatical.com');}catch{/* Progress cannot affect acquisition. */}
   };
   const fatal=error=>['authentication-missing','authentication-rejected','session-changed','order-identity-conflict','account-scope-conflict'].includes(error?.fanaticalFailureCode);
   const note=(error,stage)=>{const code=error?.fanaticalFailureCode??'details-unreadable',key=stage+':'+code,old=failureCounts.get(key);failureCounts.set(key,{code,stage,count:(old?.count??0)+1});};
@@ -22,7 +22,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   // order identifiers, titles, authentication tokens or redemption values.
   let legacyProgressAt=0;
   const reportProgress = (progress) => {
-    if (!/^[a-f0-9]{32}$/u.test(progressId) || typeof window === 'undefined') return;
+    if (progressFormat==='gl'||!/^[a-f0-9]{32}$/u.test(progressId) || typeof window === 'undefined') return;
     if(progress.phase==='details'&&progress.completed!==progress.total&&Date.now()-legacyProgressAt<150)return;
     legacyProgressAt=Date.now();
     try { window.postMessage({type:'FANATICAL_IMPORT_PROGRESS',progressId,progress}, 'https://www.fanatical.com'); } catch { /* Progress must not affect scan results. */ }
@@ -243,6 +243,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
         ...(mergedItemStreaming ? { streaming: true } : {}),
         ...(combinedItemFormats !== undefined ? { formats: combinedItemFormats } : {}),
         purchaseOrigins:[...origins.values()]
+        ,...(previous?.occurrences||product.occurrences?{occurrences:[...(previous?.occurrences??[]),...(product.occurrences??[])]}:{})
       });
     }
     return [...items.values()].sort((a,b)=>a.sourceItemId.localeCompare(b.sourceItemId));
@@ -399,6 +400,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     return links;
   };
   const summaries = []; const visitedPages = new Set(); const pageOrderIds = new Set();
+  const summaryById=new Map(),conflictingIds=new Set();
   let path = '/api/user/orders'; let expectedTotal = null; let ranged = false; let linked = false; let declaredLast = null;
   const acceptTotal = (value) => {
     if (!Number.isSafeInteger(value) || value < 0 || value > maxOrders || (expectedTotal !== null && value !== expectedTotal)) throw incomplete('Pagination totals changed or were unreadable.','pagination-total');
@@ -407,12 +409,17 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   };
   const admitOrders=data=>{
     if(summaries.length+data.length>maxOrders)throw incomplete('The 100,000-order safety limit was reached.','order-limit');
-    const ids=new Set();
+    const ids=new Set(),accepted=[];
     for(const order of data){
-      if(!order||typeof order._id!=='string'||!safeIdInPage(order._id)||pageOrderIds.has(order._id)||ids.has(order._id)){unidentifiedRecords++;throw incomplete('Pagination returned an unreadable or repeated order.','pagination-order');}
-      ids.add(order._id);
+      if(!order||typeof order._id!=='string'||!safeIdInPage(order._id)){unidentifiedRecords++;throw incomplete('Pagination returned an unreadable order.','pagination-order');}
+      const previous=summaryById.get(order._id);
+      if(previous){
+        if(!allowPartial)throw incomplete('Pagination returned a repeated order.','pagination-order');
+        discoveryComplete=false;note(failure('pagination-order','Repeated purchase identity.'),'listing');if(JSON.stringify(previous)!==JSON.stringify(order))conflictingIds.add(order._id);continue;
+      }
+      ids.add(order._id);summaryById.set(order._id,order);accepted.push(order);
     }
-    for(const order of data){pageOrderIds.add(order._id);summaries.push(order);}
+    for(const order of accepted){pageOrderIds.add(order._id);summaries.push(order);}
     diagnostic.ordersRecognized=summaries.length;
   };
   diagnostic.stage='listing';
@@ -499,6 +506,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     if (!order || typeof order._id !== 'string' || !safeIdInPage(order._id) || listed.has(order._id)) throw unreadable();
     listed.add(order._id);
     try{
+      if(conflictingIds.has(order._id))throw unreadable();
       if(typeof order.status!=='string'||!/^[A-Z][A-Z_]*$/u.test(order.status))throw unreadable();
       if(order.status==='COMPLETE')expectedProducts.set(order._id,productCounts(order.items));
       else if(allowPartial){
@@ -527,8 +535,13 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   const known = new Set((Array.isArray(knownOrderFingerprints) ? knownOrderFingerprints : []).filter((fingerprint) => /^[a-f0-9]{64}$/iu.test(String(fingerprint))).map((fingerprint) => String(fingerprint).toLowerCase()));
   const listedFingerprints = new Set(await boundedMap([...listed], fingerprintOrderInPage));
   const accountKnown=new Set([...known,...(Array.isArray(accountOrderFingerprints)?accountOrderFingerprints:[]).filter(fp=>typeof fp==='string'&&/^[a-f0-9]{64}$/u.test(fp)).slice(0,100000)]);
-  if(allowPartial&&accountKnown.size&&![...accountKnown].some(fp=>listedFingerprints.has(fp)))throw failure('account-scope-conflict','The listing does not share saved purchase identity evidence. Confirm or change the account before importing.');
-  if ([...known].some((fingerprint) => !listedFingerprints.has(fingerprint))) {
+  const accountOverlap=[...accountKnown].some(fp=>listedFingerprints.has(fp));
+  // Absence supplies neither continuity nor conflict evidence. Only a clean
+  // headerless empty acquisition can finish without resolving saved absence;
+  // it grants no complete-history or reconciliation authority.
+  const unverifiedEmpty=allowPartial&&!listedFingerprints.size&&diagnostic.paginationEvidence==='array-only'&&diagnostic.pagesParsed===visitedPages.size&&!unidentifiedRecords&&failureCounts.size===1&&[...failureCounts.values()][0].code==='discovery-unverified';
+  if(allowPartial&&accountKnown.size&&listedFingerprints.size&&!accountOverlap)throw failure('account-scope-conflict','The listing does not share saved purchase identity evidence. Confirm or change the account before importing.');
+  if (!unverifiedEmpty&&[...known].some((fingerprint) => !listedFingerprints.has(fingerprint))) {
     const error=failure('history-missing-known','Fanatical order history omits previously scanned orders, so complete coverage could not be confirmed. Your library and scan history were not changed.');
     if(!allowPartial)throw error;discoveryComplete=false;note(error,'listing');
   }
@@ -548,6 +561,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     const expected = expectedProducts.get(order._id);
     const actual = productCounts(order.items);
     if (actual.size !== expected.size || [...expected].some(([key, quantity]) => actual.get(key) !== quantity)) throw unreadable();
+    let occurrence=0;
     for (const parent of order.items) {
       if (!parent || typeof parent._id !== 'string' || !safeIdInPage(parent._id) || !safeTextInPage(parent.name) || !Array.isArray(parent.bundles) || !parent.bundles.length) throw unreadable();
       for (const group of parent.bundles) {
@@ -556,6 +570,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
           if (typeof leaf?._id !== 'string') throw unreadable();
           const projected = projectLeafInPage(leaf, parent, order, fingerprint);
           if (!projected) throw unreadable();
+          projected.occurrences=[{occurrenceRef:await fingerprintOrderInPage(`${order._id}\u0000${occurrence++}\u0000${parent._id}\u0000${leaf._id}`),orderRef:fingerprint,bundleId:parent._id,bundleTitle:safeTextInPage(parent.name),purchasedAt:safeDateInPage(order.date)}];
           projectedItems.push(projected);
         }
       }
@@ -574,10 +589,12 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   if(currentToken!==token)throw failure('session-changed','The signed-in Fanatical session changed during this scan. Start a fresh scan.');
   // `token`, summaries, details, and raw leaves remain in this execution world.
   const outcome=!discoveryComplete?'partial-discovery':unresolved.size?'partial-extraction':'complete';
+  const finished=outcome==='complete'||outcome==='partial-discovery'&&diagnostic.paginationEvidence==='array-only'&&diagnostic.pagesParsed===visitedPages.size&&!unresolved.size&&!unidentifiedRecords&&failureCounts.size===1&&[...failureCounts.values()][0].code==='discovery-unverified';
   return {
+    acquisitionContract:{version:1,provider:'fanatical',acquisition:{outcome:finished?'finished':'interrupted'},verified:[...verified].sort(),unresolved:[...unresolved].sort(),ineligible:[...ineligible].sort(),coverage:{status:outcome==='complete'?'verified':finished?'unverified':'incomplete',evidence:[diagnostic.paginationEvidence]},scope:{authority:accountOverlap?'saved-order-match':'declared-scope'},retry:[...unresolved].sort(),persistence:{outcome:'not-attempted'},reconciliation:{authority:'none'}},
     ...(allowPartial?{partialScanVersion:1,outcome,verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...listedFingerprints],failures:[...failureCounts.values()],unidentifiedRecords}:{}),
     schemaVersion: 1,
-    coverage: { complete: allowPartial?outcome==='complete':true,...(allowPartial?{listingEvidence,discoveryComplete,pagesParsed:diagnostic.pagesParsed,accountAffinity:accountKnown.size?'saved-order-match':'declared-scope'}:{}), listedOrders: summaries.length, validatedOrders: allowPartial?verified.size:details.length, emptyAccount: summaries.length === 0,
+    coverage: { complete: allowPartial?outcome==='complete':true,...(allowPartial?{listingEvidence,discoveryComplete,pagesParsed:diagnostic.pagesParsed,accountAffinity:accountOverlap?'saved-order-match':'declared-scope'}:{}), listedOrders: summaries.length, validatedOrders: allowPartial?verified.size:details.length, emptyAccount: summaries.length === 0,
       pagesFetched: visitedPages.size, expectedTotal, paginationEvidence: ranged ? 'range' : expectedTotal !== null ? 'count' : linked ? 'link' : 'array-only', retries, concurrency },
     ordersScanned: allowPartial?verified.size:toInspect.length,
     ordersAvailable: complete.length,
