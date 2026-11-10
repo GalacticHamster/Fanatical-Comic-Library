@@ -8,6 +8,15 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   const issue=key=>{compatibility.counts[key]++;};
   const valueType=v=>v===undefined?'missing':v===null?'null':Array.isArray(v)?'array':['object','string','number','boolean'].includes(typeof v)?typeof v:'other';
   // Bounded shapes at the failing boundary, never provider keys or values.
+  const recordMismatch = (category, expectedCount = 0, observedCount = 0) => {
+    const report = compatibility.productMismatches ??= { version: 1, records: [], truncated: false };
+    if (report.records.length >= 8) { report.truncated = true; return; }
+    report.records.push({
+      category,
+      expectedCount: Number.isSafeInteger(expectedCount) && expectedCount >= 0 ? Math.min(expectedCount, 100000) : 0,
+      observedCount: Number.isSafeInteger(observedCount) && observedCount >= 0 ? Math.min(observedCount, 100000) : 0
+    });
+  };
   const bundleShape=(parent,reason,selectedChild)=>{
     const shapes=compatibility.bundleShapes??={version:1,records:[],truncated:false};
     if(shapes.records.length>=8){shapes.truncated=true;const summary=diagnostic.stage==='details'?shapes.records.findIndex(r=>r.stage==='summaries'):-1;if(summary<0)return;shapes.records.splice(summary,1);}
@@ -562,9 +571,15 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   const expectedProducts = new Map();
   const sparseSummaries=new Map();
   const parentEvidence=parents=>{
-    const names=new Map(),ids=new Map(),direct=new Map();
-    for(const parent of parents){const name=safeTextInPage(parent.name);names.set(name,(names.get(name)??0)+1);if(parent._id!==undefined){const key=JSON.stringify([name,parent._id]);ids.set(key,(ids.get(key)??0)+1);}if(isDirectPurchasedItem(parent)){const key=JSON.stringify([parent._id,name]);direct.set(key,(direct.get(key)??0)+1);}}
-    return {names,ids,direct};
+    const names=new Map(),ids=new Map(),direct=new Map(),pickAndMix=new Map();
+    for(const parent of parents){
+      if(isPromotionalLeaf(parent))continue;
+      const name=safeTextInPage(parent.name);names.set(name,(names.get(name)??0)+1);
+      if(parent._id!==undefined){const key=JSON.stringify([name,parent._id]);ids.set(key,(ids.get(key)??0)+1);}
+      if(isDirectPurchasedItem(parent)){const key=JSON.stringify([parent._id,name]);direct.set(key,(direct.get(key)??0)+1);}
+      const pam=safeTextInPage(parent.pickAndMix);if(pam)pickAndMix.set(pam,(pickAndMix.get(pam)??0)+1);
+    }
+    return {names,ids,direct,pickAndMix};
   };
   const productCounts = (parents) => {
     const bad=(key,parent,child,reason=key)=>{if(diagnostic.stage==='details')bundleShape(parent,reason,{value:child});issue(diagnostic.stage==='summaries'?key:'detailStructure');throw unreadable();};
@@ -683,8 +698,36 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     const actual = productCounts(order.items);
     if(sparse){
       const actualParents=parentEvidence(order.items);
-      if(sparse.names.size!==actualParents.names.size||[...sparse.names].some(([name,n])=>actualParents.names.get(name)!==n)||[...sparse.ids].some(([key,n])=>(actualParents.ids.get(key)??0)<n)||[...sparse.direct].some(([key,n])=>(actualParents.direct.get(key)??0)<n)||[...expected].some(([key,n])=>(actual.get(key)??0)<n)){issue('detailProductMismatch');throw unreadable();}
-    }else if (actual.size !== expected.size || [...expected].some(([key, quantity]) => actual.get(key) !== quantity)){issue('detailProductMismatch');throw unreadable();}
+      let mismatchCategory=null,expCount=0,obsCount=0;
+      for(const [name,count] of sparse.names){
+        const directCount=actualParents.names.get(name)??0,pamCount=actualParents.pickAndMix.get(name)??0;
+        if(directCount<count&&pamCount<count){mismatchCategory='parent-missing';expCount=count;obsCount=directCount+pamCount;break;}
+      }
+      if(!mismatchCategory){
+        for(const parent of order.items){
+          if(isPromotionalLeaf(parent))continue;
+          const name=safeTextInPage(parent.name),pam=safeTextInPage(parent.pickAndMix);
+          if(!sparse.names.has(name)&&!(pam&&sparse.names.has(pam))){mismatchCategory='unexpected-detail-item';expCount=0;obsCount=1;break;}
+        }
+      }
+      if(!mismatchCategory){
+        for(const [key,n] of sparse.ids){const obs=actualParents.ids.get(key)??0;if(obs<n){mismatchCategory='id-missing';expCount=n;obsCount=obs;break;}}
+      }
+      if(!mismatchCategory){
+        for(const [key,n] of sparse.direct){const obs=actualParents.direct.get(key)??0;if(obs<n){mismatchCategory='direct-missing';expCount=n;obsCount=obs;break;}}
+      }
+      if(!mismatchCategory){
+        for(const [key,n] of expected){const obs=actual.get(key)??0;if(obs<n){mismatchCategory='product-missing';expCount=n;obsCount=obs;break;}}
+      }
+      if(mismatchCategory){
+        recordMismatch(mismatchCategory,expCount,obsCount);
+        issue('detailProductMismatch');throw unreadable();
+      }
+    }else if (actual.size !== expected.size || [...expected].some(([key, quantity]) => actual.get(key) !== quantity)){
+      if(actual.size!==expected.size){recordMismatch('product-count',expected.size,actual.size);}
+      else{const missing=[...expected].find(([key,quantity])=>(actual.get(key)??0)<quantity);recordMismatch('product-missing',missing?missing[1]:1,missing?(actual.get(missing[0])??0):0);}
+      issue('detailProductMismatch');throw unreadable();
+    }
     let occurrence=0;
     for (const parent of order.items) {
       if (isPromotionalLeaf(parent)) {
