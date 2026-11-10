@@ -1015,7 +1015,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
 
   $('#reset').addEventListener('click', async () => {
     if (libraryBusy) return;
-    if (!confirm('Clear all saved accounts, every locally stored Fanatical title, scan history, and import summary? Your wishlist, display preferences and Galactic Library link will be kept.')) return;
+    if (!confirm('Clear all saved accounts, every locally stored Fanatical title, scan history, and import summary? Your wishlist, display preferences, sharing preference and Galactic Library link will be kept. Turn automatic sharing off first if you do not want Galactic Library to send its saved purchases back.')) return;
     setLibraryBusy(true);
     try {
       await mutate('clear');

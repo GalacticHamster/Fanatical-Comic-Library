@@ -324,7 +324,10 @@ test('full and incremental imports above 20 MiB retain account evidence and corr
 });
 
 function harness({ list = [summary], details = { [orderId]: detail }, headers = {}, status = 200, invalidJSON = false, known = [], scriptResult, respond, authRead=()=>'SECRET-TOKEN', pageOverrides = {}, initial = {}, onSet, partial = true, runtime = workerRuntime } = {}) {
-  const stored = structuredClone({ ...previous, fanaticalAccountId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',fanaticalProfileLabel:'fixture',fanaticalProfileArchives:[],fanaticalScannedOrderFingerprints: known, ...initial });
+  // Import atomicity is measured independently of companion discovery. This
+  // standalone fixture has an explicit new-model opt-out; default migration
+  // and installed automatic sharing are exercised in their own suites.
+  const stored = structuredClone({ ...previous, galacticPurchaseSharing:{version:1,humble:false,fanatical:false}, fanaticalAccountId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',fanaticalProfileLabel:'fixture',fanaticalProfileArchives:[],fanaticalScannedOrderFingerprints: known, ...initial });
   const before = structuredClone(stored); const writes = []; const paths = []; const receipts = [];
   const listeners=[]; let active = 0; let maxActive = 0;
   const page = { TextEncoder, crypto: webcrypto, URL, AbortController, setTimeout, clearTimeout, ...pageOverrides, localStorage: { getItem: () => JSON.stringify({ token:authRead() }) }, fetch: async (url, options) => {

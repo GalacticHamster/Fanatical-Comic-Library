@@ -118,6 +118,11 @@ try{
    console.log('PASS installed FAN '+(firefox?'Firefox':'Chrome')+': partial Full, reload Quick retry, unchanged Quick, browser restart, empty Full/Quick preserve purchases, account, history and checkpoints');
    // Fresh-account 6/3/24 regression, with the Library tab kept open throughout.
    const optionsUrl=reportUrl.replace('test-report.html','src/options.html');await navigate(optionsUrl);await wait('return !!globalThis.LibraryBrowser&&!!document.querySelector("#preview-note").textContent;','Options initial render not ready');
+   // The next scenarios test a standalone empty library. Default-on sharing
+   // intentionally refills a cleared receiver; opt out before clearing so the
+   // previous integration scenario cannot add its saved purchases here.
+   const sharing=await evaluate('return await chrome.runtime.sendMessage({type:"GH_PURCHASE_ACTION",action:"syncState",provider:"fanatical"});');
+   if(typeof sharing.sharing==='boolean'){const off=await evaluate('return await chrome.runtime.sendMessage({type:"GH_PURCHASE_ACTION",action:"syncSetSharing",provider:"fanatical",enabled:false});');assert(off.ok,off.error);}
    const cleared=await evaluate('return await chrome.runtime.sendMessage({type:"FANATICAL_STORE",operation:"clear",args:[]});');assert(cleared.ok,cleared.error);
    await wait('return document.querySelector("#library-count").textContent.includes("0 unique items")&&document.querySelector("#preview-note").textContent.includes("Your library is empty");','Open options did not finish reflecting clear');
    await evaluate('document.querySelector("#galactic-id").value="unsaved draft";return true;');

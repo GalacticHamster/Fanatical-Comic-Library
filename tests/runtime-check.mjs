@@ -29,13 +29,18 @@ try{
   const installed=await driver.send('Extensions.loadUnpacked',{path:stage}),options=await attach('chrome-extension://'+installed.id+'/src/options.html');
   await wait("document.querySelector('#library-count')?.textContent.includes('stored locally')",options);
   const checks=await evaluate(`(async()=>{
+    // Isolate transaction atomicity from independent default-on discovery's
+    // lazy account-registry updates. Automatic sharing has separate installed journeys.
+    const off=await chrome.runtime.sendMessage({type:'GH_PURCHASE_ACTION',action:'syncSetSharing',provider:'fanatical',enabled:false});if(!off.ok)throw Error(off.error);
+    await chrome.runtime.sendMessage({type:'GH_PURCHASE_ACTION',action:'syncState',provider:'fanatical'});
     const absent=await FanaticalLibrary.galacticAvailability(message=>chrome.runtime.sendMessage('nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn',message));
     if(absent.state!=='unavailable')throw Error('Native no-receiver availability failed');
     const send=(operation,...args)=>chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation,args});
     let response=await send('wishlist','add',[{title:'Native wish',mediaType:'book',weight:7,token:'SYNTHETIC-SECRET'}]);if(!response.ok)throw Error(response.error);
     response=await send('backup');if(!response.ok||response.result.schemaVersion!==4||response.result.wishlistItems[0].weight!==7||JSON.stringify(response).includes('SYNTHETIC-SECRET'))throw Error('Native queued wishlist/backup failed');
     const backup=response.result;await send('wishlist','replace',[]);response=await send('restore',backup);if(!response.ok||(await chrome.storage.local.get('fanaticalWishlistItems')).fanaticalWishlistItems.length!==1)throw Error('Native backup restore failed');
-    const before=JSON.stringify(await chrome.storage.local.get(null));response=await send('restore',{...backup,items:[{title:'Invalid',source:'fanatical'}]});if(response.ok||JSON.stringify(await chrome.storage.local.get(null))!==before)throw Error('Invalid native restore changed state');
+    await chrome.runtime.sendMessage({type:'GH_PURCHASE_ACTION',action:'syncState',provider:'fanatical'});
+    const before=JSON.stringify(await chrome.storage.local.get(null));response=await send('restore',{...backup,items:[{title:'Invalid',source:'fanatical'}]});const after=await chrome.storage.local.get(null);if(response.ok||JSON.stringify(after)!==before)throw Error('Invalid native restore changed state: '+JSON.stringify(Object.keys({...JSON.parse(before),...after}).filter(k=>JSON.stringify(JSON.parse(before)[k])!==JSON.stringify(after[k]))));
     response=await chrome.runtime.sendMessage({type:'FANATICAL_IMPORT_PURCHASES',profileLabel:'synthetic',confirmed:true});if(response.ok)throw Error('Options bypassed Orders sender guard');
     return ['real missing-receiver availability','real queued wishlist/backup/restore','invalid restore is atomic','Orders sender guard'];
   })()`,options);checks.forEach(check=>console.log('PASS installed Chrome: '+check));
@@ -148,6 +153,7 @@ try{
     await evaluate(`(async()=>{const S=await import('./src/lib/storage.js');await S.saveAllowedExternalClientIds([${JSON.stringify(installed.id)}]);return true;})()`,centralSession);
     await evaluate(`chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'patch',args:[{galacticLibraryExtensionId:${JSON.stringify(centralExtensionId)}}]})`,options);
     const syncCall=fields=>evaluate(`chrome.runtime.sendMessage(${JSON.stringify({type:'GH_PURCHASE_ACTION',provider:'fanatical',...fields})})`,centralSession);
+    const enabled=await evaluate("chrome.runtime.sendMessage({type:'GH_PURCHASE_ACTION',action:'syncSetSharing',provider:'fanatical',enabled:true})",options);assert(enabled.ok,enabled.error);
     let choices=await syncCall({action:'syncChoices',peerId:installed.id});assert(choices.ok,choices.error);
     let result=await syncCall({action:'syncConnect',peerId:choices.peerId,localId:choices.accounts[0].stableId,remoteId:choices.remoteAccounts[0].stableId,confirmed:true,sameAccount:true});assert(result.ok,result.error);
     const waitForOrigins=async count=>{for(let n=0;n<300;n++){if(await evaluate(`(async()=>{const S=await import('./src/lib/storage.js');return Object.values((await S.getDatabase()).providerItems).some(i=>i.provider==='fanatical'&&i.providerItemId==='product-123456'&&i.metadata.purchaseOrigins?.length===${count});})()`,centralSession))return;await pause(20);}throw Error('GL did not receive '+count+' Fanatical purchase origins');};

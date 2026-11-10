@@ -7,7 +7,7 @@ bundle-planning information for supported games, books/comics, audiobooks and so
 
 It works independently using purchase metadata stored locally in your browser.
 Optional Galactic Library integration adds identity and reviewed contents evidence
-from other libraries; saved-purchase synchronization requires explicit account consent.
+from other libraries; supported saved-purchase synchronization is on by default when GL is installed, with a persistent opt-out.
 It is not affiliated with or endorsed by Fanatical.
 
 [Privacy policy](PRIVACY.md) | [Import and backup guide](docs/backups-and-purchases.md) | [Galactic Library setup](docs/companion-pairing.md) | [Report an issue](https://github.com/GalacticHamster/Fanatical-Comic-Library/issues)
@@ -326,7 +326,7 @@ The purchase importer groups its description, three account controls, and status
 
 Both companions offer a searchable, paged wishlist with editable priorities and separate wishlist export/restore. Wishes influence planning on bundles you open; there is no background bundle discovery or wishlist notification. Each companion keeps its own wishes. Both offer ownership backups and a title catalog export containing identity metadata only. Ownership backup formats remain provider-specific: FAN full backups include wishes and reset scan authority on restore; HB preserves wishes during ownership restore and exports them separately. Clearing the library preserves wishes, display preferences and pairing.
 
-HB's optional manual title replacement and reviewed collection mappings live under Advanced in Settings, with a shipped JSON example and review instructions. HB collects local Humble key reminders and can manually share them with GL; FAN records dated unrevealed-key observations for supported Steam purchases, displays and reviews them locally without GL, and optionally shares observations and reviews through confirmed GL purchase synchronization. Its separate optional GL list supports cross-provider reminders. These observations never establish redemption status. Privacy explanations reflect each provider's actual storage behavior.
+HB's optional manual title replacement and reviewed collection mappings live under Advanced in Settings, with a shipped JSON example and review instructions. HB collects local Humble key reminders and shares supported evidence under the automatic-sharing setting; FAN records dated unrevealed-key observations for supported Steam purchases, displays and reviews them locally without GL, and shares observations and reviews through compatible default-on GL purchase synchronization unless sharing is turned off. Its separate optional GL list supports cross-provider reminders. These observations never establish redemption status. Privacy explanations reflect each provider's actual storage behavior.
 
 
 ## Saved accounts and scan history
@@ -345,9 +345,9 @@ Theme version 1 is authored in GalacticLibrary/shared/theme.js, theme.css, theme
 
 ## Automatic purchase synchronization
 
-[Share saved purchases](docs/purchase-sharing.md) with Galactic Library without another website scan. Both directions require compatible linked extensions and explicit destination-account confirmation. Historical limitations are reported; repeated imports are additive and idempotent.
+[Share saved purchases](docs/purchase-sharing.md) with Galactic Library without another website scan. Both directions use compatible trusted extensions and a safely mapped saved-account relationship. Sharing defaults on; ambiguous or populated accounts without verified lineage need one account decision in Advanced. Historical limitations are reported; repeated imports are additive and idempotent.
 
-Automatic sync is enabled once for an explicitly selected store-account relationship, with one local confirmation and reverse-verified consent at the companion. Meaningful saved-purchase commits then synchronize both ways with GL. Manual sharing remains under Advanced. See [purchase sync](docs/purchase-sharing.md) for retries, account replacement, privacy and recovery. The alarms permission supports bounded durable retries.
+Automatic local sharing defaults on for fresh installs and eligible legacy upgrades, with a persistent sharing checkbox in Extension options. Verified mappings are reused and an unambiguous empty destination needs no setup action. Ambiguous populated accounts need one account decision; names alone do not prove identity. Meaningful saved-purchase commits synchronize both ways with GL; advanced manual recovery remains available. See [purchase sync](docs/purchase-sharing.md) for retries, account replacement, privacy and recovery. The alarms permission supports bounded durable retries.
 
 Galactic Library availability is checked before an external ownership lookup. When the browser reports no receiver, or GL explicitly denies the connection, local matches are final and unmatched items show **New**. This does not diagnose why the connection is unavailable. Timeouts, incompatible replies, and failures after a successful connection remain **Check incomplete**. Reload the bundle page or refresh central evidence after installing, enabling, or reconnecting GL. No purchase records are changed.
 
