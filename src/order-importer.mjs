@@ -589,7 +589,9 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
           &&order.items.every(parent=>isSparse(parent)||isPopulated(parent));
         if(sparse){
           sparseSummaries.set(order._id,parentEvidence(order.items));
-          expectedProducts.set(order._id,null);
+          // Retain independently available product evidence from populated parents.
+          const populated=order.items.filter(parent=>isPopulated(parent)||isDirectPurchasedGame(parent));
+          expectedProducts.set(order._id,populated.length?productCounts(populated):new Map());
           order.items.filter(parent=>isSparse(parent)&&!isDirectPurchasedGame(parent)).forEach(parent=>bundleShape(parent));
         } else {
           const counts=productCounts(order.items);
@@ -659,7 +661,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     const actual = productCounts(order.items);
     if(sparse){
       const actualParents=parentEvidence(order.items);
-      if(sparse.names.size!==actualParents.names.size||[...sparse.names].some(([name,n])=>actualParents.names.get(name)!==n)||[...sparse.ids].some(([key,n])=>(actualParents.ids.get(key)??0)<n)||[...sparse.direct].some(([key,n])=>(actualParents.direct.get(key)??0)<n)){issue('detailProductMismatch');throw unreadable();}
+      if(sparse.names.size!==actualParents.names.size||[...sparse.names].some(([name,n])=>actualParents.names.get(name)!==n)||[...sparse.ids].some(([key,n])=>(actualParents.ids.get(key)??0)<n)||[...sparse.direct].some(([key,n])=>(actualParents.direct.get(key)??0)<n)||[...expected].some(([key,n])=>(actual.get(key)??0)<n)){issue('detailProductMismatch');throw unreadable();}
     }else if (actual.size !== expected.size || [...expected].some(([key, quantity]) => actual.get(key) !== quantity)){issue('detailProductMismatch');throw unreadable();}
     let occurrence=0;
     for (const parent of order.items) {
