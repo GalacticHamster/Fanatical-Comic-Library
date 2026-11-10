@@ -154,10 +154,12 @@ try{
     await evaluate(`chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'patch',args:[{galacticLibraryExtensionId:${JSON.stringify(centralExtensionId)}}]})`,options);
     const syncCall=fields=>evaluate(`chrome.runtime.sendMessage(${JSON.stringify({type:'GH_PURCHASE_ACTION',provider:'fanatical',...fields})})`,centralSession);
     const enabled=await evaluate("chrome.runtime.sendMessage({type:'GH_PURCHASE_ACTION',action:'syncSetSharing',provider:'fanatical',enabled:true})",options);assert(enabled.ok,enabled.error);
-    let choices=await syncCall({action:'syncChoices',peerId:installed.id});assert(choices.ok,choices.error);
-    let result=await syncCall({action:'syncConnect',peerId:choices.peerId,localId:choices.accounts[0].stableId,remoteId:choices.remoteAccounts[0].stableId,confirmed:true,sameAccount:true});assert(result.ok,result.error);
+    // Re-enabling resumes populated single-account setup without manual Connect.
+    let choices=await syncCall({action:'syncChoices',peerId:installed.id}),result;assert(choices.ok,choices.error);
+    if(choices.accounts.length>1||choices.remoteAccounts.length>1){result=await syncCall({action:'syncConnect',peerId:choices.peerId,localId:choices.accounts[0].stableId,remoteId:choices.remoteAccounts[0].stableId,confirmed:true,sameAccount:true});assert(result.ok,result.error);}
     const waitForOrigins=async count=>{for(let n=0;n<300;n++){if(await evaluate(`(async()=>{const S=await import('./src/lib/storage.js');return Object.values((await S.getDatabase()).providerItems).some(i=>i.provider==='fanatical'&&i.providerItemId==='product-123456'&&i.metadata.purchaseOrigins?.length===${count});})()`,centralSession))return;await pause(20);}throw Error('GL did not receive '+count+' Fanatical purchase origins');};
     await waitForOrigins(202);
+    let settled=false;for(let n=0;n<300;n++){const r=await syncCall({action:'syncState'});if(r.state?.status==='synced'&&!r.state.pending){settled=true;break;}await pause(20);}assert(settled,'Automatic setup did not settle before identity-loss injection');
     // Inject identity/permission loss only into this disposable synthetic library.
     await evaluate(`(async()=>{await chrome.storage.local.remove(['fanaticalAccountId','galacticPurchaseSync']);await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'profiles',args:[]});return true;})()`,options);
     assert.equal((await syncCall({action:'syncNow'})).ok,false);
