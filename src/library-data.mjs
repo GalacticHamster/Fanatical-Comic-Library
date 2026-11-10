@@ -1,4 +1,5 @@
 // Shared by the purchase importer and backup UI. Never persist raw input.
+import {fanaticalRejectedPurchaseItems} from './acquisition-contract.mjs';
 import './purchase-snapshot.js';
 import './purchase-adapters.js';
 import './purchase-sync.js';
@@ -134,7 +135,7 @@ export function sanitizeImportResult(value) {
     orderFingerprints: [...new Set((Array.isArray(input.orderFingerprints) ? input.orderFingerprints : [])
       .filter((fingerprint) => /^[a-f0-9]{64}$/iu.test(String(fingerprint))).map((fingerprint) => String(fingerprint).toLowerCase()))].sort(),
     items: [...deduplicated.values()].sort((a, b) => a.sourceItemId.localeCompare(b.sourceItemId)),
-    ...(Array.isArray(input.rejectedPurchaseItems)?{rejectedPurchaseItems:input.rejectedPurchaseItems}:{})
+    ...(input.rejectedPurchaseItems!==undefined?{rejectedPurchaseItems:fanaticalRejectedPurchaseItems(input.rejectedPurchaseItems)}:{})
   };
 }
 
@@ -154,13 +155,7 @@ export function parseLibraryBackup(value) {
     }
   }
   if (value.rejectedPurchaseItems !== undefined) {
-    if (!Array.isArray(value.rejectedPurchaseItems) || value.rejectedPurchaseItems.length > 50000) throw new Error('Invalid backup rejected items.');
-    value.rejectedPurchaseItems = value.rejectedPurchaseItems.map(item => ({
-      ...item,
-      sourceItemId: typeof item.sourceItemId === 'string' && item.sourceItemId.length <= 128 ? item.sourceItemId : (safeId(item.sourceItemId) || `fan_rej_${safeText(item.title, 50)}`),
-      title: safeText(item.title),
-      ...(Array.isArray(item.formats) ? { formats: safeList(item.formats) } : {})
-    }));
+    value.rejectedPurchaseItems = fanaticalRejectedPurchaseItems(value.rejectedPurchaseItems);
   }
   return sanitizeImportResult(value).items;
 }
@@ -257,7 +252,7 @@ export function createLibraryBackup(items, summary, exportedAt = new Date().toIS
     historyCoverage: safeText(summary.historyCoverage)
   } : null;
   const safeOverrides = (mediaTypeOverrides && typeof mediaTypeOverrides === 'object' && !Array.isArray(mediaTypeOverrides)) ? mediaTypeOverrides : {};
-  const safeRejected = Array.isArray(rejectedPurchaseItems) ? rejectedPurchaseItems : [];
+  const safeRejected = fanaticalRejectedPurchaseItems(rejectedPurchaseItems);
   if(accountId!=null&&!GalacticPurchaseSync.accountUuid(accountId))throw Error('Invalid saved account identity.');
   const scoped={...(accountId?{accountId}:{}),format:'fanatical-library-backup',schemaVersion:4,wishlistItems:globalThis.FanaticalLibrary.normalizeWishlist(wishlistItems),items:sanitizeImportResult({items}).items,profileLabel,profileArchives,historicalItems:parseHistoricalItems(historicalItems,profileLabel),mediaTypeOverrides:safeOverrides,rejectedPurchaseItems:safeRejected};
   parseLibraryBackup(scoped);
@@ -277,7 +272,7 @@ export function backupRestoreState(items, backup={}) {
   return { fanaticalAccountId:backup.accountId??null, fanaticalLibraryItems: items, fanaticalImportSummary: null, fanaticalScannedOrderFingerprints: [], fanaticalLastScanAttempt: null, fanaticalProfileLabel:backup.schemaVersion>=2?backup.profileLabel:'', fanaticalProfileArchives:profileArchives,
     fanaticalHistoricalItems:backup.schemaVersion>=4?parseHistoricalItems(backup.historicalItems,backup.profileLabel):[],
     ...(backup.mediaTypeOverrides && typeof backup.mediaTypeOverrides === 'object' && !Array.isArray(backup.mediaTypeOverrides) ? { mediaTypeOverrides: backup.mediaTypeOverrides } : {}),
-    ...(Array.isArray(backup.rejectedPurchaseItems) ? { rejectedPurchaseItems: backup.rejectedPurchaseItems } : {}),
+    ...(backup.rejectedPurchaseItems!==undefined ? { rejectedPurchaseItems: fanaticalRejectedPurchaseItems(backup.rejectedPurchaseItems) } : {}),
     ...(backup.schemaVersion>=3?{fanaticalWishlistItems:globalThis.FanaticalLibrary.normalizeWishlist(backup.wishlistItems)}:{}) };
 }
 

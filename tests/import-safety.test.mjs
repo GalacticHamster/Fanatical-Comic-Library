@@ -5,7 +5,7 @@ import { createHash, webcrypto } from 'node:crypto';
 import test from 'node:test';
 const purchaseModules=['purchase-snapshot.js', 'purchase-transfer.js', 'purchase-sync.js', 'purchase-adapters.js'].map(file=>fs.readFileSync(new URL('../src/'+file,import.meta.url),'utf8')).join('\n');
 const dispatch=(listeners,message,sender,respond)=>{for(const fn of listeners)if(fn(message,sender,respond)===true)return;respond(null);};
-import { safeId, validateScanResult, createSyncStore, mergeLibraryItems } from '../src/library-data.mjs';
+import { safeId, validateScanResult, createSyncStore, mergeLibraryItems, createLibraryBackup } from '../src/library-data.mjs';
 
 import {quotaProduct,quotaBaseline,quotaProtectedFields} from './fixtures/storage-quota.mjs';
 import {importFanaticalOrdersInPage} from '../src/order-importer.mjs';
@@ -17,6 +17,23 @@ const fingerprint = (id) => createHash('sha256').update(id).digest('hex');
 const detail = { _id: orderId, status: 'COMPLETE', items: [{ _id: 'bundle-123456', name: 'Bundle', bundles: [{ games: [{ _id: 'product-123456', name: 'New purchase', type: 'game' }] }] }] };
 const summary = { _id: orderId, status: 'COMPLETE', items: [{ name: 'Bundle', bundles: [{ games: [{ name: 'New purchase' }] }] }] };
 const previous = { fanaticalLibraryItems: [{ source: 'fanatical', sourceItemId: 'product-654321', title: 'Previously imported', mediaType: 'game', bundle: { sourceItemId: 'bundle-654321', title: 'Previous bundle' } }], fanaticalImportSummary: { importedAt: 'previous', scanMode: 'full' }, fanaticalScannedOrderFingerprints: [] };
+
+test('guarded worker strips unexpected rejected fields before atomic persistence and backup',async()=>{
+  const acquired=harness();assert((await acquired.send(true)).ok);
+  const raw=structuredClone(acquired.receipts[0]);
+  const rejected={sourceItemId:'synthetic-rejected',title:'Synthetic promotion',reason:'Promotional',bundle:{sourceItemId:'synthetic-bundle',title:'Synthetic bundle'}};
+  raw.rejectedPurchaseItems=[{...rejected,key:'SYNTHETIC_SENTINEL',rawResponse:{token:'SYNTHETIC_SENTINEL'},bundle:{...rejected.bundle,credentials:{token:'SYNTHETIC_SENTINEL'}}}];
+  const run=harness({scriptResult:()=>[{result:structuredClone(raw)}],initial:{mediaTypeOverrides:{'product-654321':'comic'}}});
+  const reply=await run.send(true);assert(reply.ok,reply.error);
+  assert.deepEqual(run.stored.rejectedPurchaseItems,[rejected]);
+  assert.deepEqual(run.stored.mediaTypeOverrides,run.before.mediaTypeOverrides);
+  assert([...run.stored.fanaticalLibraryItems,...(run.stored.fanaticalHistoricalItems??[]).map(entry=>entry.item)].some(item=>item.sourceItemId==='product-654321'));
+  const backup=createLibraryBackup(run.stored.fanaticalLibraryItems,null,undefined,'fixture',[],[],run.stored.fanaticalHistoricalItems??[],run.stored.mediaTypeOverrides,run.stored.rejectedPurchaseItems);
+  assert(!JSON.stringify([run.stored,backup]).includes('SYNTHETIC_SENTINEL'));
+  const invalid=structuredClone(raw);invalid.rejectedPurchaseItems[0].bundle.title={token:'SYNTHETIC_SENTINEL'};
+  const failed=harness({scriptResult:()=>[{result:invalid}]});assert.equal((await failed.send(true)).ok,false);
+  for(const key of ['fanaticalLibraryItems','fanaticalImportSummary','fanaticalScannedOrderFingerprints'])assert.deepEqual(failed.stored[key],failed.before[key]);
+});
 
 test('sparse COMPLETE summary recovers through actual detail/worker/writer, retries failed evidence and never duplicates purchases',async()=>{
  const games=Array.from({length:47},(_,i)=>({_id:'synthetic-product-'+i,name:'Synthetic '+i,type:'book'})),good={...detail,items:[{...detail.items[0],bundles:[{games}]}]},sparse={_id:'synthetic-recovery-order',status:'COMPLETE',items:[{name:'Synthetic selection',bundles:[]}]};
