@@ -328,21 +328,7 @@
   }
 
   function importerResult(summary, fullScan) {
-    if(summary.acquisitionComplete===true&&summary.outcome==='partial-discovery'){
-      const counts=[];
-      if(summary.verifiedPurchasesSaved)counts.push(`${summary.verifiedPurchasesSaved} purchase${summary.verifiedPurchasesSaved===1?'':'s'} verified`);
-      if(summary.ordersSkipped)counts.push(`${summary.ordersSkipped} previously verified purchase${summary.ordersSkipped===1?'':'s'} skipped`);
-      if(!counts.length)counts.push('No purchases to process');
-      counts.push(`${summary.addedProducts} product${summary.addedProducts===1?'':'s'} added`);
-      return `Import finished. ${counts.join('; ')}.`;
-    }
-    if(summary.outcome==='partial-extraction'||summary.outcome==='partial-discovery'){
-      const saved=`Saved ${summary.verifiedPurchasesSaved} verified purchase${summary.verifiedPurchasesSaved===1?'':'s'}; ${summary.addedProducts} new product${summary.addedProducts===1?'':'s'}.`;
-      return [saved,summary.outcome==='partial-discovery'?'The scan could not verify the end of your library; additional purchases may be missing.':'',summary.unresolvedOrders?`${summary.unresolvedOrders} purchase${summary.unresolvedOrders===1?'':'s'} could not be processed and will be retried on a future scan.`:'',summary.failureExplanation??'','Existing purchases were preserved. The last complete scan was not updated.'].filter(Boolean).join(' ');
-    }
-    const scope = F.purchaseImportScope({...summary,scanMode:fullScan?'full':'quick'});
-    const result = `${scope}; imported ${summary.addedProducts} new item${summary.addedProducts === 1 ? '' : 's'}; ${summary.ownedLeafProducts} total items.`;
-    return `${result} ${summary.historyCoverage ?? ''}`.trim();
+    return F.formatScanSummary(summary, { fullScan });
   }
 
   function ensureOrderImporter() {
@@ -395,7 +381,10 @@
       buttons.forEach(control=>{control.disabled=true;});
       promise.then(response=>{
         if(!active())return;
-        status.textContent=response?.ok?importerResult(response.summary,response.summary.scanMode==='full'):(response?.error??'Import failed.');
+        const formatted = response?.ok
+          ? importerResult(response.summary, response.summary.scanMode === 'full')
+          : F.formatScanSummary({ outcome: 'failed', error: response?.error ?? 'Import failed.' });
+        status.innerHTML = formatted.html;
         scanReport=response?.scanDiagnostic??response?.summary?.scanDiagnostic??null;
         if(scanReport)scanReport={...scanReport,progress:lastActivity,progressEvents:activityEvents,uiUpdates,elapsedMs:startedAt===null?null:Date.now()-startedAt};
         scanDetails.hidden=!scanReport;

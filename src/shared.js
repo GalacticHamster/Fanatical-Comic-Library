@@ -1323,12 +1323,141 @@
     return hours ? Number(hours[1]) / 24 : null;
   }
 
+  function formatScanSummary(summary = {}, options = {}) {
+    const fullScan = options.fullScan ?? (summary.scanMode === 'full') ?? (options.mode === 'full') ?? false;
+    const isFailed = summary.outcome === 'failed' || Boolean(summary.error);
+    const isPartial = !isFailed && (
+      summary.outcome === 'partial-extraction' ||
+      summary.outcome === 'partial-discovery' ||
+      summary.outcome === 'partial' ||
+      Boolean(summary.recovery) ||
+      Boolean(summary.unresolvedOrders)
+    );
+
+    let title = '';
+    let detail = '';
+    let library = '';
+
+    if (isFailed) {
+      title = 'Import failed';
+      const cat = summary.category ?? (
+        /auth|sign.?in|session|401|403|denied/iu.test(summary.error ?? '') ? 'authentication'
+        : /account|profile|mismatch|switch/iu.test(summary.error ?? '') ? 'scope'
+        : /storage|quota|disk|save/iu.test(summary.error ?? '') ? 'storage'
+        : /rate|cooldown|delay|limit/iu.test(summary.error ?? '') ? 'limit'
+        : /network|unavailable|timeout|connect|503/iu.test(summary.error ?? '') ? 'unavailable'
+        : 'shape'
+      );
+
+      switch (cat) {
+        case 'authentication':
+          detail = "Couldn't access your Fanatical purchases. Make sure you're signed in to Fanatical, then try again.";
+          break;
+        case 'scope':
+          detail = "The signed-in account doesn't match your saved library. Check your active account, then try again.";
+          break;
+        case 'storage':
+          detail = "Couldn't save your purchases locally. Check available browser storage, then try again.";
+          break;
+        case 'limit':
+          detail = "Fanatical requested a temporary delay before checking more purchases. Please try again later.";
+          break;
+        case 'unavailable':
+        case 'listing':
+          detail = "Fanatical didn't respond or is currently unavailable. Check your connection, then try again.";
+          break;
+        default:
+          detail = "Couldn't read purchase information from Fanatical. Please try again later.";
+          break;
+      }
+
+      library = 'Your existing library was not changed.';
+    } else if (isPartial) {
+      title = fullScan ? 'Full import partially completed' : 'Quick update partially completed';
+      const unresolved = summary.unresolvedOrders ?? summary.recovery?.failedOrders ?? 0;
+      const listingIncomplete = Boolean(summary.listingIncomplete ?? summary.recovery?.listingIncomplete ?? (summary.outcome === 'partial-discovery'));
+      const retryable = summary.retryable ?? (summary.retry !== 'none');
+
+      const retrySuffix = retryable
+        ? (unresolved === 1 && !listingIncomplete ? ' It will be retried on your next update.' : ' They will be retried on your next update.')
+        : '';
+
+      if (unresolved > 0 && listingIncomplete) {
+        detail = `Couldn't check ${unresolved} purchase${unresolved === 1 ? '' : 's'} and part of your purchase list could not be reached.${retrySuffix}`;
+      } else if (unresolved > 0) {
+        detail = `Couldn't check ${unresolved} purchase${unresolved === 1 ? '' : 's'}.${retrySuffix}`;
+      } else if (listingIncomplete) {
+        detail = `Part of your purchase list couldn't be checked.${retryable ? ' It will be retried on your next update.' : ''}`;
+      } else {
+        detail = `Some purchase details couldn't be verified.${retryable ? ' They will be retried on your next update.' : ''}`;
+      }
+
+      const saved = summary.verifiedPurchasesSaved ?? summary.ordersScanned ?? 0;
+      const added = summary.addedProducts ?? summary.addedItems ?? (Array.isArray(summary.items) ? summary.items.length : 0);
+      const total = summary.ownedLeafProducts ?? summary.totalItems ?? summary.itemCount;
+
+      let activity = '';
+      if (saved > 0 && added > 0) {
+        activity = `Saved ${saved} purchase${saved === 1 ? '' : 's'} and added ${added} item${added === 1 ? '' : 's'}.`;
+      } else if (saved > 0 && added === 0) {
+        activity = `Saved ${saved} purchase${saved === 1 ? '' : 's'}. No new items found.`;
+      } else if (saved === 0 && added > 0) {
+        activity = `Added ${added} new item${added === 1 ? '' : 's'}.`;
+      } else {
+        activity = 'No purchases were saved.';
+      }
+
+      let libraryStatus = '';
+      if (Number.isSafeInteger(total)) {
+        libraryStatus = `Your library now contains ${total} item${total === 1 ? '' : 's'}. Earlier records were preserved.`;
+      } else {
+        libraryStatus = 'Earlier records were preserved.';
+      }
+
+      library = `${activity} ${libraryStatus}`;
+    } else {
+      title = fullScan ? 'Full import completed' : 'Quick update completed';
+      const checked = summary.ordersScanned ?? 0;
+      const added = summary.addedProducts ?? summary.addedItems ?? (Array.isArray(summary.items) ? summary.items.length : 0);
+      const total = summary.ownedLeafProducts ?? summary.totalItems ?? summary.itemCount ?? 0;
+
+      if (added > 0) {
+        if (checked === 0) {
+          detail = `No purchases needed checking. Imported ${added} new item${added === 1 ? '' : 's'}.`;
+        } else {
+          detail = `Checked ${checked} purchase${checked === 1 ? '' : 's'}. Imported ${added} new item${added === 1 ? '' : 's'}.`;
+        }
+      } else {
+        if (checked === 0) {
+          detail = fullScan ? 'No purchases found in your account.' : 'No purchases needed checking. No new items found.';
+        } else {
+          detail = `Checked ${checked} purchase${checked === 1 ? '' : 's'}. No new items found.`;
+        }
+      }
+
+      library = `${total} item${total === 1 ? '' : 's'} in your library.`;
+    }
+
+    const lines = [title, detail, library].filter(Boolean);
+    const text = lines.join('\n\n');
+    const htmlLines = [`<strong>${title}</strong>`, detail, library].filter(Boolean);
+    const html = htmlLines.join('\n\n');
+
+    return {
+      title,
+      detail,
+      library,
+      text,
+      html,
+      toString() { return text; }
+    };
+  }
   function purchaseImportScope(summary) {
     const purchases = count => `${count} purchase${count === 1 ? '' : 's'}`;
     if (summary.scanMode === 'full') return `Rescanned ${purchases(summary.ordersScanned)}; current snapshot rebuilt`;
     const parts = [summary.ordersScanned === 0 ? 'No new purchases'
       : summary.scanHistoryMissing ? `Rechecked ${purchases(summary.ordersScanned)} because saved scan history was unavailable`
-      : `Checked ${summary.ordersScanned} new purchase${summary.ordersScanned === 1 ? '' : 's'}`];
+      : `Checked ${purchases(summary.ordersScanned)}`];
     if (summary.ordersScanned === 0) parts.push('no purchase details to check');
     if (summary.ordersSkipped) parts.push(`skipped ${summary.ordersSkipped} unchanged purchase${summary.ordersSkipped === 1 ? '' : 's'}`);
     return parts.join('; ');
@@ -1378,7 +1507,7 @@
   }
 
   async function storageSet(updates){const response=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'patch',args:[updates]});if(!response?.ok)throw new Error(response?.error??'Settings storage is unavailable.');}
-  global.FanaticalLibrary = { purchaseImportScope, purchaseImportProgress, purchaseActivity, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, isCompleteBundleCatalogue, isBundleOverlapProduct, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, sendGalacticMatch, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, COMPANION_IDENTITIES, companionBrowser, builtinGalacticId, resolveGalacticId, galacticAvailability, galacticPermissionDenied, trustedGalacticSender, companionTargetProblem, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft, isComicItem, mediaOverrideKey };
+  global.FanaticalLibrary = { formatScanSummary, purchaseImportScope, purchaseImportProgress, purchaseActivity, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, isCompleteBundleCatalogue, isBundleOverlapProduct, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, sendGalacticMatch, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, COMPANION_IDENTITIES, companionBrowser, builtinGalacticId, resolveGalacticId, galacticAvailability, galacticPermissionDenied, trustedGalacticSender, companionTargetProblem, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft, isComicItem, mediaOverrideKey };
 }(globalThis));
 
 /* Account picker; all changes use the serialized writer. */
