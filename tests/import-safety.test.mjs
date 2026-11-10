@@ -23,7 +23,7 @@ test('sparse COMPLETE summary recovers through actual detail/worker/writer, retr
  const list=[good,sparse],details={[orderId]:good,[sparse._id]:{...sparse}},run=harness({list,details,initial:{fanaticalLibraryItems:[],fanaticalImportSummary:null}});
  const first=await run.send(true);assert(first.ok,first.error);assert.equal(first.summary.verifiedPurchasesSaved,1);assert.equal(first.summary.scanDiagnostic.verifiedProductRecordsSaved,47);assert.equal(first.summary.unresolvedOrders,1);assert.equal(first.summary.scanDiagnostic.compatibility.summaryRecovery.unresolved,1);assert.equal(first.summary.scanDiagnostic.compatibility.counts.detailStructure,1);assert.equal(run.stored.fanaticalLibraryItems.length,47);assert.equal(run.stored.fanaticalImportSummary,null);
  details[sparse._id]={_id:sparse._id,status:'COMPLETE',date:'2026-11-09',items:[{_id:'synthetic-recovery-bundle',name:'Synthetic selection',bundles:[{games:[{_id:'synthetic-recovery-product',name:'Selected game',type:'game'}]}]}]};
- await new Promise(r=>setImmediate(r));run.paths.length=0;const recovered=await run.send(false);assert(recovered.ok,recovered.error);assert.equal(recovered.summary.scanDiagnostic.compatibility.summaryRecovery.recovered,1);assert.equal(recovered.summary.ordersScanned,1);assert.equal(run.paths.length,2);assert.equal(run.stored.fanaticalLibraryItems.length,48);assert.equal(recovered.summary.scanDiagnostic.completeCheckpointAdvanced,false);
+ await new Promise(r=>setImmediate(r));run.paths.length=0;const recovered=await run.send(false);assert(recovered.ok,recovered.error);assert.equal(recovered.summary.scanDiagnostic.compatibility.summaryRecovery.recovered,1);assert.equal(recovered.summary.ordersScanned,1);assert.equal(run.paths.length,2);assert.equal(run.stored.fanaticalLibraryItems.length,48);assert.equal(recovered.summary.scanDiagnostic.completeCheckpointAdvanced,true);
  const saved=structuredClone(run.stored.fanaticalLibraryItems);await new Promise(r=>setImmediate(r));run.paths.length=0;const repeated=await run.send(false);assert(repeated.ok,repeated.error);assert.equal(repeated.summary.ordersScanned,1,'sparse known summaries still require detail evidence');assert.equal(run.paths.length,2);assert.deepEqual(run.stored.fanaticalLibraryItems,saved);assert(!JSON.stringify(run.stored).includes('summaryRecovery'));
 });
 
@@ -38,14 +38,14 @@ test('two orders with 47 verified products and an invalid bundle export bounded 
   // A later *known, valid* purchase representation can be retried; the unknown
   // public selection pool above must never be imported as purchased products.
   bad.items=[{...detail.items[0],bundles:[{games:[{_id:'synthetic-recovered-product',name:'Recovered selection',type:'game'}]}]}];
-  await new Promise(r=>setImmediate(r));const repaired=await run.send(false);assert(repaired.ok,repaired.error);assert.equal(repaired.summary.ordersScanned,1);assert.equal(run.stored.fanaticalLibraryItems.length,48);assert(!repaired.summary.scanDiagnostic.compatibility.bundleShapes);assert.equal(repaired.summary.scanDiagnostic.discoveryComplete,false);
+  await new Promise(r=>setImmediate(r));const repaired=await run.send(false);assert(repaired.ok,repaired.error);assert.equal(repaired.summary.ordersScanned,1);assert.equal(run.stored.fanaticalLibraryItems.length,48);assert(!repaired.summary.scanDiagnostic.compatibility.bundleShapes);assert.equal(repaired.summary.scanDiagnostic.discoveryComplete,true);
 });
 
 test('mixed summary failures take precedence over unverified coverage without changing purchase or retry authority',async()=>{
   const unknown={...structuredClone(summary),_id:'unknown-order',status:'PRIVATE_UNKNOWN_STATUS'},missing={...structuredClone(summary),_id:'missing-order',items:null};
   const run=harness({list:[summary,unknown,missing]}),reply=await run.send(true),d=reply.summary.scanDiagnostic;
   assert(reply.ok,reply.error);assert.equal(d.code,'summaries-unreadable');assert.equal(d.stage,'summaries');assert.equal(d.compatibility.counts.unsupportedStatus,1);assert.equal(d.compatibility.counts.missingItems,1);assert.equal(d.compatibility.counts.scheduled,1);
-  assert.deepEqual(structuredClone(d.failures.map(f=>f.code)),['discovery-unverified','summaries-unreadable']);assert.equal(d.verifiedPurchasesSaved,1);assert.equal(d.unresolvedOrders,2);assert(!d.completeCheckpointAdvanced);assert(!/PRIVATE|unknown-order|missing-order/.test(JSON.stringify(d)));
+  assert.deepEqual(structuredClone(d.failures.map(f=>f.code)),['summaries-unreadable']);assert.equal(d.verifiedPurchasesSaved,1);assert.equal(d.unresolvedOrders,2);assert(!d.completeCheckpointAdvanced);assert(!/PRIVATE|unknown-order|missing-order/.test(JSON.stringify(d)));
   assert.deepEqual(run.stored.fanaticalImportSummary,run.before.fanaticalImportSummary);assert.deepEqual(run.stored.fanaticalScannedOrderFingerprints,[fingerprint(orderId)]);
   assert(!JSON.stringify(run.stored.fanaticalLibraryItems).includes('compatibility'),'diagnostics do not become purchase data');
   await new Promise(r=>setImmediate(r));const quick=await run.send(false);assert.equal(quick.summary.scanDiagnostic.compatibility.counts.knownSkipped,1);assert.equal(quick.summary.scanDiagnostic.compatibility.counts.scheduled,0);assert.equal(quick.summary.unresolvedOrders,2);
@@ -60,18 +60,18 @@ test('FAN failure-report boundary drops injected compatibility fields and retain
  }
 });
 
-test('headerless one-order 47-product acquisition finishes without inventing complete coverage and Quick remains incremental',async()=>{
+test('headerless one-order 47-product acquisition finishes with valid complete coverage and Quick remains incremental',async()=>{
   const games=Array.from({length:47},(_,i)=>({_id:'synthetic-product-'+i,name:'Synthetic book '+i,type:'book'}));
   const oneDetail={...detail,items:[{...detail.items[0],bundles:[{games}]}]},oneSummary={...summary,items:[{name:'Bundle',bundles:[{games:games.map(({name})=>({name}))}]}]};
   const headers={},run=harness({partial:true,headers,list:[oneSummary],details:{[orderId]:oneDetail},initial:{fanaticalLibraryItems:[],fanaticalImportSummary:null}});
   const first=await run.send(false);assert.equal(first.ok,true,first.error);assert.equal(first.summary.acquisitionComplete,true);
   assert.equal(first.summary.verifiedPurchasesSaved,1);assert.equal(first.summary.addedProducts,47);assert.equal(run.stored.fanaticalLibraryItems.length,47);
-  assert.equal(first.summary.outcome,'partial-discovery');assert.equal(first.summary.coverage.complete,false);assert.equal(run.stored.fanaticalImportSummary,null);
-  assert.equal(first.summary.completeCheckpointAdvanced,false);assert.equal(first.summary.scanDiagnostic.acquisitionComplete,true);
+  assert.equal(first.summary.outcome,'complete');assert.equal(first.summary.coverage.complete,true);assert(run.stored.fanaticalImportSummary);
+  assert.equal(first.summary.completeCheckpointAdvanced,true);assert.equal(first.summary.scanDiagnostic.acquisitionComplete,true);
   assert.deepEqual(structuredClone(first.summary.scanDiagnostic.listingEvidence),{arrayPages:1,objectPages:0,otherPages:0,headersReadablePages:1,linkHeaderPages:0,totalCountHeaderPages:0,contentRangeHeaderPages:0,nextReferencePages:0});
   const snapshot=structuredClone(run.stored.fanaticalLibraryItems);run.paths.length=0;await new Promise(r=>setImmediate(r));
   const quick=await run.send(false);assert.equal(quick.ok,true,quick.error);assert.equal(quick.summary.scanMode,'quick');assert.equal(quick.summary.ordersScanned,0);assert.equal(quick.summary.acquisitionComplete,true);
-  assert.equal(run.paths.length,1);assert.deepEqual(run.stored.fanaticalLibraryItems,snapshot);assert.equal(run.stored.fanaticalImportSummary,null);
+  assert.equal(run.paths.length,1);assert.deepEqual(run.stored.fanaticalLibraryItems,snapshot);assert(run.stored.fanaticalImportSummary);
   await new Promise(r=>setImmediate(r));const full=await run.send(true);assert.equal(full.summary.acquisitionComplete,true);assert.equal(full.summary.ordersScanned,1);assert.deepEqual(run.stored.fanaticalLibraryItems,snapshot);
   headers['x-total-count']='1';await new Promise(r=>setImmediate(r));
   const covered=await run.send(true);assert.equal(covered.summary.outcome,'complete');assert.equal(covered.summary.completeCheckpointAdvanced,true);assert.equal(run.stored.fanaticalImportSummary.coverage.complete,true);assert.deepEqual(run.stored.fanaticalLibraryItems,snapshot);
@@ -80,7 +80,7 @@ test('headerless one-order 47-product acquisition finishes without inventing com
 test('acquisition success is separate from total/range/link coverage and genuine interrupted discovery',async()=>{
   for(const headers of [{},{'x-total-count':'1'},{'content-range':'orders 0-0/1'},{'x-total-count':'2'}]){
     const run=harness({partial:true,headers}),reply=await run.send(true);assert.equal(reply.ok,true,reply.error);
-    const missing=headers['x-total-count']==='2',complete=Boolean(headers['content-range']||headers['x-total-count']==='1');
+    const missing=headers['x-total-count']==='2',complete=!missing;
     assert.equal(reply.summary.acquisitionComplete,!missing);assert.equal(reply.summary.completeCheckpointAdvanced,complete);
     assert.equal(reply.summary.outcome,complete?'complete':'partial-discovery');
     assert.equal(run.stored.fanaticalLibraryItems.length,complete?1:2);
@@ -88,14 +88,14 @@ test('acquisition success is separate from total/range/link coverage and genuine
   }
   const bad=harness({partial:true,list:[{...summary,items:[]}]});const reply=await bad.send();assert.equal(reply.ok,true);assert.equal(reply.summary.acquisitionComplete,false);assert.equal(reply.summary.unresolvedOrders,1);
   const preserved=harness({partial:true,known:[fingerprint(orderId)],initial:{fanaticalLibraryItems:previous.fanaticalLibraryItems.map(item=>({...item,purchaseDate:null}))}}),snapshot=structuredClone(preserved.before);
-  const quick=await preserved.send(false);assert.equal(quick.summary.acquisitionComplete,true);assert.equal(quick.summary.scanMode,'quick');assert.deepEqual(preserved.stored.fanaticalImportSummary,snapshot.fanaticalImportSummary);assert.deepEqual(preserved.stored.fanaticalLibraryItems,snapshot.fanaticalLibraryItems);
+  const quick=await preserved.send(false);assert.equal(quick.summary.acquisitionComplete,true);assert.equal(quick.summary.scanMode,'quick');assert.equal(preserved.stored.fanaticalImportSummary.scanMode,'quick');assert.deepEqual(preserved.stored.fanaticalLibraryItems,snapshot.fanaticalLibraryItems);
 });
 
 test('listing diagnostics export shape/header counts only and a supplied acquisition flag cannot establish success',async()=>{
   const run=harness({partial:true}),reply=await run.send();assert.equal(reply.ok,true);
   const receipt=structuredClone(run.receipts.at(-1));receipt.acquisitionComplete=false;
   assert.equal(validateScanResult(receipt,{fullScan:true}).acquisitionComplete,true,'Acquisition status must be derived from validated evidence');
-  receipt.failures.push({code:'pagination-missing-next',stage:'listing',count:1});receipt.acquisitionComplete=true;
+  receipt.outcome='partial-discovery';receipt.coverage.complete=false;receipt.coverage.discoveryComplete=false;receipt.failures.push({code:'pagination-missing-next',stage:'listing',count:1});receipt.acquisitionComplete=true;
   assert.equal(validateScanResult(receipt,{fullScan:true}).acquisitionComplete,false);
   receipt.coverage.listingEvidence.headersReadablePages=1001;assert.throws(()=>validateScanResult(receipt,{fullScan:true}));
   const object=harness({partial:true,list:{orders:[summary],email:'PRIVATE@example.test'}}),failure=await object.send();
@@ -252,7 +252,7 @@ test('partial pilot keeps account checkpoints isolated and rejects an unconfirme
 
 test('partial pilot empty/unsafe continuation receipts and incompatible companions never manufacture completeness',async()=>{
   const empty=harness({partial:true,list:[],headers:{'x-total-count':'0'},initial:{fanaticalLibraryItems:[],fanaticalImportSummary:null}});assert.equal((await empty.send()).summary.outcome,'complete');
-  const unknown=harness({partial:true});const reply=await unknown.send();assert.equal(reply.summary.outcome,'partial-discovery');assert.equal(unknown.stored.fanaticalLastScanAttempt.completeCheckpointAdvanced,false);
+  const unknown=harness({partial:true,headers:{'x-total-count':'2'}});const reply=await unknown.send();assert.equal(reply.summary.outcome,'partial-discovery');assert.equal(unknown.stored.fanaticalLastScanAttempt.completeCheckpointAdvanced,false);
   const unsafe=harness({partial:true,headers:{link:'<https://other.example/api/user/orders?page=2>; rel="next"'}});const kept=await unsafe.send();assert.equal(kept.ok,true,kept.error);assert.equal(kept.summary.outcome,'partial-discovery');assert(unsafe.paths.every(path=>path.startsWith('/api/user/orders')));assert.equal(kept.summary.verifiedPurchasesSaved,1);
   const before=structuredClone(unsafe.stored);
   for(const version of [0,2])await assert.rejects(globalThis.FanaticalLibrary.testGalacticLink(async()=>({ok:true,apiVersion:version})),/version|compatible|verified|unavailable/i);
@@ -678,7 +678,7 @@ test('explicit same-endpoint cursor links can complete without inventing query c
 test('bare-array coverage explicitly discloses that silent truncation cannot be verified', async () => {
   const run = harness(); const result = await run.scan();
   assert.equal(result.coverage.paginationEvidence, 'array-only');
-  assert.equal(result.coverage.complete,false);assert.equal(result.acquisitionComplete,true);assert.equal(result.scanDiagnostic.code,'discovery-unverified');
+  assert.equal(result.coverage.complete,true);assert.equal(result.acquisitionComplete,true);assert.equal(result.scanDiagnostic.code,'complete');assert.equal(result.scanDiagnostic.terminalReached,true);assert.equal(result.scanDiagnostic.terminalVerified,false);
 });
 
 test('pagination loops, repeated orders, gaps, changing totals, missing next links and unreadable pages never commit', async () => {

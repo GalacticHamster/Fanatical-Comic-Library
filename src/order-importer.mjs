@@ -565,7 +565,6 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   }
   diagnostic.terminalReached=discoveryComplete;
   diagnostic.paginationEvidence=ranged?'range':expectedTotal!==null?'count':linked?'link':'array-only';
-  if(allowPartial&&diagnostic.paginationEvidence==='array-only'){discoveryComplete=false;note(failure('discovery-unverified','No independent history end was supplied.'),'listing');}
   diagnostic.stage='summaries';
   const listed = new Set();
   const expectedProducts = new Map();
@@ -661,14 +660,11 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   const completeWithFingerprints = await boundedMap(complete, async (order) => ({ order, fingerprint: await fingerprintOrderInPage(order._id) }));
   const known = new Set((Array.isArray(knownOrderFingerprints) ? knownOrderFingerprints : []).filter((fingerprint) => /^[a-f0-9]{64}$/iu.test(String(fingerprint))).map((fingerprint) => String(fingerprint).toLowerCase()));
   const listedFingerprints = new Set(await boundedMap([...listed], fingerprintOrderInPage));
-  const accountKnown=new Set([...known,...(Array.isArray(accountOrderFingerprints)?accountOrderFingerprints:[]).filter(fp=>typeof fp==='string'&&/^[a-f0-9]{64}$/u.test(fp)).slice(0,100000)]);
+  const accountKnown=new Set([...known,...(Array.isArray(accountOrderFingerprints)?accountOrderFingerprints:[]).filter(fp=>typeof fp==='string'&&/^[a-f0-9]{64}$/iu.test(fp)).map(fp=>fp.toLowerCase())].slice(0,100000));
   const accountOverlap=[...accountKnown].some(fp=>listedFingerprints.has(fp));
-  // Absence supplies neither continuity nor conflict evidence. Only a clean
-  // headerless empty acquisition can finish without resolving saved absence;
-  // it grants no complete-history or reconciliation authority.
-  const unverifiedEmpty=allowPartial&&!listedFingerprints.size&&diagnostic.paginationEvidence==='array-only'&&diagnostic.pagesParsed===visitedPages.size&&!unidentifiedRecords&&failureCounts.size===1&&[...failureCounts.values()][0].code==='discovery-unverified';
   if(allowPartial&&accountKnown.size&&listedFingerprints.size&&!accountOverlap)throw failure('account-scope-conflict','The listing does not share saved purchase identity evidence. Confirm or change the account before importing.');
-  if (!unverifiedEmpty&&[...known].some((fingerprint) => !listedFingerprints.has(fingerprint))) {
+  const historicalOrders=new Set([...known,...(Array.isArray(accountOrderFingerprints)?accountOrderFingerprints:[]).filter(fp=>typeof fp==='string'&&/^[a-f0-9]{64}$/iu.test(fp)).map(fp=>fp.toLowerCase())]);
+  if(historicalOrders.size&&[...historicalOrders].some(fp=>!listedFingerprints.has(fp))){
     const error=failure('history-missing-known','Fanatical order history omits previously scanned orders, so complete coverage could not be confirmed. Your library and scan history were not changed.');
     if(!allowPartial)throw error;discoveryComplete=false;note(error,'listing');
   }

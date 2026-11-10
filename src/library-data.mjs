@@ -176,7 +176,9 @@ export function validateScanResult(value, { fullScan = false, knownOrderFingerpr
   const fingerprints = value.orderFingerprints;
   if (fingerprints.length !== value.ordersAvailable || fingerprints.some((fingerprint) => typeof fingerprint !== 'string' || !/^[a-f0-9]{64}$/u.test(fingerprint)) || new Set(fingerprints).size !== fingerprints.length) fail();
   const known = new Set(knownOrderFingerprints);
-  const expected = fullScan ? value.ordersAvailable : fingerprints.filter((fingerprint) => !known.has(fingerprint)).length;
+  const unseen = fingerprints.filter((fingerprint) => !known.has(fingerprint)).length;
+  const scheduled = value.coverage?.compatibility?.counts?.scheduled;
+  const expected = fullScan ? value.ordersAvailable : (Number.isSafeInteger(scheduled) ? scheduled : unseen);
   if (value.ordersScanned !== expected || (expected > 0 && !value.items.length) || (expected === 0 && value.items.length)) fail();
   if (value.items.some((item) => item?.source !== 'fanatical' || typeof item.sourceItemId !== 'string' || !safeId(item.sourceItemId) || !safeText(item.title) || !safeId(item.bundle?.sourceItemId) || !safeText(item.bundle?.title))) fail();
   const projected = sanitizeImportResult(value);
@@ -207,7 +209,7 @@ function validatePartialScan(value,{fullScan,knownOrderFingerprints}){
   if(!c||typeof c.discoveryComplete!=='boolean'||c.complete!==(value.outcome==='complete')||c.discoveryComplete!==(value.outcome!=='partial-discovery')||!bounded(c.listedOrders)||c.listedOrders!==all.size||c.validatedOrders!==verified.size||c.emptyAccount!==(all.size===0)||!Number.isSafeInteger(c.pagesFetched)||c.pagesFetched<1||c.pagesFetched>1000||!Number.isSafeInteger(c.retries)||c.retries<0||c.retries>300000||c.concurrency!==3||!['array-only','link','count','range'].includes(c.paginationEvidence)||c.expectedTotal!==null&&!bounded(c.expectedTotal)||!bounded(value.ordersAvailable)||value.ordersAvailable>all.size||value.ordersScanned!==verified.size||!bounded(value.unidentifiedRecords))fail();
   if(!['saved-order-match','declared-scope'].includes(c.accountAffinity))fail();
   if(!Number.isSafeInteger(c.pagesParsed)||c.pagesParsed<0||c.pagesParsed>c.pagesFetched)fail();
-  if(c.discoveryComplete&&(c.paginationEvidence==='array-only'||c.expectedTotal!==null&&c.expectedTotal!==all.size||value.unidentifiedRecords))fail();
+  if(c.discoveryComplete&&(c.paginationEvidence==='array-only'&&c.pagesFetched!==1||c.expectedTotal!==null&&c.expectedTotal!==all.size||value.unidentifiedRecords))fail();
   if(!Array.isArray(value.failures)||value.failures.length>32||value.failures.some(f=>!f||!PARTIAL_FAILURE_CODES.has(f.code)||!['listing','summaries','details'].includes(f.stage)||!bounded(f.count)||f.count<1))fail();
   const failures=value.failures.map(({code,stage,count})=>({code,stage,count}));
   let listingEvidence=null;
