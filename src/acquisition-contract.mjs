@@ -38,7 +38,8 @@ export function assertFanaticalAcquisitionContract(raw,options={}){
   const keys=(value,allowed)=>value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).every(key=>allowed.includes(key));
   const ids=value=>Array.isArray(value)&&value.length<=100000&&value.every(id=>typeof id==='string'&&/^[a-f0-9]{64}$/u.test(id))&&new Set(value).size===value.length;
   const same=(a,b)=>{if(!ids(a)||!ids(b)||a.length!==b.length)return false;const set=new Set(b);return a.every(id=>set.has(id));};
-  if(!keys(raw,['acquisitionContract','partialScanVersion','outcome','verifiedOrderFingerprints','unresolvedOrderFingerprints','ineligibleOrderFingerprints','observedOrderFingerprints','failures','unidentifiedRecords','schemaVersion','coverage','ordersScanned','ordersAvailable','orderFingerprints','items'])||raw.schemaVersion!==1||raw.partialScanVersion!==1)invalid();
+  if(!keys(raw,['acquisitionContract','partialScanVersion','outcome','verifiedOrderFingerprints','unresolvedOrderFingerprints','ineligibleOrderFingerprints','observedOrderFingerprints','failures','unidentifiedRecords','schemaVersion','coverage','ordersScanned','ordersAvailable','orderFingerprints','items','rejectedPurchaseItems'])||raw.schemaVersion!==1||raw.partialScanVersion!==1)invalid();
+  if(raw.rejectedPurchaseItems!==undefined&&(!Array.isArray(raw.rejectedPurchaseItems)||raw.rejectedPurchaseItems.length>50000))invalid();
   const c=raw.acquisitionContract,coverage=raw.coverage;
   const compatibility=coverage?.compatibility===undefined?null:fanaticalCompatibilityReport(coverage.compatibility);
   if(coverage?.compatibility!==undefined&&!compatibility)invalid();

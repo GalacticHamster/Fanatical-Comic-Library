@@ -165,7 +165,8 @@ async function importPurchases({ fullScan = false, profileLabel='', confirmed=fa
     [STORAGE_ITEMS]: [...merged.values()].sort((a, b) => a.sourceItemId.localeCompare(b.sourceItemId)),
     [STORAGE_ORDER_FINGERPRINTS]: projected.orderFingerprints,
     [STORAGE_SUMMARY]: summary,
-    fanaticalLastScanAttempt: { status: 'complete', scanMode: summary.scanMode, attemptedAt: importedAt }
+    fanaticalLastScanAttempt: { status: 'complete', scanMode: summary.scanMode, attemptedAt: importedAt },
+    ...(projected.rejectedPurchaseItems?{rejectedPurchaseItems:projected.rejectedPurchaseItems}:{})
   },tab.id]);
   return {...summary,...(projected.partialScanVersion?{acquisitionComplete:true,outcome:'complete',verifiedPurchasesSaved:projected.ordersScanned,unresolvedOrders:0,completeCheckpointAdvanced:true}:{}),scanDiagnostic:scanReport({code:'complete',diagnostic:{...pageDiagnostic,stage:'complete'},requestedFull,actualFull:fullScan,localAccountConfirmed:true,storageAdmission:'committed',verifiedPurchasesSaved:projected.ordersScanned,verifiedProductRecordsSaved:projected.items.length})};
   }catch(error){

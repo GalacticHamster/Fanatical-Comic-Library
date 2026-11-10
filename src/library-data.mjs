@@ -133,7 +133,8 @@ export function sanitizeImportResult(value) {
     ordersAvailable: count(input.ordersAvailable),
     orderFingerprints: [...new Set((Array.isArray(input.orderFingerprints) ? input.orderFingerprints : [])
       .filter((fingerprint) => /^[a-f0-9]{64}$/iu.test(String(fingerprint))).map((fingerprint) => String(fingerprint).toLowerCase()))].sort(),
-    items: [...deduplicated.values()].sort((a, b) => a.sourceItemId.localeCompare(b.sourceItemId))
+    items: [...deduplicated.values()].sort((a, b) => a.sourceItemId.localeCompare(b.sourceItemId)),
+    ...(Array.isArray(input.rejectedPurchaseItems)?{rejectedPurchaseItems:input.rejectedPurchaseItems}:{})
   };
 }
 

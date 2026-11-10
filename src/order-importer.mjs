@@ -178,14 +178,22 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   // itself (game=item), grouping pickAndMix only for display. This is not a
   // public selection pool. Keep this admission narrow; other empty containers
   // still need independently validated details and remain unresolved.
-  const isDirectPurchasedGame = parent => parent && typeof parent === 'object' && !Array.isArray(parent)
-    && parent.type === 'game' && (parent.display_type === undefined || parent.display_type === 'game')
+  const isDirectPurchasedItem = parent => parent && typeof parent === 'object' && !Array.isArray(parent)
+    && !isPromotionalLeaf(parent)
+    && (
+      (parent.type === 'game' && (parent.display_type === undefined || parent.display_type === 'game'))
+      || (['book', 'comic', 'audiobook', 'software'].includes(parent.type) && (parent.display_type === undefined || ['book', 'comic', 'audiobook', 'software'].includes(parent.display_type)))
+    )
     && typeof parent._id === 'string' && !!safeIdInPage(parent._id) && !!safeTextInPage(parent.name)
     && Array.isArray(parent.bundles) && parent.bundles.length === 0
     && ['games','products','items','tiers'].every(key => !Object.hasOwn(parent,key));
+  const isDirectPurchasedGame = isDirectPurchasedItem;
   const isPromotionalLeaf = (leaf) => {
     const name = safeTextInPage(leaf?.name).toLowerCase();
-    return /\b(?:how to redeem|terms and conditions|discount code|coupon|voucher|bonus voucher|wallet top-up)\b/iu.test(name);
+    if (/\b(?:how to redeem|terms and conditions|discount code|coupon|voucher|bonus voucher|wallet top-up|free gift|bonus gift|mystery gift)\b/iu.test(name)) return true;
+    if (leaf?.isFreeProduct === true && (leaf?.mystery === true || leaf?.reveal_template === 'present')) return true;
+    if (/\b(?:sale - gift)\b/iu.test(name)) return true;
+    return false;
   };
   // Only the observed ordinary Steam-key route is classified. Presence is
   // tested without accessing the secret-bearing field's value (even a getter).
@@ -296,32 +304,19 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     const completeIds=new Set((Array.isArray(orderSummaries)?orderSummaries:[]).filter(order=>order?.status==='COMPLETE').map(order=>safeIdInPage(order._id)).filter(Boolean)),products=[],seen=new Set(),rejectedList=[];
     for(const order of Array.isArray(orderDetails)?orderDetails:[]){
       const id=safeIdInPage(order?._id);if(!id||seen.has(id)||!completeIds.has(id)||order.status!=='COMPLETE')continue;seen.add(id);const purchaseRef=await fingerprintOrderInPage(id);
-      for(const parent of Array.isArray(order.items)?order.items:[])for(const group of isDirectPurchasedGame(parent)?[{games:[parent]}]:Array.isArray(parent?.bundles)?parent.bundles:[])for(const leaf of Array.isArray(group?.games)?group.games:[]){
-        if (isPromotionalLeaf(leaf)) {
-          const leafFormats = formatsInPage(leaf);
-          const hasDownloads = (Array.isArray(leaf?.downloads) && leaf.downloads.length > 0)
-            || (leaf?.download && typeof leaf.download === 'object')
-            || (Array.isArray(leaf?.files) && leaf.files.length > 0)
-            || Boolean(leaf?.format || (Array.isArray(leaf?.formats) && leaf.formats.length > 0));
-          const hasDrm = trueKeysInPage(leaf?.drm).length > 0;
-          const hasStreaming = Boolean(leaf?.streaming);
-          const delivery = safeTextInPage(leaf?.delivery)
-            || (hasStreaming ? 'streaming' : (hasDownloads || leafFormats.length > 0 ? 'direct-download' : (hasDrm ? 'external-key' : undefined)));
-          rejectedList.push({
-            sourceItemId: safeIdInPage(leaf?._id) || `fan_rej_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-            title: safeTextInPage(leaf?.name),
-            sourceBundle: safeTextInPage(parent?.name),
-            bundle: { sourceItemId: safeIdInPage(parent?._id), title: safeTextInPage(parent?.name), ...(safeTextInPage(parent?.slug, 300) ? { slug: safeTextInPage(parent.slug, 300) } : {}) },
-            purchaseDate: safeDateInPage(order?.date),
-            reason: 'Unclassified promotional or non-product content',
-            delivery,
-            ...(hasStreaming ? { streaming: true } : {}),
-            formats: leafFormats
-          });
+      for(const parent of Array.isArray(order.items)?order.items:[]) {
+        if (isPromotionalLeaf(parent)) {
+          rejectedList.push(recordRejected(parent, parent, order));
           continue;
         }
-        const product=projectLeafInPage(leaf,parent,order,purchaseRef);
-        if(product)products.push(product);
+        for(const group of isDirectPurchasedItem(parent)?[{games:[parent]}]:Array.isArray(parent?.bundles)?parent.bundles:[])for(const leaf of Array.isArray(group?.games)?group.games:[]){
+          if (isPromotionalLeaf(leaf)) {
+            rejectedList.push(recordRejected(leaf, parent, order));
+            continue;
+          }
+          const product=projectLeafInPage(leaf,parent,order,purchaseRef);
+          if(product)products.push(product);
+        }
       }
     }
     const result = {schemaVersion:1,ordersScanned:completeIds.size,items:combineProducts(products)};
@@ -332,6 +327,31 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   try { token = String(JSON.parse(localStorage.getItem('bsauth') || '{}')?.token || ''); } catch { /* no signed-in token */ }
   if (!token) throw failure('authentication-missing','Sign in to Fanatical before importing purchases.');
   diagnostic.authentication='token-present';
+  const rejectedList = [];
+  const recordRejected = (leaf, parent, order, reason = 'Unclassified promotional or non-product content') => {
+    const leafFormats = formatsInPage(leaf);
+    const hasDownloads = (Array.isArray(leaf?.downloads) && leaf.downloads.length > 0)
+      || (leaf?.download && typeof leaf.download === 'object')
+      || (Array.isArray(leaf?.files) && leaf.files.length > 0)
+      || Boolean(leaf?.format || (Array.isArray(leaf?.formats) && leaf.formats.length > 0));
+    const hasDrm = trueKeysInPage(leaf?.drm).length > 0;
+    const hasStreaming = Boolean(leaf?.streaming);
+    const delivery = safeTextInPage(leaf?.delivery)
+      || (hasStreaming ? 'streaming' : (hasDownloads || leafFormats.length > 0 ? 'direct-download' : (hasDrm ? 'external-key' : undefined)));
+    const parentName = safeTextInPage(parent?.name) || safeTextInPage(leaf?.name);
+    const parentId = safeIdInPage(parent?._id) || safeIdInPage(leaf?._id);
+    return {
+      sourceItemId: safeIdInPage(leaf?._id) || `fan_rej_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      title: safeTextInPage(leaf?.name),
+      sourceBundle: parentName,
+      bundle: { sourceItemId: parentId, title: parentName, ...(safeTextInPage(parent?.slug ?? leaf?.slug, 300) ? { slug: safeTextInPage(parent?.slug ?? leaf?.slug, 300) } : {}) },
+      purchaseDate: safeDateInPage(order?.date),
+      reason,
+      ...(delivery ? { delivery } : {}),
+      ...(hasStreaming ? { streaming: true } : {}),
+      ...(leafFormats.length > 0 ? { formats: leafFormats } : {})
+    };
+  };
   const unreadable = () => failure(diagnostic.stage+'-unreadable','Fanatical returned unreadable or incomplete order data. Your library and scan history were not changed.');
   const incomplete = (reason, code=diagnostic.stage+'-incomplete') => failure(code,`Fanatical scan incomplete; order-history coverage could not be confirmed: ${reason} Your library and scan history were not changed.`);
   const scanController = new AbortController();
@@ -543,7 +563,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   const sparseSummaries=new Map();
   const parentEvidence=parents=>{
     const names=new Map(),ids=new Map(),direct=new Map();
-    for(const parent of parents){const name=safeTextInPage(parent.name);names.set(name,(names.get(name)??0)+1);if(parent._id!==undefined){const key=JSON.stringify([name,parent._id]);ids.set(key,(ids.get(key)??0)+1);}if(isDirectPurchasedGame(parent)){const key=JSON.stringify([parent._id,name]);direct.set(key,(direct.get(key)??0)+1);}}
+    for(const parent of parents){const name=safeTextInPage(parent.name);names.set(name,(names.get(name)??0)+1);if(parent._id!==undefined){const key=JSON.stringify([name,parent._id]);ids.set(key,(ids.get(key)??0)+1);}if(isDirectPurchasedItem(parent)){const key=JSON.stringify([parent._id,name]);direct.set(key,(direct.get(key)??0)+1);}}
     return {names,ids,direct};
   };
   const productCounts = (parents) => {
@@ -552,11 +572,13 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     const counts = new Map();
     for (const parent of parents) {
       if (!safeTextInPage(parent?.name)) bad('missingNames',parent,undefined,'missing-parent-name');
-      if(isDirectPurchasedGame(parent)){const key=JSON.stringify(['direct-game',parent._id,safeTextInPage(parent.name)]);counts.set(key,(counts.get(key)||0)+1);continue;}
+      if (isPromotionalLeaf(parent)) continue;
+      if(isDirectPurchasedItem(parent)){const key=JSON.stringify(['direct-game',parent._id,safeTextInPage(parent.name)]);counts.set(key,(counts.get(key)||0)+1);continue;}
       if (!Array.isArray(parent?.bundles) || !parent.bundles.length){if(diagnostic.stage==='summaries')bundleShape(parent);bad(parent?.bundles==null?'missingBundles':'invalidBundles',parent);}
       for (const group of parent.bundles) {
         if (!Array.isArray(group?.games) || !group.games.length) bad(group?.games==null?'missingGames':'invalidGames',parent,group);
         for (const leaf of group.games) {
+          if (isPromotionalLeaf(leaf)) continue;
           if (!safeTextInPage(leaf?.name)) bad('missingNames',parent,leaf,'missing-leaf-name');
           const key = JSON.stringify([safeTextInPage(parent.name), safeTextInPage(leaf.name)]);
           counts.set(key, (counts.get(key) || 0) + 1);
@@ -585,14 +607,14 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
           &&parent.bundles.every(group=>group&&Array.isArray(group.games)&&group.games.length>0
                &&group.games.every(leaf=>leaf&&typeof leaf.name==='string'&&!!safeTextInPage(leaf.name)));
         const sparse=allowPartial&&Array.isArray(order.items)&&order.items.length>0
-          &&order.items.some(parent=>isSparse(parent)&&!isDirectPurchasedGame(parent))
+          &&order.items.some(parent=>isSparse(parent)&&!isDirectPurchasedItem(parent))
           &&order.items.every(parent=>isSparse(parent)||isPopulated(parent));
         if(sparse){
           sparseSummaries.set(order._id,parentEvidence(order.items));
           // Retain independently available product evidence from populated parents.
-          const populated=order.items.filter(parent=>isPopulated(parent)||isDirectPurchasedGame(parent));
+          const populated=order.items.filter(parent=>isPopulated(parent)||isDirectPurchasedItem(parent));
           expectedProducts.set(order._id,populated.length?productCounts(populated):new Map());
-          order.items.filter(parent=>isSparse(parent)&&!isDirectPurchasedGame(parent)).forEach(parent=>bundleShape(parent));
+          order.items.filter(parent=>isSparse(parent)&&!isDirectPurchasedItem(parent)).forEach(parent=>bundleShape(parent));
         } else {
           const counts=productCounts(order.items);
           expectedProducts.set(order._id,counts);
@@ -665,10 +687,18 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     }else if (actual.size !== expected.size || [...expected].some(([key, quantity]) => actual.get(key) !== quantity)){issue('detailProductMismatch');throw unreadable();}
     let occurrence=0;
     for (const parent of order.items) {
-      if (!parent || typeof parent._id !== 'string' || !safeIdInPage(parent._id) || !safeTextInPage(parent.name) || !Array.isArray(parent.bundles) || (!parent.bundles.length&&!isDirectPurchasedGame(parent))) throw unreadable();
-      for (const group of isDirectPurchasedGame(parent)?[{games:[parent]}]:parent.bundles) {
+      if (isPromotionalLeaf(parent)) {
+        rejectedList.push(recordRejected(parent, parent, order));
+        continue;
+      }
+      if (!parent || typeof parent._id !== 'string' || !safeIdInPage(parent._id) || !safeTextInPage(parent.name) || !Array.isArray(parent.bundles) || (!parent.bundles.length&&!isDirectPurchasedItem(parent))) throw unreadable();
+      for (const group of isDirectPurchasedItem(parent)?[{games:[parent]}]:parent.bundles) {
         if (!group || !Array.isArray(group.games) || !group.games.length) throw unreadable();
         for (const leaf of group.games) {
+          if (isPromotionalLeaf(leaf)) {
+            rejectedList.push(recordRejected(leaf, parent, order));
+            continue;
+          }
           if (typeof leaf?._id !== 'string'){issue('detailProductIdentity');throw unreadable();}
           const projected = projectLeafInPage(leaf, parent, order, fingerprint);
           if (!projected){issue('detailProjection');throw unreadable();}
@@ -702,7 +732,8 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     ordersScanned: allowPartial?verified.size:toInspect.length,
     ordersAvailable: complete.length,
     orderFingerprints: completeWithFingerprints.map(({ fingerprint }) => fingerprint).filter(fp=>!unresolved.has(fp)),
-    items
+    items,
+    ...(rejectedList.length ? { rejectedPurchaseItems: rejectedList } : {})
   };
   } catch (error) {
     if(!returnFailure)throw error;
