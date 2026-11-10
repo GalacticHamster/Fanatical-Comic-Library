@@ -574,9 +574,28 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
       if(order.status==='COMPLETE'){
         // A sparse summary can locate an authenticated detail request, but is
         // never product evidence or authority to skip that detail on Quick.
-        const sparse=allowPartial&&Array.isArray(order.items)&&order.items.length>0&&order.items.every(parent=>parent&&typeof parent==='object'&&!Array.isArray(parent)&&typeof parent.name==='string'&&safeTextInPage(parent.name)&&Array.isArray(parent.bundles)&&parent.bundles.length===0&&(parent._id===undefined||typeof parent._id==='string'&&safeIdInPage(parent._id))&&['games','products','items','tiers'].every(key=>!Object.hasOwn(parent,key)));
-        if(sparse&&order.items.some(parent=>!isDirectPurchasedGame(parent))){sparseSummaries.set(order._id,parentEvidence(order.items));expectedProducts.set(order._id,null);order.items.forEach(parent=>bundleShape(parent));}
-        else {const counts=productCounts(order.items);expectedProducts.set(order._id,counts);if([...counts.values()].some(n=>n>1))issue('multipleCopies');}
+        const isSparse=parent=>parent&&typeof parent==='object'&&!Array.isArray(parent)
+          &&typeof parent.name==='string'&&!!safeTextInPage(parent.name)
+          &&Array.isArray(parent.bundles)&&parent.bundles.length===0
+          &&(parent._id===undefined||(typeof parent._id==='string'&&!!safeIdInPage(parent._id)))
+          &&['games','products','items','tiers'].every(key=>!Object.hasOwn(parent,key));
+        const isPopulated=parent=>parent&&typeof parent==='object'&&!Array.isArray(parent)
+          &&typeof parent.name==='string'&&!!safeTextInPage(parent.name)
+          &&Array.isArray(parent.bundles)&&parent.bundles.length>0
+          &&parent.bundles.every(group=>group&&Array.isArray(group.games)&&group.games.length>0
+               &&group.games.every(leaf=>leaf&&typeof leaf.name==='string'&&!!safeTextInPage(leaf.name)));
+        const sparse=allowPartial&&Array.isArray(order.items)&&order.items.length>0
+          &&order.items.some(parent=>isSparse(parent)&&!isDirectPurchasedGame(parent))
+          &&order.items.every(parent=>isSparse(parent)||isPopulated(parent));
+        if(sparse){
+          sparseSummaries.set(order._id,parentEvidence(order.items));
+          expectedProducts.set(order._id,null);
+          order.items.filter(parent=>isSparse(parent)&&!isDirectPurchasedGame(parent)).forEach(parent=>bundleShape(parent));
+        } else {
+          const counts=productCounts(order.items);
+          expectedProducts.set(order._id,counts);
+          if([...counts.values()].some(n=>n>1))issue('multipleCopies');
+        }
       }
       else if(allowPartial){
         if(!['REFUNDED','CANCELLED','CANCELED','PENDING','FAILED'].includes(order.status)){issue('unsupportedStatus');throw unreadable();}
