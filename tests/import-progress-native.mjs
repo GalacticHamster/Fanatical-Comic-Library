@@ -75,7 +75,18 @@ try{
      counts={lists:0,details:0,completed:0,failed:0};attempts.clear();
      const started=await evaluate('const button='+root+'.querySelector("[data-import-mode='+mode+']");if(button.disabled)throw Error("Already running");button.click();return button.disabled;');assert.equal(started,true,'Scan never started');
      await wait('return !'+root+'.querySelector("[data-import-mode='+mode+']").disabled;','Scan never finished');
-     const text=await evaluate('return '+root+'.querySelector("output").textContent;');if(expectFailure)assert.match(text,/^Scan incomplete;/);else assert.match(text,/^(Saved|Checked|No new|Rescanned)|^Import finished\. (?:No purchases to process|\d[\d,]* purchases? verified|\d[\d,]* previously verified purchases? skipped|\d[\d,]* purchases? verified; \d[\d,]* previously verified purchases? skipped); \d[\d,]* products? added\.$/);assert(counts.lists>0,'No candidate acquisition occurred');return text;
+     const text=await evaluate('return '+root+'.querySelector("output").textContent;');if(expectFailure)assert.match(text,/^Import failed\n\n[^]+Your existing library was not changed\.$/);else{
+       const paragraphs=text.split('\n\n');assert.equal(paragraphs.length,3,'Completion must include outcome, activity and library counts');
+       if(/ partially completed$/.test(paragraphs[0])){
+         assert.match(paragraphs[0],/^(?:Full import|Quick update) partially completed$/);
+         assert.match(paragraphs[1],/^(?:Couldn't check [\d,]+ purchases?[^\n]*|Part of your purchase list couldn't be checked[^\n]*)$/);
+         assert.match(paragraphs[2],/^(?:Saved [\d,]+ purchases?[^\n]*|No purchases were saved\.[^\n]*)Your library now contains [\d,]+ items?\. Earlier records were preserved\.$/);
+       }else{
+         assert.match(paragraphs[0],/^(?:Full import|Quick update) completed$/);
+         assert.match(paragraphs[1],/^(?:(?:Checked [\d,]+ purchases?\.|No purchases needed checking\.) (?:Imported [\d,]+ new items?\.|No new items found\.)|No purchases found in your account\.)$/);
+         assert.match(paragraphs[2],/^[\d,]+ items? in your library\.$/);
+       }
+     }assert(counts.lists>0,'No candidate acquisition occurred');return text;
    }
    async function saved(){await navigate(reportUrl);return JSON.parse(await wait('return document.documentElement?.dataset.result;','No persisted records'));}
    denied=false;retry=false;delay=0;size=91;fail=true;await openOrders();
@@ -97,7 +108,7 @@ try{
    before=await saved();assert.equal(before.count,91);assert.equal(before.fingerprints.length,89,'unreadable known orders lose skip authority, never their saved purchases');assert.equal(before.summary.coverage.complete,true,'partial scan preserves the earlier complete checkpoint');
    await openOrders();await scan('new');assert.equal(counts.details,0);assert.equal((await saved()).count,91);
    // The two malformed *known* summaries are still validated before skipping.
-   summaryIssues=false;await openOrders();assert.equal(await scan('new'),'Import finished. 2 purchases verified; 89 previously verified purchases skipped; 0 products added.');assert.equal(counts.details,2);after=await saved();assert.equal(after.count,91);assert.equal(after.fingerprints.length,91);assert.deepEqual(after.history,before.history);
+   summaryIssues=false;await openOrders();assert.equal(await scan('new'),'Quick update completed\n\nChecked 2 purchases. No new items found.\n\n91 items in your library.');assert.equal(counts.details,2);after=await saved();assert.equal(after.count,91);assert.equal(after.fingerprints.length,91);assert.deepEqual(after.history,before.history);
    console.log('PASS installed FAN compatibility report priority, safe counters, known-summary validation and reload recovery');
    reorderedDuplicate=true;await openOrders();await scan('new');assert.equal(counts.details,0);
    await evaluate('const s='+root+';[...s.querySelectorAll("button")].find(b=>b.textContent==="Export scan report").click();return true;');
@@ -139,8 +150,8 @@ try{
    const persisted=await saved();assert.equal(persisted.count,24);assert.equal(persisted.fingerprints.length,3);assert.equal(persisted.history.length,0);assert.equal(persisted.summary,null);assert(persisted.accountId);assert.equal(new Set(persisted.items.map(i=>i.sourceItemId)).size,24);
    driver.close?.();child.kill();await exited;await startBrowser();await navigate(optionsUrl);await wait('return !!globalThis.LibraryBrowser&&document.querySelector("#library-count").textContent.includes("24 unique items");','Browser restart lost 24 purchases');
    console.log('PASS installed FAN 6/3/24: committed read-back, existing-tab refresh with draft retained, reload/restart, active account and no false complete checkpoint');
-   sixOrders=false;directGames=true;size=4;await openOrders();assert.equal(await scan('all'),'Import finished. 4 purchases verified; 13 products added.');let directSaved=await saved();assert.equal(directSaved.count,37);assert.equal(directSaved.summary,null);assert.equal(directSaved.history.length,0);for(const item of persisted.items)assert.deepEqual(directSaved.items.find(i=>i.sourceItemId===item.sourceItemId),item);assert.equal(directSaved.items.filter(i=>i.sourceItemId.startsWith('direct-game-')).length,10);
-   await openOrders();assert.equal(await scan('new'),'Import finished. 4 previously verified purchases skipped; 0 products added.');assert.equal(counts.details,0);directSaved=await saved();assert.equal(directSaved.count,37);
+   sixOrders=false;directGames=true;size=4;await openOrders();assert.equal(await scan('all'),'Full import completed\n\nChecked 4 purchases. Imported 13 new items.\n\n37 items in your library.');let directSaved=await saved();assert.equal(directSaved.count,37);assert.equal(directSaved.summary.coverage.complete,true);assert.equal(directSaved.summary.coverage.paginationEvidence,'array-only');assert.equal(directSaved.history.length,0);for(const item of persisted.items)assert.deepEqual(directSaved.items.find(i=>i.sourceItemId===item.sourceItemId),item);assert.equal(directSaved.items.filter(i=>i.sourceItemId.startsWith('direct-game-')).length,10);
+   await openOrders();assert.equal(await scan('new'),'Quick update completed\n\nNo purchases needed checking. No new items found.\n\n37 items in your library.');assert.equal(counts.details,0);directSaved=await saved();assert.equal(directSaved.count,37);
    sparseDetailFailure=true;await openOrders();await scan('all');const retained=await saved();assert.equal(retained.count,37);assert.deepEqual(retained.items,directSaved.items);assert.equal(retained.fingerprints.length,3);
    sparseDetailFailure=false;await openOrders();await scan('new');assert.equal(counts.details,1);directSaved=await saved();assert.equal(directSaved.count,37);assert.equal(directSaved.fingerprints.length,4);
    driver.close?.();child.kill();await exited;await startBrowser();await navigate(optionsUrl);await wait('return !!globalThis.LibraryBrowser&&document.querySelector("#library-count").textContent.includes("37 unique items");','Direct purchased games lost after restart');
@@ -150,7 +161,7 @@ try{
    if(central&&(legacyKeys||process.argv.includes('--legacy-central')))await verifyFanaticalKeyCompatibility({observationsSupported:process.argv.includes('--observation-peer')||process.argv.includes('--legacy-observations'),browser:firefox?'Firefox':'Chrome',peerId:fanId,navigate,evaluate,wait,glUrl:centralOptionsUrl,fanUrl:optionsUrl,restart:async()=>{driver.close?.();child.kill();await exited;await startBrowser();}});
    if(central&&!legacyKeys&&!process.argv.includes('--legacy-central'))await verifyFanaticalKeyReminders({browser:firefox?'Firefox':'Chrome',peerId:fanId,navigate,evaluate,wait,glUrl:centralOptionsUrl,fanUrl:optionsUrl,openOrders,scan,setKeysPresent:()=>{directKeysPresent=true;},restart:async()=>{driver.close?.();child.kill();await exited;await startBrowser();}});
 
-   const preMixed=await saved();directGames=false;size=2;headerless=true;mixedSummary=true;sparseSummary=true;await openOrders();await scan('all');let mixedSaved=await saved();assert.equal(mixedSaved.count,preMixed.count+2);assert.deepEqual(mixedSaved.fingerprints,preMixed.fingerprints);assert.deepEqual(mixedSaved.history,preMixed.history);assert.equal(mixedSaved.summary,null);for(const item of preMixed.items)assert(mixedSaved.items.some(i=>i.sourceItemId===item.sourceItemId));
+   const preMixed=await saved();directGames=false;size=2;headerless=true;mixedSummary=true;sparseSummary=true;await openOrders();await scan('all');let mixedSaved=await saved();assert.equal(mixedSaved.count,preMixed.count+2);assert.deepEqual(mixedSaved.fingerprints,preMixed.fingerprints);assert.deepEqual(mixedSaved.history,preMixed.history);assert.deepEqual(mixedSaved.summary,preMixed.summary);for(const item of preMixed.items)assert(mixedSaved.items.some(i=>i.sourceItemId===item.sourceItemId));
    await openOrders();await scan('new');assert.equal(counts.details,1);assert.equal((await saved()).count,mixedSaved.count);
    sparseDetailFailure=true;await openOrders();await scan('all');assert.deepEqual((await saved()).items,mixedSaved.items);assert.equal((await saved()).fingerprints.length,mixedSaved.fingerprints.length-1);
    sparseDetailFailure=false;await openOrders();await scan('new');assert.equal(counts.details,1);assert.deepEqual((await saved()).fingerprints,mixedSaved.fingerprints);assert.equal((await saved()).count,mixedSaved.count);

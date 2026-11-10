@@ -413,8 +413,16 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
       const history=new Map((sameProfile?parseHistoricalItems(state.fanaticalHistoricalItems,control.label):[]).map(entry=>[entry.item.sourceItemId,entry]));
       if(control.changing){const prior=archive(state);for(let n=archives.length-1;n>=0;n--)if(archives[n].profileLabel===prior.profileLabel||archives[n].profileLabel===control.label)archives.splice(n,1);archives.push(prior);if(archives.length>100)throw new Error('Too many archived profiles; export a backup first.');}
       const observed=new Set(incoming.map(item=>item.sourceItemId));
+      if(!partial&&sameProfile&&updates.fanaticalImportSummary?.coverage?.paginationEvidence==='array-only'){
+        if(control.fullScan&&state.fanaticalLibraryItems.some(item=>!observed.has(item.sourceItemId)))throw Error('A headerless acquisition cannot replace earlier purchases.');
+        // Keep independently enumerated coverage when the latest acquisition
+        // cannot establish it. Per-order skip evidence still advances below.
+        const prior=state.fanaticalImportSummary;
+        if(prior?.coverage?.complete===true&&['count','range','link'].includes(prior.coverage.paginationEvidence))updates={...updates,fanaticalImportSummary:prior};
+      }
       // Only a successful complete scan of the same confirmed profile infers
-      // absence. Quick scans, failures, and switches cannot retire its items.
+      // absence. Headerless acquisitions, Quick scans, failures, and switches
+      // cannot retire its items.
       if(!partial&&control.fullScan&&sameProfile)for(const item of parseLibraryBackup({schemaVersion:1,items:state.fanaticalLibraryItems})) {
         if(!observed.has(item.sourceItemId)&&!history.has(item.sourceItemId))history.set(item.sourceItemId,{profileLabel:control.label,missingSince:now,item});
       }

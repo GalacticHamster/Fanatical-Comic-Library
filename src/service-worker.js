@@ -144,7 +144,10 @@ async function importPurchases({ fullScan = false, profileLabel='', confirmed=fa
   pageDiagnostic={compatibility:authority.compatibility,listingEvidence:projected.coverage.listingEvidence,accountAffinity:projected.coverage.accountAffinity,stage:'storage',pagesAttempted:projected.coverage.pagesFetched,pagesParsed:projected.coverage.pagesFetched,ordersRecognized:projected.coverage.listedOrders,detailsParsed:projected.ordersScanned,retries:projected.coverage.retries,terminalReached:true,discoveryComplete:projected.coverage.discoveryComplete,paginationEvidence:projected.coverage.paginationEvidence,authentication:'accepted-response'};
   const existing = new Map((Array.isArray(stored[STORAGE_ITEMS]) ? stored[STORAGE_ITEMS] : []).filter((item) => safeId(item?.sourceItemId)).map((item) => [item.sourceItemId, item]));
   const addedProducts = projected.items.filter((item) => !existing.has(item.sourceItemId)).length;
-  const merged = fullScan ? new Map() : existing;
+  // Finishing the single-response contract does not independently prove that
+  // absent products should leave the active library. Headerless Full imports
+  // refresh known products and add discoveries without retiring earlier ones.
+  const merged = fullScan && projected.coverage.paginationEvidence !== 'array-only' ? new Map() : existing;
   for (const item of projected.items) {const previous=merged.get(item.sourceItemId);merged.set(item.sourceItemId,previous?mergeLibraryItems([previous,item])[0]:item);}
   const importedAt = new Date().toISOString();
   const summary = {

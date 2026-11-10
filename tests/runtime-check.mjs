@@ -115,21 +115,22 @@ try{
   let saved=await evaluate('chrome.storage.local.get(null)',options);
   assert.equal(saved.fanaticalImportSummary?.ordersScanned,200,await evaluate("document.querySelector('#fanatical-library-importer output').textContent",page));assert.equal(saved.fanaticalImportSummary.coverage.pagesFetched,10);assert.equal(saved.fanaticalLibraryItems[0].purchaseOrigins.length,200);assert.equal(paths.filter(path=>!path.includes('synthetic-order')).length,10);assert.equal(paths.filter(path=>path.includes('synthetic-order')).length,200);assert(maxActive<=3);assert(!JSON.stringify(saved).includes('SYNTHETIC-SECRET'));assert(!JSON.stringify(saved).includes('synthetic-order-'));
   console.log('PASS installed Chrome: packaged content -> worker -> MAIN full import covers 200 orders / 10 pages with bounded concurrency and 200 distinct purchase origins');
-  assert.match(await evaluate("document.querySelector('#fanatical-library-importer output').textContent",page),/^Rescanned 200 purchases; current snapshot rebuilt/);
+  assert.match(await evaluate("document.querySelector('#fanatical-library-importer output').textContent",page),/^Full import completed\n\nChecked 200 purchases\. Imported 1 new item\.\n\n1 item in your library\.$/);
   const progress=await evaluate('window.importMessages',page);
   assert(progress.some(message=>message.startsWith('Loading your purchase list: page')));
   assert(progress.some(message=>message.startsWith('Rescanning all purchases: purchase')));
   console.log('PASS installed Chrome: live aggregate progress crosses MAIN into the importer without replacing its completed result');
   total=201;paths.length=0;await evaluate("document.querySelector('[data-import-mode=new]').click();true",page);await wait("!document.querySelector('[data-import-mode=new]').disabled",page);saved=await evaluate('chrome.storage.local.get(null)',options);
   assert.equal(saved.fanaticalImportSummary.ordersScanned,1);assert.equal(saved.fanaticalImportSummary.ordersSkipped,200);assert.equal(saved.fanaticalImportSummary.coverage.pagesFetched,11);assert.equal(saved.fanaticalLibraryItems[0].purchaseOrigins.length,201);assert.equal(paths.filter(path=>path.includes('synthetic-order')).length,1);console.log('PASS installed Chrome: quick import traverses all 11 pages but retrieves only one new order and preserves prior origins');
-  assert.match(await evaluate("document.querySelector('#fanatical-library-importer output').textContent",page),/^Checked 1 new purchase; skipped 200 unchanged purchases/);
+  assert.match(await evaluate("document.querySelector('#fanatical-library-importer output').textContent",page),/^Quick update completed\n\nChecked 1 purchase\. No new items found\.\n\n1 item in your library\.$/);
   paths.length=0;await evaluate("document.querySelector('[data-import-mode=new]').click();true",page);await wait("!document.querySelector('[data-import-mode=new]').disabled",page);saved=await evaluate('chrome.storage.local.get(null)',options);
   assert.equal(saved.fanaticalImportSummary.ordersScanned,0);assert.equal(paths.filter(path=>path.includes('synthetic-order')).length,0);
-  assert.match(await evaluate("document.querySelector('#fanatical-library-importer output').textContent",page),/^No new purchases; no purchase details to check; skipped 201 unchanged purchases/);
+  assert.match(await evaluate("document.querySelector('#fanatical-library-importer output').textContent",page),/^Quick update completed\n\nNo purchases needed checking\. No new items found\.\n\n1 item in your library\.$/);
   console.log('PASS installed Chrome: repeated quick import says no new purchases and skips every known purchase detail');
   const before=JSON.stringify({items:saved.fanaticalLibraryItems,summary:saved.fanaticalImportSummary,fingerprints:saved.fanaticalScannedOrderFingerprints});broken=true;await evaluate("document.querySelector('[data-import-mode=new]').click();true",page);await wait("!document.querySelector('[data-import-mode=new]').disabled",page);saved=await evaluate('chrome.storage.local.get(null)',options);
   assert.equal(JSON.stringify({items:saved.fanaticalLibraryItems,summary:saved.fanaticalImportSummary,fingerprints:saved.fanaticalScannedOrderFingerprints}),before);assert.equal(saved.fanaticalLastScanAttempt.status,'partial');assert.equal(errors.length,0,String(errors[0]));console.log('PASS installed Chrome: broken pagination retains purchases and successful summary, displaying incomplete coverage');
-  assert.match(await evaluate("document.querySelector('#fanatical-library-importer output').textContent",page),/usable next-page link/u,'Chrome must retain the specific pagination failure across MAIN injection');
+  assert.equal(await evaluate("document.querySelector('#fanatical-library-importer output').textContent",page),"Quick update partially completed\n\nPart of your purchase list couldn't be checked. It will be retried on your next update.\n\nNo purchases were saved. Your library now contains 1 item. Earlier records were preserved.");
+  assert(saved.fanaticalLastScanAttempt.failures.some(f=>f.code==='pagination-missing-next'&&f.stage==='listing'),'Specific pagination failure was lost across MAIN injection');
   const downloads=join(temporary,'scan-reports');await mkdir(downloads);
   await driver.send('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:downloads});
   await evaluate("[...document.querySelectorAll('#fanatical-library-importer button')].find(b=>b.textContent==='Export scan report').click();true",page);
@@ -178,7 +179,7 @@ try{
     saved=await evaluate('chrome.storage.local.get(null)',options);
     assert.equal(saved.fanaticalLastScanAttempt.status,'partial');assert.equal(saved.fanaticalLastScanAttempt.verifiedPurchasesSaved,499);assert.equal(saved.fanaticalLastScanAttempt.unresolvedOrders,1);
     assert.deepEqual(saved.fanaticalImportSummary,priorSummary);assert.equal(saved.fanaticalScannedOrderFingerprints.length,499);assert.equal(saved.fanaticalLibraryItems.filter(i=>i.sourceItemId==='product-123456'||i.sourceItemId.startsWith('product-synthetic-')).reduce((n,i)=>n+(i.purchaseOrigins?.length??0),0),499);
-    assert.match(await evaluate("document.querySelector('#fanatical-library-importer output').textContent",page),/Saved 499 verified purchases/u);
+    assert.match(await evaluate("document.querySelector('#fanatical-library-importer output').textContent",page),/Saved 499 purchases/u);
     if(centralSession){
       for(let n=0;n<300;n++){if(await evaluate("(async()=>{const S=await import('./src/lib/storage.js');return Object.values((await S.getDatabase()).providerItems).filter(i=>i.provider==='fanatical'&&(i.providerItemId==='product-123456'||i.providerItemId.startsWith('product-synthetic-'))).reduce((n,i)=>n+(i.metadata.purchaseOrigins?.length??0),0)===499;})()",centralSession))break;await pause(20);}
       const centralProgress=await evaluate("(async()=>{const S=await import('./src/lib/storage.js');const db=await S.getDatabase();const sync=await chrome.runtime.sendMessage({type:'GH_PURCHASE_ACTION',provider:'fanatical',action:'syncState'});return {origins:Object.values(db.providerItems).filter(i=>i.provider==='fanatical'&&(i.providerItemId==='product-123456'||i.providerItemId.startsWith('product-synthetic-'))).reduce((n,i)=>n+(i.metadata.purchaseOrigins?.length??0),0),status:sync.state?.status,error:sync.state?.error};})()",centralSession);
@@ -194,12 +195,13 @@ try{
   console.log('PASS installed Chrome: 499/500 partial orders saved atomically, repeat is idempotent, unresolved order alone retried and complete coverage recovered');
   if(centralSession)console.log('PASS installed Chrome: repeated partial FAN additions reach GL without duplicating origins or modifying unrelated provider records');
   const completeBefore=await evaluate('chrome.storage.local.get("fanaticalImportSummary").then(s=>s.fanaticalImportSummary)',options);
-  headerless=true;total=501;paths.length=0;
+  headerless=true;total=501;paths.length=0;const beforeHeaderlessTotal=saved.fanaticalLibraryItems.length;
   for(let repeat=0;repeat<2;repeat++){
     await evaluate("document.querySelector('[data-import-mode=new]').click();true",page);await wait("!document.querySelector('[data-import-mode=new]').disabled",page);
-    saved=await evaluate('chrome.storage.local.get(null)',options);assert.equal(saved.fanaticalLastScanAttempt.acquisitionComplete,true);assert.deepEqual(saved.fanaticalImportSummary,completeBefore);assert.equal(saved.fanaticalScannedOrderFingerprints.length,501);
-    assert.equal(saved.fanaticalLastScanAttempt.verifiedPurchasesSaved,repeat===0?1:0);
-    assert.match(await evaluate("document.querySelector('#fanatical-library-importer output').textContent",page),/^Import finished[.]/);
+    saved=await evaluate('chrome.storage.local.get(null)',options);assert.equal(saved.fanaticalLastScanAttempt.status,'complete');assert.deepEqual(saved.fanaticalImportSummary,completeBefore);assert.equal(saved.fanaticalScannedOrderFingerprints.length,501);
+    assert.equal(paths.filter(p=>p.includes('synthetic-order')).length,1,'Only the first Quick retrieves the new purchase; the repeat skips it');
+    assert.equal(saved.fanaticalLibraryItems.length,beforeHeaderlessTotal+1);
+    assert.equal(await evaluate("document.querySelector('#fanatical-library-importer output').textContent",page),`Quick update completed\n\n${repeat===0?'Checked 1 purchase. Imported 1 new item.':'No purchases needed checking. No new items found.'}\n\n${beforeHeaderlessTotal+1} items in your library.`);
     if(repeat===0)assert.equal(paths.filter(p=>p.includes('synthetic-order')).length,1);
   }
   console.log('PASS installed Chrome: headerless acquisition finishes normally, preserves complete history and subsequent Quick skips validated details');

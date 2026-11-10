@@ -94,13 +94,43 @@ test('headerless one-order 47-product acquisition finishes with valid complete c
   const covered=await run.send(true);assert.equal(covered.summary.outcome,'complete');assert.equal(covered.summary.completeCheckpointAdvanced,true);assert.equal(run.stored.fanaticalImportSummary.coverage.complete,true);assert.deepEqual(run.stored.fanaticalLibraryItems,snapshot);
 });
 
+test('headerless Full remains additive across repeat, Quick, empty response and backup; explicit coverage alone can retire a product',async()=>{
+  let rows=[summary],headers={};
+  const initial={mediaTypeOverrides:{'product-654321':'comic'},fanaticalLibraryItems:previous.fanaticalLibraryItems.map(item=>({...item,purchaseDate:'2020-01-02T00:00:00.000Z'}))};
+  const run=harness({initial,respond:async path=>({status:200,headers,data:path==='/api/user/orders'?rows:detail})});
+  for(const full of [true,true,false]){
+    const reply=await run.send(full);assert(reply.ok,reply.error);assert.equal(reply.summary.acquisitionComplete,true);assert.equal(reply.summary.ownedLeafProducts,2);
+    assert.equal(reply.summary.scanDiagnostic.terminalVerified,false);
+    const old=run.stored.fanaticalLibraryItems.find(item=>item.sourceItemId==='product-654321');assert(old);assert.equal(old.manualMediaType,'comic');assert.equal(old.purchaseDate,'2020-01-02T00:00:00.000Z');
+    assert.equal(run.stored.fanaticalHistoricalItems.length,0);assert.deepEqual(run.stored.mediaTypeOverrides,initial.mediaTypeOverrides);
+    await new Promise(resolve=>setImmediate(resolve));
+  }
+  const baseline=structuredClone(run.stored);rows=[];
+  const empty=await run.send(true);assert(empty.ok,empty.error);assert.equal(empty.summary.acquisitionComplete,false);
+  for(const key of ['fanaticalLibraryItems','fanaticalHistoricalItems','fanaticalScannedOrderFingerprints','fanaticalImportSummary','mediaTypeOverrides'])assert.deepEqual(run.stored[key],baseline[key]);
+  const backup=createLibraryBackup(run.stored.fanaticalLibraryItems,run.stored.fanaticalImportSummary,undefined,'fixture',[],[],run.stored.fanaticalHistoricalItems,run.stored.mediaTypeOverrides);
+  assert.equal(backup.items.length,2);assert.equal(backup.items.find(item=>item.sourceItemId==='product-654321').purchaseDate,'2020-01-02T00:00:00.000Z');
+  rows=[summary];headers={'x-total-count':'1'};await new Promise(resolve=>setImmediate(resolve));
+  const reconciled=await run.send(true);assert(reconciled.ok,reconciled.error);assert.equal(reconciled.summary.scanDiagnostic.terminalVerified,true);assert.equal(run.stored.fanaticalLibraryItems.length,1);assert.equal(run.stored.fanaticalHistoricalItems[0].item.sourceItemId,'product-654321');
+  const covered=structuredClone(run.stored.fanaticalImportSummary);headers={};await new Promise(resolve=>setImmediate(resolve));
+  assert((await run.send(false)).ok);assert.deepEqual(run.stored.fanaticalImportSummary,covered,'A headerless Quick cannot overwrite independent coverage');
+});
+
+test('writer refuses a headerless replacement even if the worker loses its additive merge',async()=>{
+  const source=fs.readFileSync(workerSourceURL(),'utf8'),changed=source.replace("const merged = fullScan && projected.coverage.paginationEvidence !== 'array-only' ? new Map() : existing;",'const merged = fullScan ? new Map() : existing;');
+  assert.notEqual(changed,source);
+  const runtime=await prepareWorker({url:workerSourceURL(),source:changed}),run=harness({runtime});
+  await assert.rejects(run.scan(true),/headerless acquisition cannot replace earlier purchases/);
+  for(const key of ['fanaticalLibraryItems','fanaticalHistoricalItems','fanaticalImportSummary','fanaticalScannedOrderFingerprints','mediaTypeOverrides'])assert.deepEqual(run.stored[key],run.before[key]);
+});
+
 test('acquisition success is separate from total/range/link coverage and genuine interrupted discovery',async()=>{
   for(const headers of [{},{'x-total-count':'1'},{'content-range':'orders 0-0/1'},{'x-total-count':'2'}]){
     const run=harness({partial:true,headers}),reply=await run.send(true);assert.equal(reply.ok,true,reply.error);
     const missing=headers['x-total-count']==='2',complete=!missing;
     assert.equal(reply.summary.acquisitionComplete,!missing);assert.equal(reply.summary.completeCheckpointAdvanced,complete);
     assert.equal(reply.summary.outcome,complete?'complete':'partial-discovery');
-    assert.equal(run.stored.fanaticalLibraryItems.length,complete?1:2);
+    assert.equal(run.stored.fanaticalLibraryItems.length,complete&&Object.keys(headers).length?1:2);
     assert.equal(run.stored.fanaticalImportSummary.importedAt==='previous',!complete);
   }
   const bad=harness({partial:true,list:[{...summary,items:[]}]});const reply=await bad.send();assert.equal(reply.ok,true);assert.equal(reply.summary.acquisitionComplete,false);assert.equal(reply.summary.unresolvedOrders,1);
