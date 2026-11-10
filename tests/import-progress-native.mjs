@@ -50,7 +50,13 @@ try{
     const r=await driver.send('Runtime.evaluate',{expression:'(async()=>{'+script+'})()',awaitPromise:true,returnByValue:true},session);assert(!r.exceptionDetails,JSON.stringify(r.exceptionDetails));return r.result.value;
   }
   async function navigate(url){if(firefox)await driver.send('WebDriver:Navigate',{url});else{const t=await driver.send('Target.createTarget',{url});session=(await driver.send('Target.attachToTarget',{targetId:t.targetId,flatten:true})).sessionId;await driver.send('Runtime.enable',{},session);}}
-  async function wait(script,message){for(let i=0;i<250;i++){const v=await evaluate(script);if(v)return v;await pause(100);}const state=await evaluate('return {url:location.href,ready:document.readyState,status:document.querySelector("#galactic-library-fanatical-importer")?.shadowRoot?.querySelector("[data-import-status]")?.textContent};');throw Error(message+' '+JSON.stringify(state));}
+  async function wait(script,message){for(let i=0;i<250;i++){const v=await evaluate(script);if(v)return v;await pause(100);}const state=await evaluate('return {ready:document.readyState,status:document.querySelector("#galactic-library-fanatical-importer")?.shadowRoot?.querySelector("[data-import-status]")?.textContent};');
+    if(message==='Local dismissal did not reach GL')try{
+      const diagnostic=await evaluate(`const reply=await chrome.runtime.sendMessage({type:'GH_PURCHASE_ACTION',provider:'fanatical',action:'syncState'}),s=reply.state;const S=await import('./src/lib/storage.js'),R=await import('./src/lib/reminders.js'),db=await S.getDatabase();return {pending:R.libraryReminders(db).filter(r=>r.provider==='fanatical'&&r.keyStatus==='unrevealed').length,sync:s?{status:s.status,pending:s.pending,errorCode:s.errorCode,staleSnapshot:s.error==='Saved account data changed. Refresh the account choices and confirm again.',confirmed:s.confirmed,remoteConfirmed:s.remoteConfirmed}:null};`);console.log('REMINDER FAILURE '+JSON.stringify(diagnostic));
+      await navigate(reportUrl.replace('test-report.html','src/options.html'));await wait('return !!globalThis.LibraryBrowser;','Reminder diagnostic page readiness');
+      console.log('FAN REMINDER FAILURE '+JSON.stringify(await evaluate(`const D=await import('./library-data.mjs'),raw=await chrome.storage.local.get(null),rows=D.localKeyReminders(raw.fanaticalLibraryItems??[]),s=raw.galacticPurchaseSync?.fanatical;return {pending:rows.filter(r=>!r.hidden).length,reviews:rows.slice(0,20).map(r=>({action:r.review?.action??null,time:r.review?.updatedAt??null})),sync:s?{pending:s.pending,status:s.status,confirmed:s.confirmed,remoteConfirmed:s.remoteConfirmed,errorCode:s.errorCode}:null};`)));
+    }catch{console.log('REMINDER FAILURE diagnostics unavailable; original assertion retained');}
+    throw Error(message+' '+JSON.stringify(state));}
 
 
  const root='document.querySelector("#fanatical-library-importer")',checks=[];let reportUrl,centralOptionsUrl;
