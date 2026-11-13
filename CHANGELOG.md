@@ -1,5 +1,9 @@
 # Release notes
 
+## 1.0.5
+
+- Fixed imports failing after navigating to Fanatical's Orders page, improved handling of promotional items in purchases, and expanded diagnostics for incomplete imports.
+
 ## Unreleased ? automatic local sharing
 
 - Automatically pair the sole saved provider account on each side, including populated libraries; retain relationships over sharing OFF/ON. Preserve valid historical Humble key dates and isolate malformed optional observations. Correct sharing checkbox alignment and actionable connection diagnostics.

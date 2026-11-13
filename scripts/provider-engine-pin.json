@@ -11,6 +11,6 @@
   "runtime": {
     "src/order-importer.mjs": "ccb1eb9dfc726bb3bbe398acb1a882b0aaabc00fc68f12cb4692e15f1c8f5add",
     "src/acquisition-contract.mjs": "020322cf28eb317461cb4b9a5a59eab92bc53dd106c39f2731b5e3d284c5301a",
-    "src/service-worker.js": "a6706e59ad31fb03f89247dac5dc9b43e1afca65537a2e752070673cfe74da12"
+    "src/service-worker.js": "d6b7ea59e7487721572015a6c9fae01c200c14927d190052be66966036ff45dc"
   }
 }

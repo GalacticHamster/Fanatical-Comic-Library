@@ -11,13 +11,13 @@ import {chromePipe,firefoxMarionette,freePort} from './native-protocol.mjs';
 import {quotaProduct,quotaBaseline} from './fixtures/storage-quota.mjs';
 
 const firefox=process.argv.includes('--firefox'),from=process.env.FAN_UPGRADE_FROM??'1.0.2',suffix=firefox?'-firefox':'';
-assert(['1.0.0','1.0.1','1.0.2'].includes(from));
+assert(['1.0.0','1.0.1','1.0.2','1.0.4'].includes(from));
 const oldZip=await readFile(new URL(`../dist/FanaticalLibrary-${from}${suffix}.zip`,import.meta.url)),oldFiles=readRuntimeZip(oldZip);
 const newZip=process.env.FAN_UPGRADE_TO?await readFile(process.env.FAN_UPGRADE_TO):(await createRelease(undefined,undefined,firefox?'firefox':'chrome')).zip,newFiles=readRuntimeZip(newZip);
 const oldManifest=JSON.parse(oldFiles.get('manifest.json')),nextManifest=JSON.parse(newFiles.get('manifest.json'));
-assert.equal(oldManifest.version,from);assert.equal(nextManifest.version,'1.0.4');
+assert.equal(oldManifest.version,from);assert.equal(nextManifest.version,'1.0.5');
 assert(nextManifest.permissions.includes('unlimitedStorage'));
-if(from==='1.0.2')assert.deepEqual(nextManifest,{...oldManifest,version:'1.0.4'},'Only version changes in the release manifest');
+if(['1.0.2','1.0.4'].includes(from))assert.deepEqual(nextManifest,{...oldManifest,version:'1.0.5'},'Only version changes in the release manifest');
 const temporary=await mkdtemp(join(tmpdir(),'fan-release-upgrade-')),profile=join(temporary,'profile'),stage=join(temporary,'runtime');
 let child,driver,exited,session,url;
 const writeStage=async files=>{for(const [name,bytes]of files){const path=join(stage,name);await mkdir(resolve(path,'..'),{recursive:true});await writeFile(path,bytes);}};
@@ -53,9 +53,9 @@ try{
   else{await writeStage(newFiles);const reloaded=await driver.send('Extensions.loadUnpacked',{path:stage});assert.equal('chrome-extension://'+reloaded.id+'/src/options.html',url);const target=await driver.send('Target.createTarget',{url});session=(await driver.send('Target.attachToTarget',{targetId:target.targetId,flatten:true})).sessionId;}
   await ready();
   assert.deepEqual(await evaluate('return await chrome.storage.local.get(null);'),before,'Upgrade must preserve the entire stored state');
-  assert.equal(await evaluate('return chrome.runtime.getManifest().version;'),'1.0.4');
+  assert.equal(await evaluate('return chrome.runtime.getManifest().version;'),'1.0.5');
   assert.equal(await evaluate("return await chrome.permissions.contains({permissions:['unlimitedStorage']});"),true);
-  console.log(`PASS ${from}: same-identity installed upgrade to 1.0.4 preserves all storage and unlimitedStorage`);
+  console.log(`PASS ${from}: same-identity installed upgrade to 1.0.5 preserves all storage and unlimitedStorage`);
   const result=await evaluate(`const {createSyncStore,parseLibraryBackup}=await import('./library-data.mjs');const store=createSyncStore(chrome.storage.local);const backup=${JSON.stringify(backup)};if(parseLibraryBackup(backup).length!==1)throw Error('Old backup unreadable');const scan=await store.execute('begin',[{reuseAccount:true,accountId:${JSON.stringify(seed.fanaticalAccountId)},profileLabel:'fixture',confirmed:true},99]);if(scan.forceFull)throw Error('Valid old checkpoints lost');await store.execute('failure',[scan.token,null,99]);return true;`);
   assert.equal(result,true);console.log(`PASS ${from}: old backup parses and existing per-order authority remains usable`);
   const updated=await evaluate(`const {createSyncStore}=await import('./library-data.mjs');const s=createSyncStore(chrome.storage.local);const scan=await s.execute('begin',[{reuseAccount:true,accountId:${JSON.stringify(seed.fanaticalAccountId)},profileLabel:'fixture',confirmed:true},99]);await s.execute('commit',[scan.token,{fanaticalLibraryItems:[...scan.state.fanaticalLibraryItems,${JSON.stringify(quotaProduct(1))}],fanaticalScannedOrderFingerprints:scan.state.fanaticalScannedOrderFingerprints,fanaticalImportSummary:{...scan.state.fanaticalImportSummary,scanMode:'quick'},fanaticalLastScanAttempt:{status:'complete',scanMode:'quick'}},99]);return (await chrome.storage.local.get('fanaticalLibraryItems')).fanaticalLibraryItems;`);assert.equal(updated.length,2);assert.equal(updated.find(i=>i.sourceItemId==='quota-product-0').mediaType,'comic');
@@ -104,7 +104,7 @@ try{
   assert.equal(await evaluate("return document.querySelector('#history-note').textContent.includes('Last scan was partial');"),false);
   console.log(`PASS ${from}: actual installed package saves one headerless purchase and 47 products without false coverage`);
   console.log(`PASS ${from}: installed Quick skips verified details and Full revalidates without product duplication`);
-  console.log(`8 installed ${firefox?'Firefox':'Chrome'} upgrade checks passed (${from} -> 1.0.4).`);
+  console.log(`8 installed ${firefox?'Firefox':'Chrome'} upgrade checks passed (${from} -> 1.0.5).`);
 }finally{
   if(firefox&&driver)try{await driver.send('Marionette:Quit',{flags:['eForceQuit']});}catch{}
   child?.kill();driver?.close?.();if(exited)await exited;

@@ -27,7 +27,7 @@ chrome.runtime.onMessageExternal?.addListener((message,sender,respond)=>{
     if(message.apiVersion!==1&&!(message.apiVersion===undefined&&['PING','GET_STATUS'].includes(message.type)))return {ok:false,error:'Unsupported companion API version.'};
     if(message.type==='GET_IMPORTER_STATUS'){if(!Number.isInteger(message.tabId))return {ok:false};try{const r=await chrome.tabs.sendMessage(message.tabId,{type:'GH_IMPORTER_PAGE_STATUS'});return {ok:true,present:r?.present===true};}catch{return {ok:true,present:false};}}
     if(message.type==='OPEN_REVIEW')await chrome.runtime.openOptionsPage();
-    return {ok:true,apiVersion:1,appVersion:chrome.runtime.getManifest?.().version??'1.0.4',ready:true,purchaseProvider:'fanatical',capabilities:{centralReview:true,providerImporter:1,importerPageStatus:1}};
+    return {ok:true,apiVersion:1,appVersion:chrome.runtime.getManifest?.().version??'1.0.5',ready:true,purchaseProvider:'fanatical',capabilities:{centralReview:true,providerImporter:1,importerPageStatus:1}};
   })().then(respond,()=>respond({ok:false,error:'Companion request unavailable.'}));return true;
 });
 
