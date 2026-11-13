@@ -8,13 +8,14 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   const issue=key=>{compatibility.counts[key]++;};
   const valueType=v=>v===undefined?'missing':v===null?'null':Array.isArray(v)?'array':['object','string','number','boolean'].includes(typeof v)?typeof v:'other';
   // Bounded shapes at the failing boundary, never provider keys or values.
-  const recordMismatch = (category, expectedCount = 0, observedCount = 0) => {
+  const recordMismatch = (category, expectedCount = 0, observedCount = 0, parentContext) => {
     const report = compatibility.productMismatches ??= { version: 1, records: [], truncated: false };
     if (report.records.length >= 8) { report.truncated = true; return; }
     report.records.push({
       category,
       expectedCount: Number.isSafeInteger(expectedCount) && expectedCount >= 0 ? Math.min(expectedCount, 100000) : 0,
-      observedCount: Number.isSafeInteger(observedCount) && observedCount >= 0 ? Math.min(observedCount, 100000) : 0
+      observedCount: Number.isSafeInteger(observedCount) && observedCount >= 0 ? Math.min(observedCount, 100000) : 0,
+      ...(parentContext ? { parentContext } : {})
     });
   };
   const bundleShape=(parent,reason,selectedChild)=>{
@@ -570,15 +571,23 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   const expectedProducts = new Map();
   const sparseSummaries=new Map();
   const parentEvidence=parents=>{
-    const names=new Map(),ids=new Map(),direct=new Map(),pickAndMix=new Map();
+    const names=new Map(),ids=new Map(),direct=new Map(),pickAndMix=new Map(),promotional=new Map(),promotionalIds=new Map(),promotionalDirect=new Map();
     for(const parent of parents){
-      if(isPromotionalLeaf(parent))continue;
-      const name=safeTextInPage(parent.name);names.set(name,(names.get(name)??0)+1);
+      const name=safeTextInPage(parent.name);
+      if(isPromotionalLeaf(parent)){
+        promotional.set(name,(promotional.get(name)??0)+1);
+        if(parent._id!==undefined){const key=JSON.stringify([name,parent._id]);promotionalIds.set(key,(promotionalIds.get(key)??0)+1);}
+        if(((parent.type==='game'&&(parent.display_type===undefined||parent.display_type==='game'))||(['book','comic','audiobook','software'].includes(parent.type)&&(parent.display_type===undefined||['book','comic','audiobook','software'].includes(parent.display_type))))&&typeof parent._id==='string'&&!!safeIdInPage(parent._id)&&!!name&&Array.isArray(parent.bundles)&&parent.bundles.length===0&&['games','products','items','tiers'].every(key=>!Object.hasOwn(parent,key))){
+          const key=JSON.stringify([parent._id,name]);promotionalDirect.set(key,(promotionalDirect.get(key)??0)+1);
+        }
+        continue;
+      }
+      names.set(name,(names.get(name)??0)+1);
       if(parent._id!==undefined){const key=JSON.stringify([name,parent._id]);ids.set(key,(ids.get(key)??0)+1);}
       if(isDirectPurchasedItem(parent)){const key=JSON.stringify([parent._id,name]);direct.set(key,(direct.get(key)??0)+1);}
       const pam=safeTextInPage(parent.pickAndMix);if(pam)pickAndMix.set(pam,(pickAndMix.get(pam)??0)+1);
     }
-    return {names,ids,direct,pickAndMix};
+    return {names,ids,direct,pickAndMix,promotional,promotionalIds,promotionalDirect};
   };
   const productCounts = (parents) => {
     const bad=(key,parent,child,reason=key)=>{if(diagnostic.stage==='details')bundleShape(parent,reason,{value:child});issue(diagnostic.stage==='summaries'?key:'detailStructure');throw unreadable();};
@@ -694,10 +703,10 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     const actual = productCounts(order.items);
     if(sparse){
       const actualParents=parentEvidence(order.items);
-      let mismatchCategory=null,expCount=0,obsCount=0;
+      let mismatchCategory=null,expCount=0,obsCount=0,missingName='';
       for(const [name,count] of sparse.names){
-        const directCount=actualParents.names.get(name)??0,pamCount=actualParents.pickAndMix.get(name)??0;
-        if(directCount<count&&pamCount<count){mismatchCategory='parent-missing';expCount=count;obsCount=directCount+pamCount;break;}
+        const directCount=actualParents.names.get(name)??0,pamCount=actualParents.pickAndMix.get(name)??0,promoCount=actualParents.promotional.get(name)??0;
+        if(directCount+promoCount<count&&pamCount<count){mismatchCategory='parent-missing';expCount=count;obsCount=directCount+pamCount+promoCount;missingName=name;break;}
       }
       if(!mismatchCategory){
         for(const parent of order.items){
@@ -707,16 +716,41 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
         }
       }
       if(!mismatchCategory){
-        for(const [key,n] of sparse.ids){const obs=actualParents.ids.get(key)??0;if(obs<n){mismatchCategory='id-missing';expCount=n;obsCount=obs;break;}}
+        for(const [key,n] of sparse.ids){const obs=(actualParents.ids.get(key)??0)+(actualParents.promotionalIds.get(key)??0);if(obs<n){mismatchCategory='id-missing';expCount=n;obsCount=obs;break;}}
       }
       if(!mismatchCategory){
-        for(const [key,n] of sparse.direct){const obs=actualParents.direct.get(key)??0;if(obs<n){mismatchCategory='direct-missing';expCount=n;obsCount=obs;break;}}
+        for(const [key,n] of sparse.direct){const obs=(actualParents.direct.get(key)??0)+(actualParents.promotionalDirect.get(key)??0);if(obs<n){mismatchCategory='direct-missing';expCount=n;obsCount=obs;break;}}
       }
       if(!mismatchCategory){
         for(const [key,n] of expected){const obs=actual.get(key)??0;if(obs<n){mismatchCategory='product-missing';expCount=n;obsCount=obs;break;}}
       }
       if(mismatchCategory){
-        recordMismatch(mismatchCategory,expCount,obsCount);
+        let parentContext;
+        if(mismatchCategory==='parent-missing'){
+          const fold=v=>safeTextInPage(v).toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim();
+          const target=fold(missingName);
+          let unexpectedDetailParents=0,detailDirectParents=0,detailBundleParents=0,nonStringPickAndMix=0,normalizedNameMatched=false;
+          for(const parent of order.items){
+            if(Object.hasOwn(parent,'pickAndMix')&&parent.pickAndMix!=null&&typeof parent.pickAndMix!=='string')nonStringPickAndMix++;
+            const n=safeTextInPage(parent.name),p=safeTextInPage(parent.pickAndMix),pn=safeTextInPage(parent.pickAndMix?.name);
+            if(target&&(fold(n)===target||fold(p)===target||fold(pn)===target))normalizedNameMatched=true;
+            if(isPromotionalLeaf(parent))continue;
+            if(!sparse.names.has(n)&&!(p&&sparse.names.has(p)))unexpectedDetailParents++;
+            if(isDirectPurchasedItem(parent))detailDirectParents++;else detailBundleParents++;
+          }
+          const sumCounts=map=>Math.min(100000,[...map.values()].reduce((a,b)=>a+b,0));
+          parentContext={
+            summaryParents:sumCounts(sparse.names),
+            detailParents:sumCounts(actualParents.names),
+            promotionalDetailParents:sumCounts(actualParents.promotional),
+            unexpectedDetailParents:Math.min(100000,unexpectedDetailParents),
+            detailDirectParents:Math.min(100000,detailDirectParents),
+            detailBundleParents:Math.min(100000,detailBundleParents),
+            nonStringPickAndMix:Math.min(100000,nonStringPickAndMix),
+            normalizedNameMatched
+          };
+        }
+        recordMismatch(mismatchCategory,expCount,obsCount,parentContext);
         issue('detailProductMismatch');throw unreadable();
       }
     }else if (actual.size !== expected.size || [...expected].some(([key, quantity]) => actual.get(key) !== quantity)){

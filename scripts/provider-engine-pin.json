@@ -1,16 +1,16 @@
 {
   "contractVersion": 1,
-  "engine": "95dee98ef7bf8fd57a7ceacec17e52ab0ebc7f17a7f149d857bfe9918441f859",
+  "engine": "ccb1eb9dfc726bb3bbe398acb1a882b0aaabc00fc68f12cb4692e15f1c8f5add",
   "adapter": "9f220a9a89e90cbeb8d2624e87b37765d25ac32650d6cc25c07e33eed2b0263b",
-  "contract": "38fff8e67b8e43fd0bbebbdd1174df5ea0edfbe398fe5ea576c1494d12174e84",
-  "revision": "fanatical-v1-d16db7095151d027",
+  "contract": "020322cf28eb317461cb4b9a5a59eab92bc53dd106c39f2731b5e3d284c5301a",
+  "revision": "fanatical-v1-8b3ee4554848e722",
   "consumers": {
-    "GL": "07765e9329a1061db3544f7e8c297df7788b7873967d9bfe3885e3e56302e27f",
-    "FAN": "95dee98ef7bf8fd57a7ceacec17e52ab0ebc7f17a7f149d857bfe9918441f859"
+    "GL": "12309e1e684e3a1edafbff6e6756d3424a27278ee772800b34baae88d0289a64",
+    "FAN": "ccb1eb9dfc726bb3bbe398acb1a882b0aaabc00fc68f12cb4692e15f1c8f5add"
   },
   "runtime": {
-    "src/order-importer.mjs": "95dee98ef7bf8fd57a7ceacec17e52ab0ebc7f17a7f149d857bfe9918441f859",
-    "src/acquisition-contract.mjs": "38fff8e67b8e43fd0bbebbdd1174df5ea0edfbe398fe5ea576c1494d12174e84",
-    "src/service-worker.js": "40a1d7b832f1f0ac64bafa7590db6d4f320bdfd1a1428ce33460edb85502e9f8"
+    "src/order-importer.mjs": "ccb1eb9dfc726bb3bbe398acb1a882b0aaabc00fc68f12cb4692e15f1c8f5add",
+    "src/acquisition-contract.mjs": "020322cf28eb317461cb4b9a5a59eab92bc53dd106c39f2731b5e3d284c5301a",
+    "src/service-worker.js": "a6706e59ad31fb03f89247dac5dc9b43e1afca65537a2e752070673cfe74da12"
   }
 }

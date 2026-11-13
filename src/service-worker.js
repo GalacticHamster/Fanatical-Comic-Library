@@ -27,16 +27,23 @@ chrome.runtime.onMessageExternal?.addListener((message,sender,respond)=>{
     if(message.apiVersion!==1&&!(message.apiVersion===undefined&&['PING','GET_STATUS'].includes(message.type)))return {ok:false,error:'Unsupported companion API version.'};
     if(message.type==='GET_IMPORTER_STATUS'){if(!Number.isInteger(message.tabId))return {ok:false};try{const r=await chrome.tabs.sendMessage(message.tabId,{type:'GH_IMPORTER_PAGE_STATUS'});return {ok:true,present:r?.present===true};}catch{return {ok:true,present:false};}}
     if(message.type==='OPEN_REVIEW')await chrome.runtime.openOptionsPage();
-    return {ok:true,apiVersion:1,appVersion:chrome.runtime.getManifest?.().version??'1.0.3',ready:true,purchaseProvider:'fanatical',capabilities:{centralReview:true,providerImporter:1,importerPageStatus:1}};
+    return {ok:true,apiVersion:1,appVersion:chrome.runtime.getManifest?.().version??'1.0.4',ready:true,purchaseProvider:'fanatical',capabilities:{centralReview:true,providerImporter:1,importerPageStatus:1}};
   })().then(respond,()=>respond({ok:false,error:'Companion request unavailable.'}));return true;
 });
 
 /* This function is serialized by chrome.scripting and runs only in Fanatical's
  * MAIN world. Its return value is an explicit ownership DTO, never raw JSON. */
 
+const fanaticalOrigin='https://www.fanatical.com';
+const ordersPathRe=/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?orders\/?$/iu;
+const parseUrl=raw=>{try{return typeof raw==='string'&&raw?new URL(raw):null;}catch{return null;}};
+const isFanaticalUrl=raw=>{const parsed=parseUrl(raw);return Boolean(parsed&&parsed.origin===fanaticalOrigin&&!parsed.username&&!parsed.password);};
+const isOrdersUrl=raw=>{const parsed=parseUrl(raw);return Boolean(isFanaticalUrl(raw)&&ordersPathRe.test(parsed.pathname));};
+const isOrdersSender=sender=>sender?.id===chrome.runtime.id&&sender?.frameId===0&&Number.isInteger(sender?.tab?.id)&&isFanaticalUrl(sender?.url)&&isOrdersUrl(sender?.tab?.url);
+
 async function activeFanaticalTab() {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!tab?.id || !/^https:\/\/www\.fanatical\.com\//u.test(tab.url ?? '')) throw new Error('Open a Fanatical page before importing purchases.');
+  if (!tab?.id || !isFanaticalUrl(tab.url)) throw new Error('Open a Fanatical page before importing purchases.');
   return tab;
 }
 
@@ -215,14 +222,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if(message?.type==='FANATICAL_STORE'){
-    const own=_sender?.id===chrome.runtime.id,url=String(_sender?.url??''),extensionPage=own&&url.startsWith(chrome.runtime.getURL(''));
-    const fanaticalPage=own&&url.startsWith('https://www.fanatical.com/'),accountOperation=['profiles','selectProfile','renameProfile'].includes(message.operation);
-    const ordersPage=fanaticalPage&&/^https:\/\/www\.fanatical\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?orders\/?(?:[?#]|$)/iu.test(url);
+    const own=_sender?.id===chrome.runtime.id,extensionOrigin=parseUrl(chrome.runtime.getURL(''))?.origin,senderUrl=parseUrl(_sender?.url);
+    const extensionPage=own&&Boolean(extensionOrigin)&&senderUrl?.origin===extensionOrigin&&!senderUrl.username&&!senderUrl.password;
+    const fanaticalPage=own&&_sender?.frameId===0&&isFanaticalUrl(_sender?.url)&&(_sender?.tab?.url===undefined||isFanaticalUrl(_sender.tab.url));
+    const accountOperation=['profiles','selectProfile','renameProfile'].includes(message.operation);
+    const ordersPage=isOrdersSender(_sender);
     if(!['restore','clear','patch','unlink','wishlist','backup','profiles','selectProfile','renameProfile','setMediaOverride','resetMediaOverride','recoverRejectedItem','dismissRejectedItem','reviewKeyReminder'].includes(message.operation)||!(extensionPage||fanaticalPage&&['patch','wishlist'].includes(message.operation)||accountOperation&&ordersPage)){sendResponse({ok:false,error:'Untrusted storage request.'});return false;}
     syncStore.execute(message.operation,message.args).then(result=>sendResponse({ok:true,result}),error=>sendResponse({ok:false,error:error.message}));return true;
   }
   if (message?.type === 'FANATICAL_IMPORT_PURCHASES') {
-    if(_sender?.id!==chrome.runtime.id||!/^https:\/\/www\.fanatical\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?orders\/?(?:[?#]|$)/iu.test(_sender?.url??'')||!_sender.tab?.id){sendResponse({ok:false,error:'Import from the signed-in Fanatical orders page.'});return false;}
+    if(!isOrdersSender(_sender)||!_sender.tab?.id){sendResponse({ok:false,error:'Import from the signed-in Fanatical orders page.'});return false;}
     if (purchaseScan) { sendResponse({ ok: false, error: 'A Fanatical purchase scan is already running. Wait for it to finish.' }); return true; }
     purchaseScan = importPurchases({ fullScan: message.fullScan === true,profileLabel:message.profileLabel,confirmed:message.confirmed===true,switchProfile:message.switchProfile===true,progressId:message.progressId,useSavedAccount:message.useSavedAccount===true,tab:_sender.tab }).then((summary) => sendResponse({ ok: true, summary })).catch(async (error) => {
       // Persist only an explicit coverage failure flag, never page/transport errors.

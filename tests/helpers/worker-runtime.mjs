@@ -29,7 +29,7 @@ export async function prepareWorker({url=new URL('../../src/service-worker.js',i
   return {imports:imports.map(({path,names,sideEffect})=>({path,names,sideEffect})),source:body,
     run(globals,{prelude='',expression='({ importPurchases, syncStore })'}={}){
       for(const name of Object.keys(bindings))if(Object.hasOwn(globals,name))throw Error('Worker dependency override: '+name);
-      return vm.runInNewContext(`${prelude}\n${imports.filter(i=>i.sideEffect).map(i=>i.source).join('\n')}\n${body}\n;${expression}`,{...globals,...bindings},{filename:url.href});
+      return vm.runInNewContext(`${prelude}\n${imports.filter(i=>i.sideEffect).map(i=>i.source).join('\n')}\n${body}\n;${expression}`,{URL,...globals,...bindings},{filename:url.href});
     }};
 }
 

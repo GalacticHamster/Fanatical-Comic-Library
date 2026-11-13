@@ -404,8 +404,8 @@ function harness({ list = [summary], details = { [orderId]: detail }, headers = 
     // configuration: production always requests the versioned partial receipt.
     strictScan: (fullScan=true)=>vm.runInNewContext('('+importFanaticalOrdersInPage.toString()+')',page)({fullScan,knownOrderFingerprints:known,allowPartial:false}),
     get maxActive() { return maxActive; }, scan: (fullScan = true,progressId='') => worker.importPurchases({ fullScan,progressId,profileLabel:'fixture',confirmed:true }),
-    store: (operation,args,url='https://www.fanatical.com/en/orders',id=chrome.runtime.id)=>new Promise(resolve=>dispatch(listeners,{type:'FANATICAL_STORE',operation,args},{id,url,tab:{id:1}},resolve)),
-    send: (fullScan = true,overrides={}) => new Promise((resolve) => dispatch(listeners,{ type: 'FANATICAL_IMPORT_PURCHASES', fullScan,profileLabel:'fixture',confirmed:true,...overrides }, {id:chrome.runtime.id,url:'https://www.fanatical.com/en/orders',tab:{id:1}}, resolve)) };
+    store: (operation,args,url='https://www.fanatical.com/en/orders',id=chrome.runtime.id,senderOverrides={})=>new Promise(resolve=>dispatch(listeners,{type:'FANATICAL_STORE',operation,args},{id,url,frameId:0,tab:{id:1,url},...senderOverrides},resolve)),
+    send: (fullScan = true,overrides={},senderOverrides={}) => new Promise((resolve) => dispatch(listeners,{ type: 'FANATICAL_IMPORT_PURCHASES', fullScan,profileLabel:'fixture',confirmed:true,...overrides }, {id:chrome.runtime.id,url:'https://www.fanatical.com/en/orders',frameId:0,tab:{id:1,url:'https://www.fanatical.com/en/orders'},...senderOverrides}, resolve)) };
 }
 
 test('complete candidate gate exercises real acquisition and guarded worker; missing, bypassed and no-op validators fail the gate', {skip:!workerRuntime.imports.some(i=>i.path==='./acquisition-contract.mjs')}, async()=>{
@@ -925,4 +925,79 @@ test('profile operations are limited to own settings and order pages, with expli
   assert.equal((await run.store('renameProfile',args,'https://www.fanatical.com/en/orders','foreign')).ok,false);
   const noConfirm=await run.store('renameProfile',[{...args[0],confirmed:false}]);assert.equal(noConfirm.ok,false);assert.deepEqual(run.stored,before);
   assert.equal((await run.store('profiles',[])).ok,true);assert.equal((await run.store('renameProfile',args,'chrome-extension://'+'a'.repeat(32)+'/src/options.html')).ok,true);assert.equal(run.stored.fanaticalProfileLabel,'personal');
+});
+
+
+test('SPA navigation from fanatical storefront to /orders preserves trusted top-frame senders and rejects subframes or spoofed origins',async()=>{
+  const run=harness({partial:true,headers:{'x-total-count':'1'}}),args=[{profileLabel:'fixture',expectedActiveLabel:'fixture',newLabel:'spa-renamed',confirmed:true}];
+  const spaSender={frameId:0,tab:{id:1,url:'https://www.fanatical.com/en/orders'}};
+  assert.equal((await run.store('profiles',[],'https://www.fanatical.com/en/',undefined,spaSender)).ok,true);
+  assert.equal((await run.store('selectProfile',[{profileLabel:'fixture',expectedActiveLabel:'fixture',confirmed:true}],'https://www.fanatical.com/en/',undefined,spaSender)).ok,true);
+  assert.equal((await run.store('renameProfile',args,'https://www.fanatical.com/en/',undefined,spaSender)).ok,true);
+  assert.equal(run.stored.fanaticalProfileLabel,'spa-renamed');
+  const imported=await run.send(true,{profileLabel:'spa-renamed'},{url:'https://www.fanatical.com/en/',...spaSender});
+  assert.equal(imported.ok,true);
+  assert.equal(imported.summary.ordersScanned,1);
+  for(const bad of [
+    {label:'subframe',url:'https://www.fanatical.com/en/',overrides:{frameId:1,tab:{id:1,url:'https://www.fanatical.com/en/orders'}}},
+    {label:'non-orders-tab',url:'https://www.fanatical.com/en/',overrides:{frameId:0,tab:{id:1,url:'https://www.fanatical.com/en/bundle/test'}}},
+    {label:'spoofed-sender-url',url:'https://www.fanatical.com.evil.test/en/',overrides:{frameId:0,tab:{id:1,url:'https://www.fanatical.com/en/orders'}}}
+  ]){
+    const storeReply=await run.store('profiles',[],bad.url,undefined,bad.overrides);
+    assert.equal(storeReply.ok,false,bad.label);
+    assert.match(storeReply.error,/Untrusted/,bad.label);
+    const importReply=await run.send(true,{profileLabel:'spa-renamed'},{url:bad.url,...bad.overrides});
+    assert.equal(importReply.ok,false,bad.label);
+  }
+});
+
+
+test('orders sender security enforces parsed origin/path, top-frame, extension ID, and current tab URL across navigation races and prefix attacks',async()=>{
+  const run=harness({partial:true,headers:{'x-total-count':'1'}});
+  const extUrl=`chrome-extension://${'a'.repeat(32)}/src/options.html`;
+  for(const okSender of [
+    {label:'direct-en-orders',url:'https://www.fanatical.com/en/orders',tab:{id:1,url:'https://www.fanatical.com/en/orders'}},
+    {label:'direct-root-orders-slash',url:'https://www.fanatical.com/orders/',tab:{id:1,url:'https://www.fanatical.com/orders/?page=2#top'}},
+    {label:'spa-locale-orders',url:'https://www.fanatical.com/en/bundle/some-bundle',tab:{id:1,url:'https://www.fanatical.com/pt-br/orders?ref=nav'}},
+    {label:'reload-after-spa',url:'https://www.fanatical.com/en/orders',tab:{id:1,url:'https://www.fanatical.com/en/orders#loaded'}},
+    {label:'stale-sender-back-to-orders',url:'https://www.fanatical.com/en/account',tab:{id:1,url:'https://www.fanatical.com/en/orders'}}
+  ]){
+    const storeReply=await run.store('profiles',[],okSender.url,undefined,{frameId:0,tab:okSender.tab});
+    assert.equal(storeReply.ok,true,okSender.label);
+    const importReply=await run.send(true,{profileLabel:'fixture'},{url:okSender.url,frameId:0,tab:okSender.tab});
+    assert.equal(importReply.ok,true,okSender.label);
+  }
+  const attacks=[
+    {label:'stale-orders-after-navigated-away',url:'https://www.fanatical.com/en/orders',tab:{id:1,url:'https://www.fanatical.com/en/bundle/test'}},
+    {label:'stale-orders-host-perm-redacted',url:'https://www.fanatical.com/en/orders',tab:{id:1}},
+    {label:'stale-orders-external-tab',url:'https://www.fanatical.com/en/orders',tab:{id:1,url:'https://other.example/en/orders'}},
+    {label:'missing-tab-id',url:'https://www.fanatical.com/en/orders',tab:{url:'https://www.fanatical.com/en/orders'}},
+    {label:'subframe-orders',url:'https://www.fanatical.com/en/orders',frameId:1,tab:{id:1,url:'https://www.fanatical.com/en/orders'}},
+    {label:'missing-frameId-orders',url:'https://www.fanatical.com/en/orders',frameId:undefined,tab:{id:1,url:'https://www.fanatical.com/en/orders'}},
+    {label:'wrong-extension-id',url:'https://www.fanatical.com/en/orders',id:'b'.repeat(32),tab:{id:1,url:'https://www.fanatical.com/en/orders'}},
+    {label:'http-scheme',url:'http://www.fanatical.com/en/orders',tab:{id:1,url:'http://www.fanatical.com/en/orders'}},
+    {label:'non-standard-port',url:'https://www.fanatical.com:8443/en/orders',tab:{id:1,url:'https://www.fanatical.com:8443/en/orders'}},
+    {label:'lookalike-subdomain-host',url:'https://www.fanatical.com.evil.test/en/orders',tab:{id:1,url:'https://www.fanatical.com.evil.test/en/orders'}},
+    {label:'lookalike-suffix-host',url:'https://evilfanatical.com/en/orders',tab:{id:1,url:'https://evilfanatical.com/en/orders'}},
+    {label:'userinfo-redirect',url:'https://www.fanatical.com@evil.test/en/orders',tab:{id:1,url:'https://www.fanatical.com@evil.test/en/orders'}},
+    {label:'userinfo-same-host',url:'https://user@www.fanatical.com/en/orders',tab:{id:1,url:'https://user@www.fanatical.com/en/orders'}},
+    {label:'url-prefix-orders-history',url:'https://www.fanatical.com/en/orders-history',tab:{id:1,url:'https://www.fanatical.com/en/orders-history'}},
+    {label:'subpath-under-orders',url:'https://www.fanatical.com/en/orders/extra',tab:{id:1,url:'https://www.fanatical.com/en/orders/extra'}},
+    {label:'dot-dot-traversal-to-bundle',url:'https://www.fanatical.com/en/orders',tab:{id:1,url:'https://www.fanatical.com/en/orders/../bundle/test'}},
+    {label:'bundle-containing-orders',url:'https://www.fanatical.com/en/bundle/orders',tab:{id:1,url:'https://www.fanatical.com/en/bundle/orders'}},
+    {label:'home-page-only',url:'https://www.fanatical.com/en/',tab:{id:1,url:'https://www.fanatical.com/en/'}},
+    {label:'extension-page-cannot-trigger-page-import',url:extUrl,tab:{id:1,url:extUrl}}
+  ];
+  for(const bad of attacks){
+    const importReply=await run.send(true,{profileLabel:'fixture'},{id:bad.id??'a'.repeat(32),url:bad.url,frameId:'frameId' in bad?bad.frameId:0,tab:bad.tab});
+    assert.equal(importReply.ok,false,bad.label);
+    if(bad.url!==extUrl){
+      const storeReply=await run.store('profiles',[],bad.url,bad.id,{frameId:'frameId' in bad?bad.frameId:0,tab:bad.tab});
+      assert.equal(storeReply.ok,false,bad.label);
+      assert.match(storeReply.error,/Untrusted/,bad.label);
+    }
+  }
+  const subframePatch=await run.store('wishlist',['add',[]],'https://www.fanatical.com/en/bundle/test',undefined,{frameId:2,tab:{id:1,url:'https://www.fanatical.com/en/bundle/test'}});
+  assert.equal(subframePatch.ok,false);
+  assert.match(subframePatch.error,/Untrusted/);
 });
