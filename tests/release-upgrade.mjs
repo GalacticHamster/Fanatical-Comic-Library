@@ -52,7 +52,14 @@ try{
   if(firefox){await driver.send('WebDriver:Navigate',{url:'about:blank'});const archive=process.env.FAN_UPGRADE_TO??join(temporary,'new.zip');if(!process.env.FAN_UPGRADE_TO)await writeFile(archive,newZip);await driver.send('Addon:Install',{path:archive,temporary:true});await driver.send('WebDriver:Navigate',{url});}
   else{await writeStage(newFiles);const reloaded=await driver.send('Extensions.loadUnpacked',{path:stage});assert.equal('chrome-extension://'+reloaded.id+'/src/options.html',url);const target=await driver.send('Target.createTarget',{url});session=(await driver.send('Target.attachToTarget',{targetId:target.targetId,flatten:true})).sessionId;}
   await ready();
-  assert.deepEqual(await evaluate('return await chrome.storage.local.get(null);'),before,'Upgrade must preserve the entire stored state');
+  const after=await evaluate('return await chrome.storage.local.get(null);');
+  const discoveryKeys=new Set(['galacticPurchaseDiscoveryAfter:fanatical','galacticPurchaseDiscoveryAttempts:fanatical','galacticPurchaseSharing']);
+  assert.deepEqual(Object.keys(after).filter(k=>!Object.hasOwn(before,k)&&!discoveryKeys.has(k)),[],'Upgrade must not add unexpected storage keys');
+  const protectedState=state=>Object.fromEntries(Object.entries(state).filter(([k])=>!discoveryKeys.has(k)));
+  assert.deepEqual(protectedState(after),protectedState(before),'Upgrade must preserve all purchases, corrections, history, account scopes, retry state, and companion settings');
+  if(Object.hasOwn(after,'galacticPurchaseSharing'))assert.deepEqual(after.galacticPurchaseSharing,before.galacticPurchaseSharing??{version:1,humble:true,fanatical:true});
+  if(Object.hasOwn(after,'galacticPurchaseDiscoveryAfter:fanatical'))assert.equal(Number.isSafeInteger(after['galacticPurchaseDiscoveryAfter:fanatical'])&&after['galacticPurchaseDiscoveryAfter:fanatical']>0,true);
+  if(Object.hasOwn(after,'galacticPurchaseDiscoveryAttempts:fanatical'))assert.equal(Number.isSafeInteger(after['galacticPurchaseDiscoveryAttempts:fanatical'])&&after['galacticPurchaseDiscoveryAttempts:fanatical']>=(before['galacticPurchaseDiscoveryAttempts:fanatical']??0)&&after['galacticPurchaseDiscoveryAttempts:fanatical']<=5,true);
   assert.equal(await evaluate('return chrome.runtime.getManifest().version;'),'1.0.5');
   assert.equal(await evaluate("return await chrome.permissions.contains({permissions:['unlimitedStorage']});"),true);
   console.log(`PASS ${from}: same-identity installed upgrade to 1.0.5 preserves all storage and unlimitedStorage`);
@@ -78,31 +85,32 @@ try{
     const games=Array.from({length:47},(_,i)=>({_id:'upgrade-product-'+i,name:'Synthetic book '+i,type:'book'}));
     const order={_id:'upgrade-order-47',status:'COMPLETE',items:[{_id:'upgrade-bundle-47',name:'Synthetic bundle',bundles:[{games}]}]};
     const summary={_id:order._id,status:'COMPLETE',items:[{name:'Synthetic bundle',bundles:[{games:games.map(({name})=>({name}))}]}]};
+    const failingSummary={_id:'upgrade-order-48',status:'COMPLETE',items:[{name:'Synthetic failing order',bundles:[{games:[{name:'Unresolved book'}]}]}]};
     const paths=[],store=createSyncStore(chrome.storage.local),results=[];
     await chrome.storage.local.set({fanaticalLibraryItems:[],fanaticalHistoricalItems:[],fanaticalScannedOrderFingerprints:[],fanaticalImportSummary:null,fanaticalLastScanAttempt:null});
     try{
       localStorage.setItem('bsauth',JSON.stringify({token:'SYNTHETIC'}));
-      window.fetch=async path=>{paths.push(path);return new Response(JSON.stringify(path==='/api/user/orders'?[summary]:order),{status:200,headers:{'content-type':'application/json'}});};
+      window.fetch=async path=>{paths.push(path);if(path==='/api/user/orders/'+failingSummary._id)return new Response('Not found',{status:404});return new Response(JSON.stringify(path==='/api/user/orders'?[summary,failingSummary]:order),{status:200,headers:{'content-type':'application/json'}});};
       for(const fullScan of [false,false,true]){
         paths.length=0;const scan=await store.execute('begin',[{profileLabel:'fixture',confirmed:true,fullScan},99]);
         const actualFull=fullScan||scan.forceFull,known=scan.state.fanaticalScannedOrderFingerprints;
         const receipt=validateScanResult(await acquire({allowPartial:true,returnFailure:true,fullScan:actualFull,knownOrderFingerprints:known}),{fullScan:actualFull,knownOrderFingerprints:known});
         const saved=await store.execute('commitPartial',[scan.token,receipt,99]);
         const state=await chrome.storage.local.get(['fanaticalLibraryItems','fanaticalImportSummary']);
-        results.push({mode:saved.scanMode,verified:saved.verifiedPurchasesSaved,added:saved.addedProducts,finished:saved.acquisitionComplete,coverage:receipt.coverage.complete,count:state.fanaticalLibraryItems.length,completeSummary:state.fanaticalImportSummary,requests:paths.length});
+        results.push({mode:saved.scanMode,outcome:saved.outcome,verified:saved.verifiedPurchasesSaved,unresolved:saved.unresolvedOrders,added:saved.addedProducts,finished:saved.acquisitionComplete,coverage:receipt.coverage.complete,count:state.fanaticalLibraryItems.length,completeSummary:state.fanaticalImportSummary,requests:paths.length});
       }
       return results;
     }finally{window.fetch=originalFetch;if(originalAuth===null)localStorage.removeItem('bsauth');else localStorage.setItem('bsauth',originalAuth);}
   `);
   assert.deepEqual(acquired,[
-    {mode:'full',verified:1,added:47,finished:true,coverage:false,count:47,completeSummary:null,requests:2},
-    {mode:'quick',verified:0,added:0,finished:true,coverage:false,count:47,completeSummary:null,requests:1},
-    {mode:'full',verified:1,added:0,finished:true,coverage:false,count:47,completeSummary:null,requests:2}
+    {mode:'full',outcome:'partial-extraction',verified:1,unresolved:1,added:47,finished:false,coverage:false,count:47,completeSummary:null,requests:3},
+    {mode:'quick',outcome:'partial-extraction',verified:0,unresolved:1,added:0,finished:false,coverage:false,count:47,completeSummary:null,requests:2},
+    {mode:'full',outcome:'partial-extraction',verified:1,unresolved:1,added:0,finished:false,coverage:false,count:47,completeSummary:null,requests:3}
   ]);
   if(firefox)await driver.send('WebDriver:Navigate',{url});else{await driver.send('Page.enable',{},session);await driver.send('Page.reload',{},session);}
-  await ready();assert.match(await evaluate("return document.querySelector('#history-note').textContent;"),/^Last import finished successfully[.]/);
-  assert.equal(await evaluate("return document.querySelector('#history-note').textContent.includes('Last scan was partial');"),false);
-  console.log(`PASS ${from}: actual installed package saves one headerless purchase and 47 products without false coverage`);
+  await ready();assert.match(await evaluate("return document.querySelector('#history-note').textContent;"),/^Last scan was partial: 1 verified purchases saved; 1 purchases unresolved[.]/);
+  assert.equal(await evaluate("return document.querySelector('#history-note').textContent.includes('No complete order-history check has been saved yet.');"),true);
+  console.log(`PASS ${from}: actual installed package saves one verified purchase and 47 products during a partial scan without false coverage`);
   console.log(`PASS ${from}: installed Quick skips verified details and Full revalidates without product duplication`);
   console.log(`8 installed ${firefox?'Firefox':'Chrome'} upgrade checks passed (${from} -> 1.0.5).`);
 }finally{
