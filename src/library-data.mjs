@@ -189,7 +189,7 @@ export function validateScanResult(value, { fullScan = false, knownOrderFingerpr
     pagesFetched: coverage.pagesFetched, expectedTotal: coverage.expectedTotal, paginationEvidence: coverage.paginationEvidence, retries: coverage.retries, concurrency: 3 } };
 }
 
-const PARTIAL_FAILURE_CODES=new Set(['discovery-unverified','listing-unreadable','listing-incomplete','summaries-unreadable','details-unreadable','details-incomplete','request-aborted','retry-later','request-exhausted','pagination-unsafe','pagination-ambiguous','pagination-total','pagination-repeated','page-limit','order-limit','pagination-range','pagination-order','pagination-last','pagination-final','pagination-missing-next','history-missing-known']);
+const PARTIAL_FAILURE_CODES=new Set(['batch-deferred','discovery-unverified','listing-unreadable','listing-incomplete','summaries-unreadable','details-unreadable','details-incomplete','request-aborted','retry-later','request-exhausted','pagination-unsafe','pagination-ambiguous','pagination-total','pagination-repeated','page-limit','order-limit','pagination-range','pagination-order','pagination-last','pagination-final','pagination-missing-next','history-missing-known']);
 const LISTING_EVIDENCE_KEYS=['arrayPages','objectPages','otherPages','headersReadablePages','linkHeaderPages','totalCountHeaderPages','contentRangeHeaderPages','nextReferencePages'];
 function validFingerprints(value){return Array.isArray(value)&&value.length<=100000&&value.every(fp=>typeof fp==='string'&&/^[a-f0-9]{64}$/u.test(fp))&&new Set(value).size===value.length;}
 function validatePartialScan(value,{fullScan,knownOrderFingerprints}){
@@ -198,6 +198,9 @@ function validatePartialScan(value,{fullScan,knownOrderFingerprints}){
   if(value.schemaVersion!==1||!['complete','partial-extraction','partial-discovery'].includes(value.outcome))fail();
   if(value.outcome==='complete')validateScanResult({...value,partialScanVersion:undefined},{fullScan,knownOrderFingerprints});
   for(const name of ['orderFingerprints','verifiedOrderFingerprints','unresolvedOrderFingerprints','ineligibleOrderFingerprints','observedOrderFingerprints'])if(!validFingerprints(value[name]))fail();
+  // Orders a bounded Full-scan batch left for a later batch: always a subset of the unresolved orders.
+  const deferred=value.deferredOrderFingerprints===undefined?null:new Set(validFingerprints(value.deferredOrderFingerprints)?value.deferredOrderFingerprints:fail());
+  if(deferred&&[...deferred].some(fp=>!value.unresolvedOrderFingerprints.includes(fp)))fail();
   const all=new Set(value.observedOrderFingerprints),verified=new Set(value.verifiedOrderFingerprints),processed=new Set(value.orderFingerprints),unresolved=new Set(value.unresolvedOrderFingerprints),ineligible=new Set(value.ineligibleOrderFingerprints),known=new Set(validFingerprints(knownOrderFingerprints)?knownOrderFingerprints:[]);
   if([...processed].some(fp=>!all.has(fp)||unresolved.has(fp)||ineligible.has(fp)||!verified.has(fp)&&(!known.has(fp)||fullScan))||[...verified].some(fp=>!processed.has(fp))||[...unresolved].some(fp=>!all.has(fp)||ineligible.has(fp))||[...ineligible].some(fp=>!all.has(fp))||processed.size+unresolved.size+ineligible.size!==all.size)fail();
   const c=value.coverage;
@@ -224,7 +227,15 @@ function validatePartialScan(value,{fullScan,knownOrderFingerprints}){
     for(const origin of item.purchaseOrigins){if(!verified.has(origin.purchaseRef)||!safeId(origin.bundle?.sourceItemId)||!safeText(origin.bundle?.title))fail();origins.add(origin.purchaseRef);}
   }
   if(origins.size!==verified.size)fail();
-  return {...projected,acquisitionComplete,partialScanVersion:1,outcome:value.outcome,verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...all],failures,unidentifiedRecords:value.unidentifiedRecords,coverage:{...(listingEvidence?{listingEvidence}:{}),complete:c.complete,discoveryComplete:c.discoveryComplete,accountAffinity:c.accountAffinity,listedOrders:c.listedOrders,validatedOrders:c.validatedOrders,emptyAccount:c.emptyAccount,pagesFetched:c.pagesFetched,pagesParsed:c.pagesParsed,expectedTotal:c.expectedTotal,paginationEvidence:c.paginationEvidence,retries:c.retries,concurrency:3}};
+  return {...projected,acquisitionComplete,partialScanVersion:1,outcome:value.outcome,verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],...(deferred?{deferredOrderFingerprints:[...deferred]}:{}),ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...all],failures,unidentifiedRecords:value.unidentifiedRecords,coverage:{...(listingEvidence?{listingEvidence}:{}),complete:c.complete,discoveryComplete:c.discoveryComplete,accountAffinity:c.accountAffinity,listedOrders:c.listedOrders,validatedOrders:c.validatedOrders,emptyAccount:c.emptyAccount,pagesFetched:c.pagesFetched,pagesParsed:c.pagesParsed,expectedTotal:c.expectedTotal,paginationEvidence:c.paginationEvidence,retries:c.retries,concurrency:3}};
+}
+
+/** A Full scan read in batches keeps its progress here until its final complete commit. */
+const FULL_SCAN_PASS_KEY='fanaticalFullScanPass',FULL_SCAN_PART_PREFIX='fanaticalFullScanPart:';
+export function fullScanStorage(){return {pass:FULL_SCAN_PASS_KEY,part:n=>FULL_SCAN_PART_PREFIX+n};}
+export async function removeFullScanPass(area){
+  const pass=(await area.get({[FULL_SCAN_PASS_KEY]:null}))[FULL_SCAN_PASS_KEY],parts=Number.isSafeInteger(pass?.parts)&&pass.parts>0?Math.min(pass.parts,1000):0;
+  await area.remove([FULL_SCAN_PASS_KEY,...Array.from({length:parts},(_,n)=>FULL_SCAN_PART_PREFIX+n)]);
 }
 
 function partialAttemptIsValid(attempt){
@@ -363,6 +374,12 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
       await area.set({[key]:{token,tabId,label,changing,fullScan:options.fullScan||forceFull}});
       return {token,forceFull,state:changing?{...defaults}:state};
     }
+    if(operation==='release'){
+      // Ends a Full-scan batch whose verified orders are carried to the pass's final commit.
+      const [token,tabId]=args,control=(await area.get({[key]:null}))[key];
+      if(!control||control.token!==token||control.tabId!==tabId)throw new Error('Scan superseded by another scan, restore, or clear. Start a fresh scan.');
+      await area.set({[key]:null});return true;
+    }
     if(operation==='commit'||operation==='commitPartial'||operation==='failure'){
       const [token,rawUpdates,tabId]=args;let updates=rawUpdates;const control=(await area.get({[key]:null}))[key];
       if(!control||control.token!==token||control.tabId!==tabId){if(operation==='failure')return false;throw new Error('Scan superseded by another scan, restore, or clear. Start a fresh scan.');}
@@ -437,10 +454,11 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
       const next=action==='remove'?current.filter(item=>F.wishlistKey(item)!==value):F.normalizeWishlist(action==='add'?[...current,...F.normalizeWishlist(value)]:value);await area.set({fanaticalWishlistItems:next});return next;
     }
     if(operation==='restore'){
-      const backup=args[0];const items=parseLibraryBackup(backup),replacement=await GalacticPurchaseSync.restoredAccounts('fan',backupRestoreState(items,backup)),retirement=await GalacticPurchaseSync.restorationPatch(area,{fanatical:[replacement.fanaticalAccountId,...replacement.fanaticalProfileArchives.map(a=>a.accountId)]});await area.set({galacticPurchaseAccountIds:{},...retirement.patch,...replacement,[key]:null});Promise.resolve().then(()=>onInvalidated(retirement.retired)).catch(()=>{});return true;
+      const backup=args[0];const items=parseLibraryBackup(backup),replacement=await GalacticPurchaseSync.restoredAccounts('fan',backupRestoreState(items,backup)),retirement=await GalacticPurchaseSync.restorationPatch(area,{fanatical:[replacement.fanaticalAccountId,...replacement.fanaticalProfileArchives.map(a=>a.accountId)]});await removeFullScanPass(area);await area.set({galacticPurchaseAccountIds:{},...retirement.patch,...replacement,[key]:null});Promise.resolve().then(()=>onInvalidated(retirement.retired)).catch(()=>{});return true;
     }
     if(operation==='clear'){
       const retirement=await GalacticPurchaseSync.retirementPatch(area);
+      await removeFullScanPass(area);
       await area.remove(['galacticPurchaseAccountIds','galacticPurchaseSync',...Object.keys(defaults),'fanaticalImportSummary','fanaticalLastScanAttempt',key]);Promise.resolve().then(()=>onInvalidated(retirement.retired)).catch(()=>{});return true;
     }
     if (operation === 'setMediaOverride') {

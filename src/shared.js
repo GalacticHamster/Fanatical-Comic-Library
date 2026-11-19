@@ -1371,7 +1371,11 @@
           break;
       }
 
-      library = 'Your existing library was not changed.';
+      // A Full scan that stopped part-way has already saved the batches it verified.
+      const progress = Number.isSafeInteger(summary.progressSaved) && summary.progressSaved > 0 ? summary.progressSaved : 0;
+      library = progress
+        ? `${progress.toLocaleString()} purchase${progress === 1 ? '' : 's'} checked before it stopped ${progress === 1 ? 'was' : 'were'} saved; earlier records were preserved. Run Rescan all purchases again to continue.`
+        : 'Your existing library was not changed.';
     } else if (isPartial) {
       title = fullScan ? 'Full import partially completed' : 'Quick update partially completed';
       const unresolved = summary.unresolvedOrders ?? summary.recovery?.failedOrders ?? 0;

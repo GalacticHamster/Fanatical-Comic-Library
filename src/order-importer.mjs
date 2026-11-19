@@ -1,5 +1,5 @@
 /* Self-contained: Chrome serializes this exact function into the Fanatical page. */
-export async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerprints = [], scanHistoryMissing = false, progressId = '', operation = 'import', orderSummaries = [], orderDetails = [], returnFailure = false, allowPartial = false, accountOrderFingerprints = [], progressFormat = 'fan' } = {}) {
+export async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerprints = [], scanHistoryMissing = false, progressId = '', operation = 'import', orderSummaries = [], orderDetails = [], returnFailure = false, allowPartial = false, accountOrderFingerprints = [], progressFormat = 'fan', detailLimit = 0, retryLaterOrderFingerprints = [] } = {}) {
   // Chrome does not propagate MAIN-world exceptions to InjectionResult. Keep
   // errors in an explicit, aggregate-only envelope when called by the worker.
   const listingEvidence={arrayPages:0,objectPages:0,otherPages:0,headersReadablePages:0,linkHeaderPages:0,totalCountHeaderPages:0,contentRangeHeaderPages:0,nextReferencePages:0};
@@ -677,11 +677,22 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     const error=failure('history-missing-known','Fanatical order history omits previously scanned orders, so complete coverage could not be confirmed. Your library and scan history were not changed.');
     if(!allowPartial)throw error;discoveryComplete=false;note(error,'listing');
   }
-  const toInspect = fullScan ? completeWithFingerprints : completeWithFingerprints.filter(({ order,fingerprint }) => !known.has(fingerprint)||sparseSummaries.has(order._id));
+  // A bounded batch reads at most detailLimit order details; the rest stay unresolved for a later
+  // batch. Within a batched pass, known orders were verified by an earlier batch, so sparse
+  // summaries among them are not read again.
+  const batched=allowPartial&&Number.isSafeInteger(detailLimit)&&detailLimit>0;
+  // Orders that already failed earlier in the same pass are not requested again in it.
+  const later=new Set(batched&&Array.isArray(retryLaterOrderFingerprints)?retryLaterOrderFingerprints.filter(fp=>typeof fp==='string'&&/^[a-f0-9]{64}$/u.test(fp)):[]);
+  const unread = fullScan ? completeWithFingerprints : completeWithFingerprints.filter(({ order,fingerprint }) => !known.has(fingerprint)||sparseSummaries.has(order._id)&&!batched);
+  const candidates = unread.filter(({fingerprint})=>!later.has(fingerprint)),postponed=unread.filter(({fingerprint})=>later.has(fingerprint));
+  const toInspect = batched ? candidates.slice(0,detailLimit) : candidates,deferred=batched?candidates.slice(detailLimit).map(({fingerprint})=>fingerprint):[];
+  for(const {fingerprint} of postponed)unresolved.add(fingerprint);
+  for(const fingerprint of deferred)unresolved.add(fingerprint);
+  if(postponed.length+deferred.length)failureCounts.set('details:batch-deferred',{code:'batch-deferred',stage:'details',count:postponed.length+deferred.length});
   const recovery=sparseSummaries.size?{version:1,eligible:sparseSummaries.size,scheduled:toInspect.filter(({order})=>sparseSummaries.has(order._id)).length,recovered:0,unresolved:0,emptyDetailItems:0,detailItemTypes:Object.fromEntries(['missing','null','array','object','string','number','boolean','other'].map(k=>[k,0]))}:null;
   if(recovery)compatibility.summaryRecovery=recovery;
-  compatibility.counts.scheduled=toInspect.length;compatibility.counts.knownSkipped=complete.length-toInspect.length;
-  const scope = {fullScan,scanHistoryMissing,total:toInspect.length,skipped:complete.length-toInspect.length};
+  compatibility.counts.scheduled=toInspect.length;compatibility.counts.knownSkipped=complete.length-unread.length;
+  const scope = {fullScan,scanHistoryMissing,total:toInspect.length,skipped:complete.length-unread.length};
   reportProgress({phase:'plan',...scope});
   let completedDetails = 0;
   diagnostic.stage='details';
@@ -813,7 +824,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   const finished=outcome==='complete'||outcome==='partial-discovery'&&diagnostic.paginationEvidence==='array-only'&&diagnostic.pagesParsed===visitedPages.size&&!unresolved.size&&!unidentifiedRecords&&failureCounts.size===1&&[...failureCounts.values()][0].code==='discovery-unverified';
   return {
     acquisitionContract:{version:1,provider:'fanatical',acquisition:{outcome:finished?'finished':'interrupted'},verified:[...verified].sort(),unresolved:[...unresolved].sort(),ineligible:[...ineligible].sort(),coverage:{status:outcome==='complete'?'verified':finished?'unverified':'incomplete',evidence:[diagnostic.paginationEvidence]},scope:{authority:accountOverlap?'saved-order-match':'declared-scope'},retry:[...unresolved].sort(),persistence:{outcome:'not-attempted'},reconciliation:{authority:'none'}},
-    ...(allowPartial?{partialScanVersion:1,outcome,verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...listedFingerprints],failures:[...failureCounts.values()],unidentifiedRecords}:{}),
+    ...(allowPartial?{partialScanVersion:1,outcome,...(batched?{deferredOrderFingerprints:[...deferred].sort()}:{}),verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...listedFingerprints],failures:[...failureCounts.values()],unidentifiedRecords}:{}),
     schemaVersion: 1,
     coverage: { complete: allowPartial?outcome==='complete':true,...(allowPartial?{listingEvidence,compatibility,discoveryComplete,pagesParsed:diagnostic.pagesParsed,accountAffinity:accountOverlap?'saved-order-match':'declared-scope'}:{}), listedOrders: summaries.length, validatedOrders: allowPartial?verified.size:details.length, emptyAccount: summaries.length === 0,
       pagesFetched: visitedPages.size, expectedTotal, paginationEvidence: ranged ? 'range' : expectedTotal !== null ? 'count' : linked ? 'link' : 'array-only', retries, concurrency },

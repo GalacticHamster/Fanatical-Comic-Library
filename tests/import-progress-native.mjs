@@ -128,6 +128,18 @@ try{
    await evaluate('const s='+root+';[...s.querySelectorAll("button")].find(b=>b.textContent==="Export scan report").click();return true;');
    recoveryReport=JSON.parse(await wait('return document.documentElement.dataset.testExport;','Sparse recovery report missing'));assert.equal(recoveryReport.compatibility.summaryRecovery.recovered,1);assert.equal(recoveryReport.compatibility.summaryRecovery.scheduled,1);assert(!/synthetic-order|PRIVATE|SYNTHETIC-ONLY/.test(JSON.stringify(recoveryReport)));sparseSummary=false;after=await saved();assert.deepEqual(after.items,before.items);
    console.log('PASS installed FAN sparse summary: incomplete detail preserves purchases, Quick retries and rechecks known details without duplicating origins');
+   // Long Full scans read order details in batches: a stop keeps the verified batches, and after a
+   // browser restart the next Full scan reads only the remaining orders before its complete commit.
+   async function fullRun(){counts={lists:0,details:0,completed:0,failed:0};attempts.clear();await evaluate('const b='+root+'.querySelector("[data-import-mode=all]");b.click();return true;');await wait('return !'+root+'.querySelector("[data-import-mode=all]").disabled;','Full scan never finished');return evaluate('return '+root+'.querySelector("output").textContent;');}
+   sparseSummary=false;sparseDetailFailure=false;reorderedDuplicate=false;summaryIssues=false;headerless=false;fail=false;size=450;delay=20;await openOrders();
+   counts={lists:0,details:0,completed:0,failed:0};attempts.clear();await evaluate('const b='+root+'.querySelector("[data-import-mode=all]");b.click();return true;');
+   for(let i=0;i<600&&counts.details<250;i++)await pause(50);assert(counts.details>=250&&counts.lists===2,'the second batch is running');
+   driver.close?.();child.kill();await exited;delay=0;await startBrowser();
+   const stoppedPass=await saved();assert(stoppedPass.count>=200,'the first batch was saved before the browser closed');
+   await openOrders();
+   const batchText=await fullRun();assert.equal(counts.details,250,'only the remaining orders are read');assert.match(batchText,/^Full import completed\n\nChecked 450 purchases\./u);
+   const finishedPass=await saved();assert.equal(finishedPass.count,450);assert.equal(finishedPass.fingerprints.length,450);
+   console.log('PASS installed FAN batched Full scan keeps verified batches across a stop and browser restart, then completes without rereading them');
    if(central){
      let glUrl;if(firefox){await driver.send('Marionette:SetContext',{value:'chrome'});const result=await driver.send('WebDriver:ExecuteScript',{script:'return WebExtensionPolicy.getByID(arguments[0]).getURL(arguments[1]);',args:[centralId,'options.html'],newSandbox:true});glUrl=result.value??result;await driver.send('Marionette:SetContext',{value:'content'});}else glUrl='chrome-extension://'+centralId+'/options.html';
      centralOptionsUrl=glUrl;const fanUrl=reportUrl.replace('test-report.html','src/options.html');

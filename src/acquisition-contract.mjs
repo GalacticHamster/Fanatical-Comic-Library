@@ -97,7 +97,7 @@ export function assertFanaticalAcquisitionContract(raw,options={}){
   const keys=(value,allowed)=>value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).every(key=>allowed.includes(key));
   const ids=value=>Array.isArray(value)&&value.length<=100000&&value.every(id=>typeof id==='string'&&/^[a-f0-9]{64}$/u.test(id))&&new Set(value).size===value.length;
   const same=(a,b)=>{if(!ids(a)||!ids(b)||a.length!==b.length)return false;const set=new Set(b);return a.every(id=>set.has(id));};
-  if(!keys(raw,['acquisitionContract','partialScanVersion','outcome','verifiedOrderFingerprints','unresolvedOrderFingerprints','ineligibleOrderFingerprints','observedOrderFingerprints','failures','unidentifiedRecords','schemaVersion','coverage','ordersScanned','ordersAvailable','orderFingerprints','items','rejectedPurchaseItems'])||raw.schemaVersion!==1||raw.partialScanVersion!==1)invalid();
+  if(!keys(raw,['acquisitionContract','partialScanVersion','outcome','deferredOrderFingerprints','verifiedOrderFingerprints','unresolvedOrderFingerprints','ineligibleOrderFingerprints','observedOrderFingerprints','failures','unidentifiedRecords','schemaVersion','coverage','ordersScanned','ordersAvailable','orderFingerprints','items','rejectedPurchaseItems'])||raw.schemaVersion!==1||raw.partialScanVersion!==1)invalid();
   const rejected=raw.rejectedPurchaseItems===undefined?undefined:fanaticalRejectedPurchaseItems(raw.rejectedPurchaseItems);
   const c=raw.acquisitionContract,coverage=raw.coverage;
   const compatibility=coverage?.compatibility===undefined?null:fanaticalCompatibilityReport(coverage.compatibility);
@@ -108,6 +108,8 @@ export function assertFanaticalAcquisitionContract(raw,options={}){
     ||!same(c.verified,raw.verifiedOrderFingerprints)||!same(c.unresolved,raw.unresolvedOrderFingerprints)||!same(c.ineligible,raw.ineligibleOrderFingerprints)||!same(c.retry,c.unresolved)
     ||!ids(raw.observedOrderFingerprints)||!ids(raw.orderFingerprints)||!Array.isArray(raw.items)||!Array.isArray(raw.failures))invalid();
   const partition=[...c.verified,...c.unresolved,...c.ineligible],observedSet=new Set(raw.observedOrderFingerprints);
+  // A bounded batch defers some orders to a later batch; they are always unresolved here.
+  if(raw.deferredOrderFingerprints!==undefined&&(!ids(raw.deferredOrderFingerprints)||raw.deferredOrderFingerprints.some(id=>!c.unresolved.includes(id))))invalid();
   if(new Set(partition).size!==partition.length||partition.some(id=>!observedSet.has(id)))invalid();
   if(!coverage||!['complete','partial-extraction','partial-discovery'].includes(raw.outcome)||coverage.complete!==(raw.outcome==='complete')||coverage.discoveryComplete!==(raw.outcome!=='partial-discovery'))invalid();
   const finished=raw.outcome==='complete'||raw.outcome==='partial-discovery'&&coverage.paginationEvidence==='array-only'&&coverage.expectedTotal===null&&coverage.pagesParsed===coverage.pagesFetched&&!c.unresolved.length&&raw.unidentifiedRecords===0&&raw.failures.length===1&&raw.failures[0].code==='discovery-unverified'&&raw.failures[0].stage==='listing'&&raw.failures[0].count===1;

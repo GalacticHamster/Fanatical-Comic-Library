@@ -1027,3 +1027,88 @@ test('a sparse order whose gift is renamed in detail commits only with the match
  const repeated=await run.send(false);assert(repeated.ok,repeated.error);
  assert.deepEqual({items:run.stored.fanaticalLibraryItems,rejected:run.stored.rejectedPurchaseItems,history:run.stored.fanaticalHistoricalItems??[]},saved);
 });
+
+// Full scans read order details in batches of 200; these histories need three batches.
+const settle=()=>new Promise(resolve=>setImmediate(resolve));
+const libraryView=stored=>({items:stored.fanaticalLibraryItems,fingerprints:stored.fanaticalScannedOrderFingerprints,historical:(stored.fanaticalHistoricalItems??[]).map(entry=>entry.item.sourceItemId).sort(),mode:stored.fanaticalImportSummary?.scanMode,scanned:stored.fanaticalImportSummary?.ordersScanned});
+const passKeys=stored=>Object.keys(stored).filter(key=>key==='fanaticalFullScanPass'||key.startsWith('fanaticalFullScanPart:'));
+const detailPaths=run=>run.paths.filter(path=>/\/api\/user\/orders\/order-/u.test(path));
+async function singleRunLibrary(history){const single=harness({respond:history.respond});const reply=await single.scan(true);assert.equal(reply.ordersScanned,history.orders.length);return libraryView(single.stored);}
+
+test('a batched Full scan saves exactly what a single-run Full scan saves and leaves no progress records behind',async()=>{
+ const history=longHistory(450),run=harness({respond:history.respond});
+ const reply=await run.send(true);assert(reply.ok,reply.error);
+ assert.equal(detailPaths(run).length,450,'every order detail read once');
+ assert.deepEqual(libraryView(run.stored),await singleRunLibrary(history));
+ assert.deepEqual(libraryView(run.stored).historical,['product-654321'],'the absent earlier purchase moves to history only after the complete pass');
+ assert.equal(reply.summary.fullScanPass.batches,3);assert.equal(reply.summary.ordersScanned,450);assert.equal(reply.summary.completeCheckpointAdvanced,true);
+ assert.deepEqual(passKeys(run.stored),[]);
+});
+
+test('an interrupted Full scan keeps verified batches, does not advance the complete checkpoint and resumes without rereading them',async()=>{
+ const history=longHistory(450);let details=0,interrupt=true;
+ const respond=async(path,options)=>{const url=new URL(path,'https://www.fanatical.com');if(url.pathname==='/api/user/orders'&&interrupt&&details>=200)return {status:401,data:null};if(url.pathname!=='/api/user/orders')details++;return history.respond(path,options);};
+ const run=harness({respond});
+ const first=await run.send(true);assert.equal(first.ok,false);
+ const saved=run.stored.fanaticalLibraryItems.map(item=>item.sourceItemId);
+ assert.equal(saved.length,201,'200 verified purchases saved beside the earlier one');assert(saved.includes('product-654321'),'earlier purchase kept');
+ assert.deepEqual(run.stored.fanaticalImportSummary,run.before.fanaticalImportSummary,'complete checkpoint not advanced');
+ assert.equal(run.stored.fanaticalLastScanAttempt.status,'incomplete');
+ assert.equal(run.stored.fanaticalFullScanPass.done.length,200);assert.equal(run.stored.fanaticalFullScanPass.parts,1);
+ interrupt=false;await settle();run.paths.length=0;
+ const resumed=await run.send(true);assert(resumed.ok,resumed.error);
+ assert.equal(detailPaths(run).length,250,'only the remaining orders are read');
+ assert.deepEqual(libraryView(run.stored),await singleRunLibrary(history));
+ assert.deepEqual(passKeys(run.stored),[]);
+ const before=structuredClone(libraryView(run.stored));await settle();
+ const quick=await run.send(false);assert(quick.ok,quick.error);assert.deepEqual(libraryView(run.stored).items,before.items,'repeat scan is idempotent');
+});
+
+test('an unreadable order ends the pass as a partial import, keeps every verified batch and is the only order retried',async()=>{
+ const history=longHistory(450),broken=history.orders[300].detail,good=structuredClone(broken);broken.items=[];
+ const run=harness({respond:history.respond});
+ const first=await run.send(true);assert(first.ok,first.error);
+ assert.equal(first.summary.verifiedPurchasesSaved,449);assert.equal(first.summary.unresolvedOrders,1);assert.equal(first.summary.completeCheckpointAdvanced,false);
+ assert.equal(run.stored.fanaticalLibraryItems.length,450,'449 verified purchases plus the earlier one; nothing retired');
+ assert.deepEqual(run.stored.fanaticalImportSummary,run.before.fanaticalImportSummary);
+ assert.equal(detailPaths(run).filter(path=>path.endsWith(broken._id)).length,1,'a failed order is not requested again in the same run');
+ Object.assign(broken,good);await settle();run.paths.length=0;
+ const retried=await run.send(true);assert(retried.ok,retried.error);
+ assert.deepEqual(detailPaths(run).map(path=>path.split('/').at(-1)),[broken._id]);
+ assert.deepEqual(libraryView(run.stored),await singleRunLibrary(history));assert.deepEqual(passKeys(run.stored),[]);
+});
+
+test('lost pass records and account changes start a fresh pass without duplicating purchases; clearing removes saved progress',async()=>{
+ const history=longHistory(450);let details=0,interrupt=true;
+ const respond=async(path,options)=>{const url=new URL(path,'https://www.fanatical.com');if(url.pathname==='/api/user/orders'&&interrupt&&details>=200)return {status:401,data:null};if(url.pathname!=='/api/user/orders')details++;return history.respond(path,options);};
+ const run=harness({respond});
+ assert.equal((await run.send(true)).ok,false);
+ delete run.stored.fanaticalFullScanPass;interrupt=false;await settle();run.paths.length=0;
+ assert((await run.send(true)).ok);assert.equal(detailPaths(run).length,450);
+ const expected=await singleRunLibrary(history);assert.deepEqual(libraryView(run.stored),expected,'re-reading committed orders adds no duplicates');
+ interrupt=true;details=0;await settle();assert.equal((await run.send(true)).ok,false);
+ run.stored.fanaticalFullScanPass.accountId='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';interrupt=false;await settle();run.paths.length=0;
+ assert((await run.send(true)).ok);assert.equal(detailPaths(run).length,450,'a pass from another account is not resumed');
+ assert.deepEqual(libraryView(run.stored).items,expected.items);
+ interrupt=true;details=0;await settle();assert.equal((await run.send(true)).ok,false);assert(passKeys(run.stored).length>=2);
+ const cleared=await run.store('clear',[],`chrome-extension://${'a'.repeat(32)}/src/options.html`);assert.equal(cleared.ok,true,cleared.error);
+ assert.deepEqual(passKeys(run.stored),[]);
+});
+
+test('Full-scan progress messages count every batch and say that checked purchases were kept',async()=>{
+ const history=longHistory(450);let details=0,interrupt=true;
+ const respond=async(path,options)=>{const url=new URL(path,'https://www.fanatical.com');if(url.pathname==='/api/user/orders'&&interrupt&&details>=200)return {status:401,data:null};if(url.pathname!=='/api/user/orders')details++;return history.respond(path,options);};
+ const run=harness({respond}),failed=await run.send(true);
+ assert.equal(failed.ok,false);assert.match(failed.error,/200 purchases already checked in this Full scan were saved; run Rescan all purchases again to continue/);
+ const other=longHistory(450);other.orders[300].detail.items=[];const partial=await harness({respond:other.respond}).send(true);
+ assert.equal(partial.summary.addedProducts,449,'added items cover every batch');assert.match(partial.summary.failureExplanation,/unreadable/,'the real failure explains the partial pass');
+});
+
+test('a Full-scan batch that verifies nothing ends the pass instead of reading the remaining batches',async()=>{
+ const history=longHistory(650);let details=0;
+ const respond=async(path,options)=>{const url=new URL(path,'https://www.fanatical.com');if(url.pathname!=='/api/user/orders'&&++details>200)return {status:404,data:null};return history.respond(path,options);};
+ const run=harness({respond}),reply=await run.send(true);assert(reply.ok,reply.error);
+ assert.equal(reply.summary.verifiedPurchasesSaved,200);assert.equal(reply.summary.unresolvedOrders,450);assert.equal(reply.summary.completeCheckpointAdvanced,false);
+ assert.equal(details,400,'the stalled second batch ends the pass; the third is never read');
+ assert.equal(run.stored.fanaticalFullScanPass.done.length,200,'the pass stays open for the next Full scan');
+});

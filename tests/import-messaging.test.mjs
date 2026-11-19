@@ -122,6 +122,10 @@ test('formatScanSummary formats friendly scan summaries across all outcomes', ()
   assert.equal(failedAuth.detail, "Couldn't access your Fanatical purchases. Make sure you're signed in to Fanatical, then try again.");
   assert.equal(failedAuth.library, 'Your existing library was not changed.');
   assert.equal(failedAuth.text, "Import failed\n\nCouldn't access your Fanatical purchases. Make sure you're signed in to Fanatical, then try again.\n\nYour existing library was not changed.");
+  // A Full scan that stopped part-way has saved the batches it verified and says so.
+  const stoppedFull = F.formatScanSummary({ outcome: 'failed', category: 'authentication', progressSaved: 1200 });
+  assert.equal(stoppedFull.library, '1,200 purchases checked before it stopped were saved; earlier records were preserved. Run Rescan all purchases again to continue.');
+  assert.equal(F.formatScanSummary({ outcome: 'failed', category: 'authentication', progressSaved: 1 }).library, '1 purchase checked before it stopped was saved; earlier records were preserved. Run Rescan all purchases again to continue.');
 
   // Failed import (Storage)
   const failedStorage = F.formatScanSummary({ outcome: 'failed', category: 'storage' });

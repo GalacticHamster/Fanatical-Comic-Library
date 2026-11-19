@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Rescan all purchases reads order details in batches of 200 and saves each batch's verified purchases as it goes. If the scan stops, running it again continues where it left off instead of starting over. The library is replaced and absent items move to history only once every order has been verified, as before.
 - An unsafe optional store link on a saved purchase is left out of sharing instead of withholding the purchase. Withheld records and dropped links are counted in the connection limitations.
 - A purchase whose free promotional gift is renamed in the order details, for example after it is revealed, now imports when the gift keeps the same item ID as in the order list. The gift is recorded as promotional, not owned; without a matching ID the purchase stays unresolved and retryable.
 - Automatic Galactic Library pairing no longer fails with a generic connection error when saved purchases include comics, Unclassified or Video items, or a record that cannot be shared. Those records keep their saved media type; comics are shared as books, other unsupported types are not imported as owned titles in Galactic Library, and unshareable records are listed as connection limitations.

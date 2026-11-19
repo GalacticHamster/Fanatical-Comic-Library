@@ -383,7 +383,7 @@
         if(!active())return;
         const formatted = response?.ok
           ? importerResult(response.summary, response.summary.scanMode === 'full')
-          : F.formatScanSummary({ outcome: 'failed', error: response?.error ?? 'Import failed.' });
+          : F.formatScanSummary({ outcome: 'failed', error: response?.error ?? 'Import failed.', progressSaved: response?.fullScanProgressSaved });
         status.innerHTML = formatted.html;
         scanReport=response?.scanDiagnostic??response?.summary?.scanDiagnostic??null;
         if(scanReport)scanReport={...scanReport,progress:lastActivity,progressEvents:activityEvents,uiUpdates,elapsedMs:startedAt===null?null:Date.now()-startedAt};
