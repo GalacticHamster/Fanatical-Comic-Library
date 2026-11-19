@@ -19,25 +19,86 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     }));
   }
 
-  let localReminderRows=[],localReminderItems=[],localReminderAccount=null,localReminderPage=0,localReminderTimer;
-  function renderLocalReminders(){
-    clearTimeout(localReminderTimer);localReminderRows=localKeyReminders(localReminderItems);
-    const deadlines=localReminderRows.filter(r=>r.review?.action==='snoozed'&&Date.parse(r.review.until)>Date.now()).map(r=>Date.parse(r.review.until)-Date.now());
-    if(deadlines.length){localReminderTimer=setTimeout(renderLocalReminders,Math.min(60000,Math.max(1,Math.min(...deadlines)+5)));localReminderTimer?.unref?.();}
-    const active=localReminderRows.filter(r=>r.status==='unrevealed'&&!r.hidden).length;$('#local-key-status').textContent=`${active.toLocaleString()} active purchase ${active===1?'reminder':'reminders'} for this account. Reminders work without Galactic Library. Rescan all purchases refreshes older observations; no keys are revealed.`;
-    const filter=$('#local-reminder-filter').value||'pending',all=localReminderRows.filter(r=>filter==='hidden'?r.hidden:!r.hidden&&(filter==='unknown'?r.status==='unknown':r.status==='unrevealed'));
-    localReminderPage=Math.min(localReminderPage,Math.max(0,Math.ceil(all.length/50)-1));
-    $('#local-reminder-count').textContent=`${all.length.toLocaleString()} ${filter==='unknown'?'purchase record':'reminder'}${all.length===1?'':'s'} ${filter==='hidden'?'dismissed or snoozed':filter==='unknown'?'with unknown key status':'for unrevealed keys'}; page ${localReminderPage+1} of ${Math.max(1,Math.ceil(all.length/50))}.`;
-    $('#local-reminder-previous').disabled=localReminderPage===0;$('#local-reminder-next').disabled=(localReminderPage+1)*50>=all.length;
-    $('#local-reminder-list').replaceChildren(...all.slice(localReminderPage*50,localReminderPage*50+50).map(row=>{
-      const accountId=localReminderAccount,li=document.createElement('li'),label=document.createElement('p');li.dataset&&(li.dataset.reminderRef=row.ref);
-      label.textContent=`${row.title} - ${row.bundle||'Individual purchase'}; ${row.purchasedAt?new Date(row.purchasedAt).toLocaleDateString():'purchase date not recorded'}; ${row.quantity} ${row.quantity===1?'copy':'copies'}. ${row.status==='unrevealed'?'Key reported unrevealed':'Key reveal status unknown'}; checked ${new Date(row.checkedAt).toLocaleString()}. Activation is unknown.`;li.append(label);
-      const act=(text,action)=>{const b=document.createElement('button');b.type='button';b.textContent=text;b.disabled=!localReminderAccount;b.addEventListener('click',async()=>{b.disabled=true;try{await mutate('reviewKeyReminder',{accountId,ref:row.ref,basis:row.status,expectedReview:row.review??null,action,...(action==='snoozed'?{until:new Date(Date.now()+7*86400000).toISOString()}:{})});await refresh({libraryOnly:true});$('#local-reminder-action-status').textContent='Reminder review saved. Purchases and keys are unchanged.';}catch(error){$('#local-reminder-action-status').textContent=error.message;b.disabled=false;}});li.append(b);};
-      if(row.hidden)act('Restore reminder','active');else{act('Dismiss reminder','dismissed');act('Snooze 7 days','snoozed');}return li;
-    }));
+  const ordersUrl = 'https://www.fanatical.com/en/orders';
+  let localReminderItems = [], localReminderAccount = null, localReminderTimer;
+  function renderLocalReminders() {
+    clearTimeout(localReminderTimer);
+    const now = Date.now(), rows = localKeyReminders(localReminderItems, now);
+    let next = Infinity;
+    for (const row of rows) if (row.hidden && row.review?.action === 'snoozed') next = Math.min(next, Date.parse(row.review.until));
+    if (Number.isFinite(next)) {
+      localReminderTimer = setTimeout(renderLocalReminders, Math.min(60000, Math.max(1, next - now + 5)));
+      localReminderTimer?.unref?.();
+    }
+    const filter = $('#local-reminder-filter').value || 'pending';
+    const query = ($('#local-reminder-search').value || '').trim().toLowerCase();
+    const active = rows.filter(row => !row.hidden && row.status === 'unrevealed').length;
+    $('#local-key-status').textContent = active.toLocaleString() + ' active purchase ' + (active === 1 ? 'reminder' : 'reminders') + '. Reminders work without Galactic Library.';
+    const shown = rows.filter(row => {
+      const matchesView = row.hidden ? filter === 'hidden' || filter === row.review?.action
+        : filter === 'unknown' ? row.status === 'unknown' : filter === 'pending' && row.status === 'unrevealed';
+      return matchesView && [row.title, row.bundle].some(value => value?.toLowerCase().includes(query));
+    });
+    $('#local-reminder-count').textContent = shown.length
+      ? shown.length.toLocaleString() + ' ' + (shown.length === 1 ? 'reminder' : 'reminders')
+      : 'No reminders match this view.';
+    $('#local-reminder-list').replaceChildren(...shown.map(localReminderCard));
   }
-  $('#local-reminder-filter').addEventListener('change',()=>{localReminderPage=0;renderLocalReminders();});
-  $('#local-reminder-previous').addEventListener('click',()=>{localReminderPage--;renderLocalReminders();});$('#local-reminder-next').addEventListener('click',()=>{localReminderPage++;renderLocalReminders();});
+
+  function localReminderCard(row) {
+    const card = document.createElement('li');
+    card.className = 'key-reminder-card';
+    card.dataset.reminderRef = row.ref;
+    const part = (tag, css, value) => {
+      const node = document.createElement(tag);
+      node.className = css;
+      node.textContent = value;
+      return node;
+    };
+    const day = value => new Date(value).toLocaleDateString();
+    const date = row.purchasedAt ? new Date(row.purchasedAt).toLocaleDateString(undefined, {timeZone:'UTC'}) : null;
+    const badge = row.hidden ? row.review.action === 'snoozed' ? 'Snoozed until ' + day(row.review.until) : 'Dismissed'
+      : row.status === 'unrevealed' ? 'Reported unrevealed' : 'Key reveal status unknown';
+    const heading = part('div', 'key-reminder-heading', '');
+    heading.append(part('span', '', row.title), part('span', 'key-reminder-status', badge));
+    const context = [row.bundle || 'Individual purchase', date ? 'Purchased ' + date : 'Purchase date unknown',
+      row.quantity > 1 ? row.quantity.toLocaleString() + ' copies' : ''].filter(Boolean).join(' \u00b7 ');
+    const observation = row.hidden ? row.status === 'unrevealed' ? 'Key reported unrevealed. ' : 'Key reveal status unknown. ' : '';
+    const details = observation + 'Checked ' + day(row.checkedAt) + '. Activation is unknown. No deadline recorded.';
+    card.append(heading, part('div', 'key-reminder-source', context), part('div', 'key-reminder-meta', details));
+    const actions = part('div', 'key-reminder-actions', '');
+    const accountId = localReminderAccount;
+    const act = (text, action) => {
+      const button = part('button', 'secondary', text);
+      button.type = 'button';
+      button.disabled = !accountId;
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        try {
+          await mutate('reviewKeyReminder', {accountId, ref:row.ref, basis:row.status, expectedReview:row.review ?? null,
+            action, ...(action === 'snoozed' ? {until:new Date(Date.now() + 7 * 86400000).toISOString()} : {})});
+          await refresh({libraryOnly:true});
+          $('#local-reminder-action-status').textContent = 'Reminder review saved.';
+        } catch (error) {
+          $('#local-reminder-action-status').textContent = error.message;
+          button.disabled = false;
+        }
+      });
+      actions.append(button);
+    };
+    if (row.hidden) act('Restore reminder', 'active');
+    else { act('Dismiss reminder', 'dismissed'); act('Snooze 7 days', 'snoozed'); }
+    const open = part('a', 'key-reminder-link', 'Find in Order History');
+    open.href = ordersUrl;
+    open.target = '_blank';
+    open.rel = 'noopener';
+    actions.append(open);
+    card.append(actions);
+    return card;
+  }
+  for (const [selector, event] of [['#local-reminder-filter', 'change'], ['#local-reminder-search', 'input']]) {
+    $(selector).addEventListener(event, () => { $('#local-reminder-list').scrollTop = 0; renderLocalReminders(); });
+  }
   let reminderGeneration=0,reminderNext=null,reminderHistory=[];
   function resetReminders(){reminderGeneration++;reminderNext=null;reminderHistory=[];$('#reminder-list').replaceChildren();$('#reminder-status').textContent='Reminders have not been checked.';$('#reminder-previous').disabled=$('#reminder-next').disabled=true;$('#load-reminders').disabled=false;}
   async function loadReminders(offset=0,history=[]){
@@ -970,7 +1031,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
   });
 
   $('#open-orders').addEventListener('click', () => {
-    chrome.tabs.create({ url: 'https://www.fanatical.com/en/orders' });
+    chrome.tabs.create({ url: ordersUrl });
   });
 
   $('#export').addEventListener('click', async () => {

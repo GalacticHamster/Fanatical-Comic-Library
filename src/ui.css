@@ -257,3 +257,22 @@ label { display:block; margin:.5rem 0; } #summary-position { padding:.35rem; }
 .library-dismiss-btn {
   margin-left: 0.25rem;
 }
+
+/* Compact Settings reminder cards. */
+.key-reminder-filters { display:flex; align-items:end; flex-wrap:wrap; gap:.6rem 1rem; }
+.key-reminder-filters label { display:grid; gap:.25rem; min-width:0; }
+.key-reminder-filters input, .key-reminder-filters select { max-width:100%; }
+.key-reminder-list { display:grid; gap:.5rem; max-height:28rem; margin:.75rem 0 0; padding:0 .25rem .15rem 0; overflow:auto; list-style:none; }
+.key-reminder-card { display:grid; gap:.3rem; min-width:0; padding:.65rem .75rem; border:1px solid var(--gh-divider); border-left:.3rem solid var(--gh-neutral-fill); border-radius:.45rem; background:var(--gh-surface); overflow-wrap:anywhere; }
+.key-reminder-card[data-key-reminder-state="soon"] { border-left-color:var(--gh-possible); }
+.key-reminder-card[data-key-reminder-state="expired"] { border-left-color:var(--gh-danger-fill); }
+.key-reminder-heading { display:flex; flex-wrap:wrap; align-items:start; justify-content:space-between; gap:.25rem .75rem; font-weight:700; }
+.key-reminder-meta, .key-reminder-destination { color:var(--gh-text-muted); font-size:.85rem; }
+.key-reminder-source { font-size:.9rem; }
+.key-reminder-status { padding:.18rem .45rem; border-radius:999px; background:var(--gh-neutral-fill); color:var(--gh-on-status); font-size:.75rem; font-weight:700; }
+.key-reminder-card[data-key-reminder-state="soon"] .key-reminder-status { background:var(--gh-possible); }
+.key-reminder-card[data-key-reminder-state="expired"] .key-reminder-status { background:var(--gh-danger-fill); }
+.key-reminder-actions { display:flex; flex-wrap:wrap; gap:.35rem; margin-top:.15rem; }
+.key-reminder-actions button { padding:.35rem .55rem; }
+
+.key-reminder-link { align-self:center; color:var(--gh-link); padding:.25rem .4rem; }

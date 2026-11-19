@@ -175,7 +175,20 @@ try{
    driver.close?.();child.kill();await exited;await startBrowser();await navigate(optionsUrl);await wait('return !!globalThis.LibraryBrowser&&document.querySelector("#library-count").textContent.includes("37 unique items");','Direct purchased games lost after restart');
    console.log('PASS installed FAN direct games: ten selections, earlier 24 preserved, unchanged Quick, failed-detail retry, restart and no false complete checkpoint');
    assert.equal(directSaved.items.filter(i=>i.keyStatus==='unrevealed').length,legacyKeys&&!process.argv.includes('--observation-peer')?0:10);
-   if(!legacyKeys)await verifyStandaloneFanaticalReminders({navigate,evaluate,wait,fanUrl:optionsUrl,openOrders,scan,restart:async()=>{driver.close?.();child.kill();await exited;await startBrowser();}});
+   if(!legacyKeys){
+     await verifyStandaloneFanaticalReminders({navigate,evaluate,wait,fanUrl:optionsUrl,openOrders,scan,restart:async()=>{driver.close?.();child.kill();await exited;await startBrowser();}});
+     const reminderNavigation=await evaluate(`
+       const list=document.querySelector('#local-reminder-list'), search=document.querySelector('#local-reminder-search');
+       search.value='Selected 0';search.dispatchEvent(new Event('input'));
+       const link=list.querySelector('a'), title=list.querySelector('.key-reminder-heading span')?.textContent;
+       let destination;
+       link.addEventListener('click',event=>{event.preventDefault();destination=event.currentTarget.href;},{once:true});
+       link.click();
+       return {count:list.children.length,title,destination,label:link.textContent,blank:link.target==='_blank'&&link.rel==='noopener'};
+     `);
+     assert.deepEqual(reminderNavigation,{count:1,title:'Selected 0',destination:'https://www.fanatical.com/en/orders',label:'Find in Order History',blank:true});
+     console.log('PASS installed FAN reminder search and safe Order History navigation');
+   }
    if(central&&(legacyKeys||process.argv.includes('--legacy-central')))await verifyFanaticalKeyCompatibility({observationsSupported:process.argv.includes('--observation-peer')||process.argv.includes('--legacy-observations'),browser:firefox?'Firefox':'Chrome',peerId:fanId,navigate,evaluate,wait,glUrl:centralOptionsUrl,fanUrl:optionsUrl,restart:async()=>{driver.close?.();child.kill();await exited;await startBrowser();}});
    if(central&&!legacyKeys&&!process.argv.includes('--legacy-central'))await verifyFanaticalKeyReminders({browser:firefox?'Firefox':'Chrome',peerId:fanId,navigate,evaluate,wait,glUrl:centralOptionsUrl,fanUrl:optionsUrl,openOrders,scan,setKeysPresent:()=>{directKeysPresent=true;},restart:async()=>{driver.close?.();child.kill();await exited;await startBrowser();}});
 

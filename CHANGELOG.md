@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Key and access reminders display searchable, scrollable cards with separate snoozed and dismissed views. Cards link to Fanatical Order History and identify the purchase to look for.
+
 - A Full scan in progress cannot carry saved batches across an account switch or library restore. Verified purchases already saved remain in the account that imported them.
 - Bundle badges use **Owned elsewhere**, with store names available in the match explanation.
 

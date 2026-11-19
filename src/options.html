@@ -41,12 +41,15 @@
         </details>
       </section>
       <section>
-        <h2>Fanatical key reminders</h2>
-        <p>These reminders use this account's saved purchases and work without Galactic Library. Unrevealed is different from unknown or activated. No key value is read or revealed. Import new purchases checks new orders; Rescan all purchases refreshes older observations.</p>
-        <p id="local-key-status"></p>
-        <label>Show <select id="local-reminder-filter"><option value="pending">Unrevealed keys</option><option value="unknown">Unknown key status</option><option value="hidden">Dismissed and snoozed</option></select></label>
+        <h2>Key and access reminders</h2>
+        <p>Find the bundle and purchase date in Order History, then choose <strong>View Order &amp; Keys</strong>.</p>
+        <p id="local-key-status">Reminders work without Galactic Library.</p>
+        <div class="key-reminder-filters">
+          <label>Search reminders <input type="search" id="local-reminder-search" placeholder="Title or bundle"></label>
+          <label>Show <select id="local-reminder-filter"><option value="pending">Active</option><option value="snoozed">Snoozed</option><option value="dismissed">Dismissed</option><option value="unknown">Unknown key status</option><option value="hidden">Dismissed and snoozed</option></select></label>
+        </div>
         <p id="local-reminder-count" role="status"></p><p id="local-reminder-action-status" role="status"></p>
-        <button id="local-reminder-previous" type="button">Previous local reminders</button><button id="local-reminder-next" type="button">Next local reminders</button><ol id="local-reminder-list"></ol>
+        <ul id="local-reminder-list" class="key-reminder-list" tabindex="0" aria-label="Key and access reminders"></ul>
         <h3>Optional Galactic Library reminders</h3>
         <p>This separate list can include other providers and the same Fanatical purchases. Compatible GL and FAN share purchase-specific reviews only after you enable purchase sync for the matching accounts. Until sync finishes, views may differ. Older GL versions share observations but not reviews. FAN sends no desktop notifications; optional desktop reminders are managed in GL.</p>
         <label>Source <select id="reminder-provider"><option value="fanatical">Fanatical</option><option value="">All providers</option></select></label>
