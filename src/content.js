@@ -8,6 +8,8 @@
   const state = { wishlist:[],planGoal:'products',planUncertain:false,planOpen:false,wishOpen:false,offerWishPage:0, capabilityId:null, softwareSupported:false, capabilityFailed:false, url: '', parsed: null, rendering: false, timer: null, galactic: new Map(), requests: new Map(), failed: new Set(), lookupFailures: new Set(), galacticEnabled: false, galacticStatus: 'Not configured.', showNewOnly: false, showNewOnlyLoaded: false, pickMixReflow: [], summaryDirty: false, summaryPreferences:{minimized:false,position:'bottom-right'}, revision: 0 };
   const catalogueState = { items: null, filters: null, rendering: false };
   let observer = null;
+  // Saved values that bundle and catalogue results depend on; other storage changes need no recheck.
+  const OWNERSHIP_INPUTS = new Set(['fanaticalLibraryItems','fanaticalHistoricalItems','fanaticalProfileLabel','fanaticalWishlistItems','fanaticalImportSummary','galacticLibraryExtensionId','fanaticalShowNewItemsOnly','fanaticalShowDiagnostics','fanaticalCatalogueFilters']);
   let diagnosticsEnabled = false;
   let routeUrl = location.href, routeRevision = 0, pendingOrderImport = null;
   let disposeOrderPanel = () => {};
@@ -1387,6 +1389,24 @@ function restoreSummaryState(panel, state) {
     if (state.rendering) { state.pendingRender = true; if (state.pendingRenderRevision !== state.revision) state.cancelPendingRender?.(); return; }
     clearTimeout(state.timer); state.timer = setTimeout(render, 120);
   };
+  // Fanatical's own dialogs and cart block the rest of the page. While one is open the panel and
+  // floating controls step back (content.css hides them) and return unchanged when it closes; nothing
+  // is removed, re-rendered or rechecked.
+  const ours = element => element.closest('[id^="fanatical-library"], .fanatical-library-summary, .fanatical-library-progress, .fanatical-library-evidence');
+  const providerModalOpen = () => {
+    if ([...document.querySelectorAll('dialog[open]')].some(dialog => !ours(dialog) && dialog.matches(':modal'))) return true;
+    const blocked = document.body && (document.body.classList.contains('modal-open') || getComputedStyle(document.body).pointerEvents === 'none');
+    return [...document.querySelectorAll('[aria-modal="true"], [role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]')]
+      .some(element => !ours(element) && (element.getAttribute('aria-modal') === 'true' || blocked));
+  };
+  let modalFrame = 0;
+  const updateProviderModal = () => { modalFrame = 0; const open = providerModalOpen(); if (document.documentElement.hasAttribute('data-fanatical-library-provider-modal') !== open) document.documentElement.toggleAttribute('data-fanatical-library-provider-modal', open); };
+  const scheduleProviderModal = () => { modalFrame ||= requestAnimationFrame(updateProviderModal); };
+  if (typeof MutationObserver === 'function' && document.documentElement && document.body) {
+    new MutationObserver(scheduleProviderModal).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['open', 'aria-modal', 'data-state'] });
+    new MutationObserver(scheduleProviderModal).observe(document.body, { attributes: true, attributeFilter: ['style', 'class'] });
+    scheduleProviderModal();
+  }
   observer = new MutationObserver(() => {
     if (state.paintPendingCards && routeUrl === location.href) { state.paintPendingCards(); return; }
     schedule();
@@ -1394,7 +1414,10 @@ function restoreSummaryState(panel, state) {
   observer.observe(document.documentElement, { childList: true, subtree: true });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
-    if(changes.fanaticalSummaryPreferences){state.uiRevision=(state.uiRevision??0)+1;state.summaryPreferences=F.normalizeSummaryPreferences(changes.fanaticalSummaryPreferences.newValue);document.querySelector('[data-fanatical-library-summary]')?.dispatchEvent(new Event('fanatical-summary-preferences'));}
+    // Moving, minimizing or expanding the panel only updates the panel itself.
+    if(changes.fanaticalSummaryPreferences){state.summaryPreferences=F.normalizeSummaryPreferences(changes.fanaticalSummaryPreferences.newValue);document.querySelector('[data-fanatical-library-summary]')?.dispatchEvent(new Event('fanatical-summary-preferences'));}
+    // Purchase-sync bookkeeping, appearance and other settings leave bundle ownership unchanged.
+    if(!Object.keys(changes).some(key=>OWNERSHIP_INPUTS.has(key)))return;
     // UI dependencies invalidate the summary snapshot, not valid in-flight
     // central ownership results for the same account and GL connection.
     if(changes.fanaticalWishlistItems){state.summaryDirty=true;state.keepSummaryDuringRetry=true;state.uiRevision=(state.uiRevision??0)+1;}

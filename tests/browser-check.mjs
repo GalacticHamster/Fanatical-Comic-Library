@@ -125,6 +125,24 @@ try {
   // Two separate orders of an owned title: the badge and the summary count purchases.
   assert(document.querySelector('[data-fanatical-library-for="product-123450"]')?.textContent==='Owned \u00d72','Repeat purchase badge missing: '+document.querySelector('[data-fanatical-library-for="product-123450"]')?.textContent);
   assert([...document.querySelectorAll('.fanatical-library-title-list[data-section="owned"] li')].some(row=>row.textContent.startsWith('Comic #10 — purchased 2 times')),'Repeat purchase summary row missing');
+  // Panel controls, unrelated settings and Fanatical's own dialogs never recheck ownership or replace the panel.
+  {const libraryGet=chrome.storage.local.get;let ownershipReads=0;chrome.storage.local.get=defaults=>{if(defaults&&typeof defaults==='object'&&!Array.isArray(defaults)&&'fanaticalLibraryItems' in defaults)ownershipReads++;return libraryGet(defaults);};
+   try{const panel=document.querySelector('[data-fanatical-library-summary]'),badges=[...document.querySelectorAll('[data-fanatical-library-for]')],corner=panel.querySelector('select[aria-label="Bundle summary position"]'),startCorner=corner.value;
+    panel.querySelector('.fanatical-library-summary-minimize').click();await wait();assert(panel.classList.contains('fanatical-library-summary-minimized'),'Panel did not minimize');
+    panel.querySelector('.fanatical-library-summary-expand').click();await wait();
+    corner.value='top-left';corner.dispatchEvent(new Event('change'));await wait();
+    await chrome.storage.local.set({galacticPurchaseSync:{fanatical:{status:'synced'}}});await wait();
+    assert(ownershipReads===0,'Panel controls or unrelated settings rechecked ownership: '+ownershipReads);
+    assert(document.querySelector('[data-fanatical-library-summary]')===panel&&panel.dataset.position==='top-left','Panel was replaced or lost its corner');
+    assert([...document.querySelectorAll('[data-fanatical-library-for]')].every((node,index)=>node===badges[index]),'Badges were recreated by a panel change');
+    const dialog=document.createElement('div');dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');document.body.append(dialog);await wait();
+    assert(getComputedStyle(panel).visibility==='hidden','Panel stayed above a Fanatical dialog');
+    dialog.remove();await wait();
+    assert(getComputedStyle(panel).visibility==='visible'&&document.querySelector('[data-fanatical-library-summary]')===panel,'Panel did not return unchanged after the dialog closed');
+    assert(ownershipReads===0,'A Fanatical dialog rechecked ownership');
+    corner.value=startCorner;corner.dispatchEvent(new Event('change'));await wait();
+    await chrome.storage.local.set({fanaticalShowDiagnostics:false});await wait();await wait();assert(ownershipReads>0,'A real setting change no longer rechecks ownership');
+   }finally{chrome.storage.local.get=libraryGet;}}
   assert(document.querySelector('.fanatical-library-owned-elsewhere-badge'),'Missing external match');
   const badge=document.querySelector('.fanatical-library-owned-elsewhere-badge');
   assert(badge.tagName==='BUTTON','Badge is not keyboard accessible');badge.click();

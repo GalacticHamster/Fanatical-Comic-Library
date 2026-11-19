@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The bundle panel steps aside while a Fanatical dialog or the cart is open and returns unchanged afterwards, as in Humble Library. Moving, minimizing or expanding it, and purchase-sync or appearance updates, no longer recheck ownership or recreate badges; changes to saved purchases and display settings still refresh results.
 - Export title catalog (CSV) gives spreadsheet-ready titles with purchase status, first and last purchase dates, a numeric purchase count with its confidence, source, bundle names and every purchase date, in the same columns as Humble Library's CSV. Both catalogs now list the same merged titles as the Library page; the JSON format is unchanged.
 - An undated purchase among several orders of the same title is no longer shown with another order's date.
 - Library rows count purchases instead of bundles, as Humble Library does: two orders of the same bundle are two purchases, a quantity of two in one order is two, and a total that may include the same order twice says "at least". Owned titles bought more than once show Owned ×N on bundle pages and "purchased N times" in the bundle summary. Ownership on other stores and promotional gifts are never counted. The Bought more than once filter replaces Multiple purchase origins.
