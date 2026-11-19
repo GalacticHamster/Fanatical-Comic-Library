@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Browse the Library by **Titles** or **Bundles & Orders**. Both views can open a verified Fanatical order, with Order History available for earlier records without a saved link.
+
 - Key reminders can open the exact Fanatical order. Quick updates recover missing links when the order appears in the signed-in history. Order IDs stay local to the saved account.
 
 - Key and access reminders display searchable, scrollable cards with separate snoozed and dismissed views. Cards link to Fanatical Order History and identify the purchase to look for.

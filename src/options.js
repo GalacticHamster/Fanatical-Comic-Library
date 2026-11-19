@@ -20,7 +20,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
   }
 
   const ordersUrl = FANATICAL_ORDERS_URL;
-  let localReminderItems = [], localReminderAccount = null, localReminderOrderIds = {}, localReminderTimer;
+  let localReminderItems = [], activePurchaseAccount = null, activeOrderIds = {}, localReminderTimer;
   function renderLocalReminders() {
     clearTimeout(localReminderTimer);
     const now = Date.now(), rows = localKeyReminders(localReminderItems, now);
@@ -67,7 +67,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     const details = observation + 'Checked ' + day(row.checkedAt) + '. Activation is unknown. No deadline recorded.';
     card.append(heading, part('div', 'key-reminder-source', context), part('div', 'key-reminder-meta', details));
     const actions = part('div', 'key-reminder-actions', '');
-    const accountId = localReminderAccount;
+    const accountId = activePurchaseAccount;
     const act = (text, action) => {
       const button = part('button', 'secondary', text);
       button.type = 'button';
@@ -88,25 +88,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     };
     if (row.hidden) act('Restore reminder', 'active');
     else { act('Dismiss reminder', 'dismissed'); act('Snooze 7 days', 'snoozed'); }
-    const direct = accountId && orderNavigationUrl(localReminderOrderIds[row.purchaseRef]);
-    const open = direct ? part('button', '', 'Open purchase') : part('a', 'key-reminder-link', 'Find in Order History');
-    if (direct) {
-      open.type = 'button';
-      open.addEventListener('click', async () => {
-        open.disabled = true;
-        try {
-          const url = await mutate('keyReminderDestination',accountId,row.ref);
-          await chrome.tabs.create({url:url ?? ordersUrl});
-          if (!url) await refresh({libraryOnly:true});
-        } catch (error) { $('#local-reminder-action-status').textContent = error.message; }
-        finally { open.disabled = false; }
-      });
-    } else {
-      open.href = ordersUrl;
-      open.target = '_blank';
-      open.rel = 'noopener';
-    }
-    actions.append(open);
+    actions.append(purchaseNavigation(row.purchaseRef, row.title, row.ref));
     card.append(actions);
     return card;
   }
@@ -142,6 +124,8 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
 
   const STORAGE_KEY = 'fan_library_browser_state';
   const defaultLibraryState = {
+    view: 'titles',
+    searchScope: 'title',
     search: '',
     media: '',
     metadata: '',
@@ -422,7 +406,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     return consolidated;
   }
 
-  function filterAndSortLibrary(items, { search = '', media = '', metadata = '', sort = 'title-asc' } = {}) {
+  function filterAndSortLibrary(items, { search = '', searchScope = 'title', media = '', metadata = '', sort = 'title-asc' } = {}) {
     const collator = globalThis.LibraryTitleSort || new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
     let result = Array.isArray(items) ? consolidateLibrary(items) : [];
 
@@ -430,7 +414,8 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
       const term = search.trim().toLowerCase();
       result = result.filter((item) => {
         const title = typeof item === 'string' ? item : (item.title || '');
-        return title.toLowerCase().includes(term);
+        return (searchScope !== 'bundle' && title.toLowerCase().includes(term))
+          || (searchScope !== 'title' && extractItemOrigins(item).some(origin => origin.bundle.title.toLowerCase().includes(term)));
       });
     }
 
@@ -515,6 +500,111 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     return result;
   }
 
+  function purchaseNavigation(purchaseRef, label, reminderRef = null) {
+    const accountId = activePurchaseAccount;
+    const direct = accountId && orderNavigationUrl(activeOrderIds[purchaseRef]);
+    const action = document.createElement(direct ? 'button' : 'a');
+    action.className = reminderRef ? (direct ? '' : 'key-reminder-link')
+      : direct ? 'secondary library-open-purchase' : 'library-open-purchase';
+    action.textContent = direct ? 'Open purchase' : 'Find in Order History';
+    action.setAttribute('aria-label', action.textContent + ' — ' + label);
+    if (direct) {
+      action.type = 'button';
+      action.addEventListener('click', async () => {
+        action.disabled = true;
+        const status = $(reminderRef ? '#local-reminder-action-status' : '#library-action-status');
+        status.textContent = '';
+        try {
+          const url = reminderRef ? await mutate('keyReminderDestination',accountId,reminderRef)
+            : await mutate('orderDestination',accountId,purchaseRef);
+          await chrome.tabs.create({url: url ?? ordersUrl});
+          if (!url && reminderRef) await refresh({libraryOnly:true});
+        } catch (error) {
+          status.textContent = error.message;
+        } finally {
+          action.disabled = false;
+        }
+      });
+    } else {
+      action.href = ordersUrl;
+      action.target = '_blank';
+      action.rel = 'noopener';
+    }
+    return action;
+  }
+
+  function buildPurchaseGroups(items) {
+    const orders = new Map();
+    for (const item of items) {
+      if (!item?.sourceItemId || (item.source && item.source !== 'fanatical')) continue;
+      const origins = item.purchaseOrigins?.length ? item.purchaseOrigins : extractItemOrigins(item);
+      for (const origin of origins) {
+        const bundleId = origin.bundle?.sourceItemId || '';
+        const isBundle = Boolean(bundleId ? bundleId !== item.sourceItemId : origin.bundle?.title && origin.bundle.title !== item.title);
+        const bundle = isBundle ? origin.bundle?.title || '' : '';
+        if (!origin.purchaseRef && !bundleId && !bundle && !origin.purchaseDate) continue;
+        const ref = /^[a-f0-9]{64}$/u.test(origin.purchaseRef) ? origin.purchaseRef : '';
+        // Unlinked evidence has no authority to group different products into an order.
+        const key = ref || JSON.stringify([item.sourceItemId, bundleId || bundle.toLowerCase(), origin.purchaseRef]);
+        if (!orders.has(key)) orders.set(key, {ref, dates:new Set(), lines:new Map()});
+        const order = orders.get(key);
+        const date = formatPurchaseDate(origin.purchaseDate || (origins.length === 1 ? item.purchaseDate : null));
+        if (date) order.dates.add(date);
+        const lineKey = JSON.stringify([bundleId || bundle.toLowerCase(), item.sourceItemId]);
+        const previous = order.lines.get(lineKey);
+        const quantity = Number.isSafeInteger(origin.quantity) && origin.quantity > 0 ? origin.quantity : 1;
+        if (!previous || quantity > previous.quantity) {
+          order.lines.set(lineKey, {id:item.sourceItemId, title:item.title, media:item.mediaType || item.kind,
+            bundle, bundleId:isBundle ? bundleId || bundle : '', quantity});
+        }
+      }
+    }
+    return [...orders.values()].map(({ref, dates, lines}) => {
+      const contents = [...lines.values()].sort((a,b) => LibraryTitleSort.compare(a.bundle,b.bundle) || LibraryTitleSort.compare(a.title,b.title));
+      const first = contents[0];
+      const oneBundle = first.bundle && contents.every(line => line.bundleId === first.bundleId);
+      return {ref, title:oneBundle ? first.bundle : contents.length === 1 ? first.title : 'Fanatical order',
+        purchaseDate:dates.size === 1 ? [...dates][0] : null,
+        products:new Set(contents.map(line => line.id)).size, quantity:contents.reduce((total,line) => total + line.quantity,0), contents};
+    });
+  }
+
+  function renderPurchaseGroup(order) {
+    const row = document.createElement('li');
+    row.className = 'library-item library-group';
+    const details = document.createElement('details');
+    details.className = 'library-item-details';
+    const summary = document.createElement('summary');
+    summary.className = 'library-item-summary';
+    summary.textContent = `${order.title} — ${order.purchaseDate || 'Date unknown'} · ${order.products.toLocaleString()} ${order.products === 1 ? 'product' : 'products'}`;
+    if (order.quantity > order.products) summary.textContent += ` · ${order.quantity.toLocaleString()} copies`;
+    details.append(summary);
+    if (!order.ref) {
+      const note = document.createElement('p');
+      note.className = 'library-provenance-empty';
+      note.textContent = 'Earlier purchase evidence without a verified order reference.';
+      details.append(note);
+    }
+    details.append(purchaseNavigation(order.ref, [order.title,order.purchaseDate].filter(Boolean).join(' · ')));
+    const list = document.createElement('ul');
+    list.className = 'library-provenance-list';
+    for (const line of order.contents) {
+      const entry = document.createElement('li');
+      entry.className = 'library-provenance-item';
+      const title = document.createElement('div');
+      title.className = 'library-provenance-primary';
+      title.textContent = line.title;
+      const facts = document.createElement('div');
+      facts.className = 'library-provenance-secondary';
+      facts.textContent = [line.bundle, mediaTypeLabel(line.media), line.quantity > 1 ? `${line.quantity.toLocaleString()} copies` : ''].filter(Boolean).join(' · ');
+      entry.append(title,facts);
+      list.append(entry);
+    }
+    details.append(list);
+    row.append(details);
+    return row;
+  }
+
   function renderLibraryRow(item) {
     const row = document.createElement('li');
     row.className = 'library-item';
@@ -539,6 +629,8 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     if (origins.length > 0) {
       const list = document.createElement('ul');
       list.className = 'library-provenance-list';
+      const linked = new Set();
+      const navLabel = (bundle, date) => [title,bundle,date || 'Date unknown'].filter(Boolean).join(' · ');
       for (const origin of origins) {
         const li = document.createElement('li');
         li.className = 'library-provenance-item';
@@ -609,9 +701,21 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
           li.textContent = fullLegacyText;
         }
 
+        if (!item.source || item.source === 'fanatical') {
+          const ref = origin.purchaseRef;
+          if (!ref || !linked.has(ref)) li.append(purchaseNavigation(ref, navLabel(bTitle,pDate)));
+          if (ref) linked.add(ref);
+        }
         list.append(li);
       }
       details.append(list);
+      const dates = FanaticalLibrary.purchaseList([item]).purchases.map(purchase => formatPurchaseDate(purchase.date)).filter(Boolean).sort();
+      if (dates.length) {
+        const dateRange = document.createElement('p');
+        dateRange.className = 'library-provenance-empty';
+        dateRange.textContent = `First known purchase: ${dates[0]} · Last known purchase: ${dates.at(-1)}`;
+        details.append(dateRange);
+      }
     } else {
       const empty = document.createElement('p');
       empty.className = 'library-provenance-empty';
@@ -709,104 +813,129 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
   }
 
   let latestLibraryItems = [];
+  let latestPurchaseGroups = null;
+  const ordersSelected = () => libraryBrowserState.view === 'orders';
+  const viewState = () => ordersSelected()
+    ? (libraryBrowserState.orders ??= {...defaultLibraryState, searchScope:'both'})
+    : libraryBrowserState;
 
   function renderLibraryBrowser(items = latestLibraryItems) {
+    if (items !== latestLibraryItems) latestPurchaseGroups = null;
     latestLibraryItems = Array.isArray(items) ? items : [];
     const preview = $('#library-preview');
     if (!preview) return;
 
-    const librarySearch = $('#library-search');
+    const orders = ordersSelected();
+    const state = viewState();
     const libraryFilterMedia = $('#library-filter-media');
     const libraryFilterMetadata = $('#library-filter-metadata');
     const librarySort = $('#library-sort');
     const libraryPageSize = $('#library-page-size');
     const libraryPrevious = $('#library-previous');
     const libraryNext = $('#library-next');
+    const controls = {
+      '#library-view-titles': {checked: !orders},
+      '#library-view-groups': {checked: orders},
+      '#library-search-label': {textContent: orders ? 'Find bundles and orders' : 'Find titles'},
+      '#library-search': {value: state.search, placeholder: orders ? 'Filter by bundle or contained title…' : 'Filter by title…'},
+      '#library-title-media': {hidden: orders},
+      '#library-search-scope': {value: state.searchScope},
+      '#library-title-metadata': {hidden: orders},
+      '#library-order-metadata': {hidden: !orders},
+      '#library-filter-orders': {value: orders ? state.metadata : ''},
+      '#library-sort-name-asc': {textContent: orders ? 'Purchase name (A–Z)' : 'Title (A–Z)'},
+      '#library-sort-name-desc': {textContent: orders ? 'Purchase name (Z–A)' : 'Title (Z–A)'}
+    };
+    for (const [selector, props] of Object.entries(controls)) {
+      const element = $(selector);
+      if (element) for (const [key,value] of Object.entries(props)) if (element[key] !== value) element[key] = value;
+    }
+    if (libraryFilterMedia && !orders) libraryFilterMedia.value = state.media;
+    if (libraryFilterMetadata && !orders) libraryFilterMetadata.value = state.metadata;
+    if (librarySort) librarySort.value = state.sort;
+    if (libraryPageSize) libraryPageSize.value = String(state.pageSize);
 
-    if (librarySearch && librarySearch.value !== libraryBrowserState.search) librarySearch.value = libraryBrowserState.search;
-    if (libraryFilterMedia && libraryFilterMedia.value !== libraryBrowserState.media) libraryFilterMedia.value = libraryBrowserState.media;
-    if (libraryFilterMetadata && libraryFilterMetadata.value !== libraryBrowserState.metadata) libraryFilterMetadata.value = libraryBrowserState.metadata;
-    if (librarySort && librarySort.value !== libraryBrowserState.sort) librarySort.value = libraryBrowserState.sort;
-    if (libraryPageSize && Number(libraryPageSize.value) !== libraryBrowserState.pageSize) libraryPageSize.value = String(libraryBrowserState.pageSize);
-
-    const uniqueItems = consolidateLibrary(latestLibraryItems);
-    const processed = filterAndSortLibrary(uniqueItems, {
-      search: libraryBrowserState.search,
-      media: libraryBrowserState.media,
-      metadata: libraryBrowserState.metadata,
-      sort: libraryBrowserState.sort
-    });
-
-    const pageSize = libraryBrowserState.pageSize || 50;
+    const uniqueItems = orders ? (latestPurchaseGroups ??= buildPurchaseGroups(latestLibraryItems)) : consolidateLibrary(latestLibraryItems);
+    const processed = orders ? filterPurchaseGroups(uniqueItems,state) : filterAndSortLibrary(uniqueItems,state);
+    const pageSize = state.pageSize || 50;
     const totalPages = Math.max(1, Math.ceil(processed.length / pageSize));
-    libraryBrowserState.page = Math.max(0, Math.min(libraryBrowserState.page, totalPages - 1));
+    state.page = Math.max(0, Math.min(state.page, totalPages - 1));
     saveLibraryState(libraryBrowserState);
 
-    const start = libraryBrowserState.page * pageSize;
+    const start = state.page * pageSize;
     const pageItems = processed.slice(start, start + pageSize);
 
     preview.start = start + 1;
-    preview.replaceChildren(...pageItems.map(renderLibraryRow));
+    preview.replaceChildren(...pageItems.map(orders ? renderPurchaseGroup : renderLibraryRow));
 
-    if (libraryPrevious) libraryPrevious.disabled = libraryBrowserState.page === 0;
-    if (libraryNext) libraryNext.disabled = (libraryBrowserState.page + 1) * pageSize >= processed.length;
+    if (libraryPrevious) libraryPrevious.disabled = state.page === 0;
+    if (libraryNext) libraryNext.disabled = (state.page + 1) * pageSize >= processed.length;
 
     const note = $('#preview-note');
     if (note) {
+      const unit = orders ? 'purchase records' : 'items';
       if (!latestLibraryItems.length) {
         note.textContent = 'Your library is empty. Import purchases or restore a backup to see a preview.';
+      } else if (orders && !uniqueItems.length) {
+        note.textContent = 'No Fanatical order or bundle details are saved for this account.';
       } else if (!processed.length) {
-        note.textContent = `No items match your search or filter criteria (0 of ${uniqueItems.length} items).`;
+        note.textContent = `No ${unit} match your search or filter criteria (0 of ${uniqueItems.length} ${unit}).`;
       } else {
-        const pageInfo = totalPages > 1 ? ` (page ${libraryBrowserState.page + 1} of ${totalPages})` : '';
+        const pageInfo = totalPages > 1 ? ` (page ${state.page + 1} of ${totalPages})` : '';
         const filterInfo = processed.length !== uniqueItems.length ? ` (filtered from ${uniqueItems.length})` : '';
-        const sortLabel = libraryBrowserState.sort === 'date-desc' ? 'by purchase date (newest)'
-          : libraryBrowserState.sort === 'date-asc' ? 'by purchase date (oldest)'
-          : libraryBrowserState.sort === 'title-desc' ? 'reverse alphabetically'
+        const sortLabel = state.sort === 'date-desc' ? 'by purchase date (newest)'
+          : state.sort === 'date-asc' ? 'by purchase date (oldest)'
+          : state.sort === 'title-desc' ? 'reverse alphabetically'
           : 'alphabetically';
-        note.textContent = `Showing ${pageItems.length} of ${processed.length} items${filterInfo}${pageInfo}, ${sortLabel}.`;
+        note.textContent = `Showing ${pageItems.length} of ${processed.length} ${unit}${filterInfo}${pageInfo}, ${sortLabel}.`;
       }
     }
   }
 
-  $('#library-search')?.addEventListener('input', () => {
-    libraryBrowserState.page = 0;
-    libraryBrowserState.search = $('#library-search').value;
-    saveLibraryState(libraryBrowserState);
-    renderLibraryBrowser();
-  });
-  $('#library-filter-media')?.addEventListener('change', () => {
-    libraryBrowserState.page = 0;
-    libraryBrowserState.media = $('#library-filter-media').value;
-    saveLibraryState(libraryBrowserState);
-    renderLibraryBrowser();
-  });
-  $('#library-filter-metadata')?.addEventListener('change', () => {
-    libraryBrowserState.page = 0;
-    libraryBrowserState.metadata = $('#library-filter-metadata').value;
-    saveLibraryState(libraryBrowserState);
-    renderLibraryBrowser();
-  });
-  $('#library-sort')?.addEventListener('change', () => {
-    libraryBrowserState.page = 0;
-    libraryBrowserState.sort = $('#library-sort').value;
-    saveLibraryState(libraryBrowserState);
-    renderLibraryBrowser();
-  });
-  $('#library-page-size')?.addEventListener('change', () => {
-    libraryBrowserState.page = 0;
-    libraryBrowserState.pageSize = Number($('#library-page-size').value) || 50;
-    saveLibraryState(libraryBrowserState);
-    renderLibraryBrowser();
-  });
+  function filterPurchaseGroups(groups, {search,searchScope,metadata,sort}) {
+    const term = search.trim().toLowerCase();
+    return groups.filter(order => {
+      if (metadata === 'dated' && !order.purchaseDate || metadata === 'undated' && order.purchaseDate) return false;
+      if (metadata === 'legacy' && order.ref || metadata === 'bundle' && !order.contents.some(line => line.bundleId)) return false;
+      return !term
+        || (searchScope !== 'bundle' && order.contents.some(line => line.title.toLowerCase().includes(term)))
+        || (searchScope !== 'title' && (order.title.toLowerCase().includes(term)
+          || order.contents.some(line => line.bundle.toLowerCase().includes(term))));
+    }).sort((a,b) => {
+      if (sort === 'date-asc' || sort === 'date-desc') {
+        if (Boolean(a.purchaseDate) !== Boolean(b.purchaseDate)) return a.purchaseDate ? -1 : 1;
+        const byDate = (a.purchaseDate || '').localeCompare(b.purchaseDate || '');
+        if (byDate) return sort === 'date-asc' ? byDate : -byDate;
+      }
+      const byName = LibraryTitleSort.compare(a.title,b.title);
+      return (sort === 'title-desc' ? -byName : byName) || a.ref.localeCompare(b.ref);
+    });
+  }
+
+  for (const [selector,view] of [['#library-view-titles','titles'],['#library-view-groups','orders']]) {
+    $(selector)?.addEventListener('change', () => {
+      if (!$(selector).checked) return;
+      libraryBrowserState.view = view;
+      renderLibraryBrowser();
+    });
+  }
+  for (const [selector,property] of [
+    ['#library-search','search'], ['#library-search-scope','searchScope'], ['#library-filter-media','media'], ['#library-filter-metadata','metadata'],
+    ['#library-filter-orders','metadata'], ['#library-sort','sort'], ['#library-page-size','pageSize']
+  ]) {
+    $(selector)?.addEventListener(property === 'search' ? 'input' : 'change', () => {
+      const state = viewState();
+      state.page = 0;
+      state[property] = property === 'pageSize' ? Number($(selector).value) || 50 : $(selector).value;
+      renderLibraryBrowser();
+    });
+  }
   $('#library-previous')?.addEventListener('click', () => {
-    libraryBrowserState.page--;
-    saveLibraryState(libraryBrowserState);
+    viewState().page--;
     renderLibraryBrowser();
   });
   $('#library-next')?.addEventListener('click', () => {
-    libraryBrowserState.page++;
-    saveLibraryState(libraryBrowserState);
+    viewState().page++;
     renderLibraryBrowser();
   });
 
@@ -828,8 +957,8 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     $('#library-count').textContent = `Active account nickname: ${scope.fanaticalProfileLabel||'Not yet named'}. ${scope.fanaticalProfileArchives.length} other saved accounts (selectable above; excluded from active matching). ${items.length} unique item${items.length === 1 ? '' : 's'} stored locally.`;
     const missing=scope.fanaticalHistoricalItems.filter(entry=>entry.profileLabel===scope.fanaticalProfileLabel).length;
     if(missing) $('#library-count').textContent += ' '+missing+' previously recorded products were not found in the latest scan; these warn as Check ownership and do not prove ownership.';
-    localReminderAccount=scope.fanaticalAccountId;localReminderItems=items;
-    localReminderOrderIds=scope.fanaticalOrderNavigation[localReminderAccount]??{};renderLocalReminders();
+    activePurchaseAccount=scope.fanaticalAccountId;localReminderItems=items;
+    activeOrderIds=scope.fanaticalOrderNavigation[activePurchaseAccount]??{};renderLocalReminders();
 
     $('#history-note').textContent = `${attempt?.status==='partial'&&attempt.acquisitionComplete===true?'Last import finished successfully. ':attempt?.status==='partial'?`Last scan was partial: ${attempt.verifiedPurchasesSaved} verified purchases saved; ${attempt.unresolvedOrders} purchases unresolved. ${attempt.discoveryComplete?'The listing was read, but some purchases remain unresolved.':'The end of the library was not verified.'} Earlier purchases and the last complete check were kept. `:attempt?.status === 'incomplete' ? 'Last scan incomplete: complete order-history coverage could not be confirmed. Previous purchases and the last successful scan were kept. ' : ''}${summary?.historyCoverage ?? 'No complete order-history check has been saved yet.'}`;
     if(diagnostics&&attempt?.status==='partial'&&attempt.acquisitionComplete===true) $('#history-note').textContent += ' Fanatical did not provide enough information to independently verify that the entire purchase history was returned. Existing purchases were preserved.';

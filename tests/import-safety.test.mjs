@@ -690,7 +690,8 @@ function retryClock({ watchdog = 1000 } = {}) {
 }
 
 test('1,000 orders across 25 pages validate with no more than three detail fetches in flight', async () => {
-  const run = harness(longHistory());
+  const history = longHistory();
+  const run = harness(history);
   const result = await run.scan();
   assert.equal(result.ordersScanned, 1000); assert.equal(result.ownedLeafProducts, 1000);
   assert.equal(result.coverage.pagesFetched, 25); assert.equal(result.coverage.expectedTotal, 1000);
@@ -698,7 +699,10 @@ test('1,000 orders across 25 pages validate with no more than three detail fetch
   assert.equal(run.paths.length, 1025); assert.equal(run.writes.length, 1);
   assert.equal(run.stored.fanaticalScannedOrderFingerprints.length, 1000);
   assert.equal(JSON.stringify(run.stored).includes('SECRET'), false);
-  assert.equal(JSON.stringify(run.stored).includes('order-000'), false);
+  const {fanaticalOrderNavigation,...publicState} = run.stored;
+  assert.deepEqual(fanaticalOrderNavigation[publicState.fanaticalAccountId],Object.fromEntries(
+    history.orders.map(({detail}) => [fingerprint(detail._id),detail._id])));
+  assert.equal(JSON.stringify([publicState,result]).includes('order-000'), false);
 });
 
 test('quick scan traverses the entire long history but fetches only unseen completed orders', async () => {
@@ -922,9 +926,11 @@ test('same-product purchases and quantities retain distinct, private order desti
     const n=Number(row.purchasedAt.slice(8,10));
     assert.equal(row.purchaseRef,fingerprint('repeat-order-'+n));
     assert.equal((await run.store('keyReminderDestination',[account,row.ref],url)).result,orderNavigationUrl('repeat-order-'+n));
+    assert.equal((await run.store('orderDestination',[account,row.purchaseRef],url)).result,orderNavigationUrl('repeat-order-'+n));
   }
   assert.equal((await run.store('keyReminderDestination',['bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',rows[0].ref],url)).ok,false);
   assert.equal((await run.store('keyReminderDestination',[account,rows[0].ref])).ok,false,'provider content scripts cannot request the destination');
+  assert.equal((await run.store('orderDestination',[account,rows[0].purchaseRef])).ok,false,'provider content scripts cannot request Library destinations');
   const {fanaticalOrderNavigation,...publicState}=run.stored;
   assert.equal(Object.keys(fanaticalOrderNavigation[account]).length,3);
   const backup=(await run.store('backup',[],url)).result;
@@ -1097,13 +1103,16 @@ test('an interrupted Full scan keeps verified batches, does not advance the comp
  assert.equal(run.stored.fanaticalLastScanAttempt.status,'incomplete');
  assert.equal(run.stored.fanaticalFullScanPass.done.length,200);assert.equal(run.stored.fanaticalFullScanPass.parts,1);
  const navigation=()=>run.stored.fanaticalOrderNavigation?.[run.stored.fanaticalAccountId];
- assert.deepEqual(navigation(),{[fingerprint(keyed[0].detail._id)]:keyed[0].detail._id});
+ const routes=history.orders.map(row=>[fingerprint(row.detail._id),row.detail._id]);
+ const completed=new Set(run.stored.fanaticalFullScanPass.done);
+ assert.deepEqual(navigation(),Object.fromEntries(routes.filter(([ref])=>completed.has(ref))));
+ assert.equal(Object.keys(navigation()).length,200,'each committed order can be opened, including non-key purchases');
  interrupt=false;await settle();run.paths.length=0;
  const resumed=await run.send(true);assert(resumed.ok,resumed.error);
  assert.equal(detailPaths(run).length,250,'only the remaining orders are read');
  assert.deepEqual(libraryView(run.stored),await singleRunLibrary(history,pageOverrides));
  assert.deepEqual(passKeys(run.stored),[]);
- assert.deepEqual(navigation(),Object.fromEntries(keyed.map(row=>[fingerprint(row.detail._id),row.detail._id])));
+ assert.deepEqual(navigation(),Object.fromEntries(routes));
  const before=structuredClone(libraryView(run.stored));await settle();
  const quick=await run.send(false);assert(quick.ok,quick.error);assert.deepEqual(libraryView(run.stored).items,before.items,'repeat scan is idempotent');
 });

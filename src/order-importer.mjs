@@ -826,7 +826,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   const navigationRefs = progressFormat === 'fan' && allowPartial && Array.isArray(orderNavigationRefs)
     ? new Set(orderNavigationRefs.slice(0,100000)) : null;
   if (navigationRefs) for (const item of items) for (const origin of item.purchaseOrigins) {
-    if (origin.keyCheckedAt && verified.has(origin.purchaseRef)) navigationRefs.add(origin.purchaseRef);
+    if (verified.has(origin.purchaseRef)) navigationRefs.add(origin.purchaseRef);
   }
   return {
     ...(navigationRefs ? {orderNavigation:completeWithFingerprints

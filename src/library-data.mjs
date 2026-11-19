@@ -32,8 +32,11 @@ export async function checkedOrderNavigation(raw, receipt, recoveryRefs) {
 
 export function savedOrderReferences(items) {
   const refs = new Set();
-  for (const item of items ?? []) for (const origin of item.purchaseOrigins ?? []) {
-    if (origin.purchaseRef && origin.keyCheckedAt && ['unrevealed','unknown'].includes(origin.keyStatus)) refs.add(origin.purchaseRef);
+  for (const item of items ?? []) {
+    if (item?.source && item.source !== 'fanatical') continue;
+    for (const origin of item?.purchaseOrigins ?? []) {
+      if (/^[a-f0-9]{64}$/u.test(origin?.purchaseRef ?? '')) refs.add(origin.purchaseRef);
+    }
   }
   return refs;
 }
@@ -332,14 +335,20 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
       const state=await area.get(defaults),rows=await globalThis.GalacticPurchaseAdapters.accounts('fan',state);
       return rows;
     }
-    if (operation === 'keyReminderDestination') {
+    if (operation === 'keyReminderDestination' || operation === 'orderDestination') {
       const [accountId, ref] = args;
       const state = await area.get({fanaticalAccountId:null, fanaticalLibraryItems:[], fanaticalOrderNavigation:{}});
-      if (state.fanaticalAccountId !== accountId) throw Error('The saved account changed. Refresh reminders before opening a purchase.');
-      const reminder = localKeyReminders(state.fanaticalLibraryItems).find(row => row.ref === ref);
-      if (!reminder) throw Error('This reminder changed. Refresh reminders before opening a purchase.');
-      const id = state.fanaticalOrderNavigation[accountId]?.[reminder.purchaseRef];
-      return await orderMatchesReference(id,reminder.purchaseRef) ? orderNavigationUrl(id) : null;
+      const reminder = operation === 'keyReminderDestination';
+      if (!accountId || state.fanaticalAccountId !== accountId) throw Error(reminder
+        ? 'The saved account changed. Refresh reminders before opening a purchase.'
+        : 'The saved account changed. Refresh before opening a purchase.');
+      const purchaseRef = reminder
+        ? localKeyReminders(state.fanaticalLibraryItems).find(row => row.ref === ref)?.purchaseRef
+        : savedOrderReferences(state.fanaticalLibraryItems).has(ref) ? ref : null;
+      if (!purchaseRef) throw Error(reminder ? 'This reminder changed. Refresh reminders before opening a purchase.'
+        : 'This purchase changed. Refresh before opening it.');
+      const id = state.fanaticalOrderNavigation[accountId]?.[purchaseRef];
+      return await orderMatchesReference(id,purchaseRef) ? orderNavigationUrl(id) : null;
     }
     if(['handoffAccounts','handoffSnapshot','handoffImport','handoffPreview'].includes(operation)){
       const A=globalThis.GalacticPurchaseAdapters,S=globalThis.GalacticPurchaseSnapshot,state=await area.get(defaults);

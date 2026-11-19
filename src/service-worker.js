@@ -323,7 +323,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     const fanaticalPage=own&&_sender?.frameId===0&&isFanaticalUrl(_sender?.url)&&(_sender?.tab?.url===undefined||isFanaticalUrl(_sender.tab.url));
     const accountOperation=['profiles','selectProfile','renameProfile'].includes(message.operation);
     const ordersPage=isOrdersSender(_sender);
-    if(!['restore','clear','patch','unlink','wishlist','backup','profiles','selectProfile','renameProfile','setMediaOverride','resetMediaOverride','recoverRejectedItem','dismissRejectedItem','reviewKeyReminder','keyReminderDestination'].includes(message.operation)||!(extensionPage||fanaticalPage&&['patch','wishlist'].includes(message.operation)||accountOperation&&ordersPage)){sendResponse({ok:false,error:'Untrusted storage request.'});return false;}
+    if(!['restore','clear','patch','unlink','wishlist','backup','profiles','selectProfile','renameProfile','setMediaOverride','resetMediaOverride','recoverRejectedItem','dismissRejectedItem','reviewKeyReminder','keyReminderDestination','orderDestination'].includes(message.operation)||!(extensionPage||fanaticalPage&&['patch','wishlist'].includes(message.operation)||accountOperation&&ordersPage)){sendResponse({ok:false,error:'Untrusted storage request.'});return false;}
     syncStore.execute(message.operation,message.args).then(result=>sendResponse({ok:true,result}),error=>sendResponse({ok:false,error:error.message}));return true;
   }
   if (message?.type === 'FANATICAL_IMPORT_PURCHASES') {

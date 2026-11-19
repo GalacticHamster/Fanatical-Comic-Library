@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
+import {createHash} from 'node:crypto';
 import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibraryBackup, createSyncStore, createTitleCatalog, createTitleCatalogCsv, FANATICAL_ORDERS_URL, orderNavigationUrl } from '../src/library-data.mjs';
 import '../src/shared.js';
 
@@ -66,6 +67,94 @@ test('options preview is bounded, naturally ordered, and displays bundle provena
   assert.deepEqual(ui.get('#library-preview').children.slice(0, 2).map((row) => row.textContent), ['Comic #2 — 1 purchase', 'Comic #10 — 1 purchase']);
   assert.match(ui.get('#preview-note').textContent, /50 of 52/);
   assert.equal(ui.get('#fanatical-extension-id').textContent, 'a'.repeat(32));
+});
+
+test('Titles and Bundles & Orders keep order identity, contents, quantities and independent view controls', async () => {
+  const first = 'a'.repeat(64), second = 'b'.repeat(64);
+  const makeOrigin = (purchaseRef, name, purchaseDate, quantity = 1) => ({
+    purchaseRef, purchaseDate, quantity, bundle:{sourceItemId:name, title:name}
+  });
+  const firstOrigin = makeOrigin(first,'Pick & Mix','2026-01-02',2);
+  const rows = [
+    {...item('Selected game','product-select'), purchaseOrigins:[firstOrigin,firstOrigin,makeOrigin(second,'Pick & Mix','2026-02-02')]},
+    {...item('Selected book','product-book'), mediaType:'book', purchaseOrigins:[makeOrigin(first,'Book bundle','2026-01-02')]},
+    {...item('Standalone','product-alone'), purchaseOrigins:[makeOrigin(first,'product-alone','2026-01-02')]},
+    item('Earlier undated','product-legacy')
+  ];
+  const ui = await optionsHarness({fanaticalLibraryItems:rows,
+    fanaticalLastScanAttempt:{status:'partial',verifiedPurchasesSaved:2,unresolvedOrders:1}});
+  const summaries = () => ui.get('#library-preview').children.map(row => row.children[0].children[0].textContent);
+  await ui.input('#library-search','Selected game');
+  assert.deepEqual(summaries(),['Selected game — 3 purchases']);
+  const [details] = ui.get('#library-preview').children[0].children;
+  assert(details.children.some(node => /2026-01-02.*2026-02-02/.test(node.textContent)));
+  assert.equal(details.children[1].children.filter(node => node.children.some(child => child.textContent === 'Find in Order History')).length,2);
+  const groups = ui.get('#library-view-groups');
+  groups.checked = true;
+  await ui.change('#library-view-groups');
+  assert.equal(ui.get('#library-search').value,'');
+  assert.match(ui.get('#history-note').textContent,/1 purchases unresolved/);
+  await ui.change('#library-sort','date-desc');
+  assert.deepEqual(summaries(),[
+    'Pick & Mix — 2026-02-02 · 1 product',
+    'Fanatical order — 2026-01-02 · 3 products · 4 copies',
+    'Test bundle — Date unknown · 1 product'
+  ]);
+  await ui.input('#library-search','Book bundle');
+  assert.equal(summaries().length,1);
+  const group = ui.get('#library-preview').children[0].children[0];
+  assert.deepEqual(group.children.at(-1).children.map(row => row.children[0].textContent),['Standalone','Selected book','Selected game']);
+  await ui.change('#library-search-scope','title');
+  assert.deepEqual(summaries(),[]);
+  await ui.change('#library-search-scope','both');
+  await ui.input('#library-search','');
+  await ui.change('#library-page-size','1');
+  await ui.click('#library-next');
+  assert.match(summaries()[0],/^Fanatical order/);
+  await ui.change('#library-filter-orders','legacy');
+  assert.match(summaries()[0],/Date unknown/);
+  ui.get('#library-view-titles').checked = true;
+  await ui.change('#library-view-titles');
+  assert.equal(ui.get('#library-search').value,'Selected game');
+  assert.equal(ui.writes.length,0);
+});
+
+test('exact Library purchase destination requires the active account, a saved product and an ID matching its fingerprint', async () => {
+  const account = '11111111-1111-4111-8111-111111111111';
+  const id = 'synthetic-order-books';
+  const ref = createHash('sha256').update(id).digest('hex');
+  const product = {...item('Synthetic book'),mediaType:'book',purchaseOrigins:[{purchaseRef:ref,bundle:{title:'Book bundle'}}]};
+  const state = {fanaticalAccountId:account,fanaticalLibraryItems:[product],fanaticalOrderNavigation:{[account]:{[ref]:id}}};
+  const store = createSyncStore({async get(defaults){return {...defaults,...state};}});
+  assert.equal(await store.execute('orderDestination',[account,ref]),FANATICAL_ORDERS_URL+'/'+id);
+  await assert.rejects(store.execute('orderDestination',['other-account',ref]),/saved account changed/);
+  await assert.rejects(store.execute('orderDestination',[account,'b'.repeat(64)]),/purchase changed/);
+  state.fanaticalOrderNavigation[account][ref] = 'synthetic-wrong-order';
+  assert.equal(await store.execute('orderDestination',[account,ref]),null);
+  assert.ok(!JSON.stringify(createTitleCatalog([product])).includes(id));
+  assert.ok(!createTitleCatalogCsv([product]).includes(id));
+});
+
+test('choosing one of two purchases opens only its own verified order', async () => {
+  const account = '11111111-1111-4111-8111-111111111111';
+  const ids = ['synthetic-earlier-order','synthetic-latest-order'];
+  const refs = ids.map(id => createHash('sha256').update(id).digest('hex'));
+  const product = item('Repeated title');
+  product.purchaseOrigins = refs.map((purchaseRef,index) => ({purchaseRef,
+    bundle:product.bundle, purchaseDate:`2026-01-0${index + 1}`, quantity:1}));
+  const ui = await optionsHarness({fanaticalAccountId:account,fanaticalLibraryItems:[product],
+    fanaticalOrderNavigation:{[account]:Object.fromEntries(refs.map((ref,index) => [ref,ids[index]]))}});
+  const urls = [];
+  ui.context.chrome.tabs.create = ({url}) => urls.push(url);
+  const list = ui.get('#library-preview').children[0].children[0].children[1];
+  const actions = list.children.map(row => row.children.find(child => child.textContent === 'Open purchase'));
+  assert.equal(actions.length,2);
+  assert.match(actions[0]['aria-label'],/2026-01-02/);
+  assert.match(actions[1]['aria-label'],/2026-01-01/);
+  await actions[1].listeners.click();
+  assert.deepEqual(urls,[FANATICAL_ORDERS_URL+'/'+ids[0]]);
+  await actions[0].listeners.click();
+  assert.deepEqual(urls,ids.map(id => FANATICAL_ORDERS_URL+'/'+id));
 });
 
 test('invalid or cancelled backup import never changes storage', async () => {

@@ -87,12 +87,24 @@
           </div>
         </details>
         <div class="library-controls" role="search" aria-label="Library search and filters">
+          <fieldset class="library-view-row">
+            <legend>Browse by</legend>
+            <label><input id="library-view-titles" type="radio" name="library-view" checked> Titles</label>
+            <label><input id="library-view-groups" type="radio" name="library-view"> Bundles &amp; Orders</label>
+          </fieldset>
           <div class="library-search-row">
-            <label for="library-search">Find titles</label>
-            <input id="library-search" type="search" placeholder="Filter by title…" autocomplete="off">
+            <label id="library-search-label" for="library-search">Find titles</label>
+            <div class="library-search-inputs">
+              <input id="library-search" type="search" placeholder="Filter by title…" autocomplete="off">
+              <label class="library-search-scope">Match <select id="library-search-scope">
+                <option value="title">Titles</option>
+                <option value="bundle">Bundle &amp; order names</option>
+                <option value="both">Both</option>
+              </select></label>
+            </div>
           </div>
           <div class="library-filter-row">
-            <label>Media <select id="library-filter-media">
+            <label id="library-title-media">Media <select id="library-filter-media">
               <option value="">All media types</option>
               <option value="book">Books / Comics</option>
               <option value="comic">Comics</option>
@@ -102,7 +114,7 @@
               <option value="video">Video</option>
               <option value="unclassified">Unclassified</option>
             </select></label>
-            <label>Metadata <select id="library-filter-metadata">
+            <label id="library-title-metadata">Metadata <select id="library-filter-metadata">
               <option value="">All items</option>
               <option value="dated">With purchase date</option>
               <option value="undated">No known purchase date</option>
@@ -111,9 +123,16 @@
               <option value="drm-free">DRM-free</option>
               <option value="multi-origin">Bought more than once</option>
             </select></label>
+            <label id="library-order-metadata" hidden>Purchase records <select id="library-filter-orders">
+              <option value="">All purchase records</option>
+              <option value="dated">With purchase date</option>
+              <option value="undated">No known purchase date</option>
+              <option value="bundle">With bundle details</option>
+              <option value="legacy">Without a verified order reference</option>
+            </select></label>
             <label>Sort <select id="library-sort">
-              <option value="title-asc">Title (A–Z)</option>
-              <option value="title-desc">Title (Z–A)</option>
+              <option id="library-sort-name-asc" value="title-asc">Title (A–Z)</option>
+              <option id="library-sort-name-desc" value="title-desc">Title (Z–A)</option>
               <option value="date-desc">Purchase date (newest)</option>
               <option value="date-asc">Purchase date (oldest)</option>
             </select></label>
@@ -133,6 +152,7 @@
           </div>
         </div>
         <ol id="library-preview"></ol>
+        <p id="library-action-status" role="status"></p>
       </section>
       <section>
         <h2>Restore backup</h2>

@@ -128,6 +128,12 @@ try{
    await evaluate('const s='+root+';[...s.querySelectorAll("button")].find(b=>b.textContent==="Export scan report").click();return true;');
    recoveryReport=JSON.parse(await wait('return document.documentElement.dataset.testExport;','Sparse recovery report missing'));assert.equal(recoveryReport.compatibility.summaryRecovery.recovered,1);assert.equal(recoveryReport.compatibility.summaryRecovery.scheduled,1);assert(!/synthetic-order|PRIVATE|SYNTHETIC-ONLY/.test(JSON.stringify(recoveryReport)));sparseSummary=false;after=await saved();assert.deepEqual(after.items,before.items);
    console.log('PASS installed FAN sparse summary: incomplete detail preserves purchases, Quick retries and rechecks known details without duplicating origins');
+   if(central){
+     assert.equal((await saved()).count,91,"The companion test starts with 91 purchases");
+     let glUrl;if(firefox){await driver.send('Marionette:SetContext',{value:'chrome'});const result=await driver.send('WebDriver:ExecuteScript',{script:'return WebExtensionPolicy.getByID(arguments[0]).getURL(arguments[1]);',args:[centralId,'options.html'],newSandbox:true});glUrl=result.value??result;await driver.send('Marionette:SetContext',{value:'content'});}else glUrl='chrome-extension://'+centralId+'/options.html';
+     centralOptionsUrl=glUrl;const fanUrl=reportUrl.replace('test-report.html','src/options.html');
+     await verifyFanaticalNativeSync({browser:firefox?'Firefox':'Chrome',peerId:fanId,navigate,evaluate,wait,glUrl,fanUrl,openOrders,scan,restart:async()=>{driver.close?.();child.kill();await exited;await startBrowser();},setSource:value=>{size=value.size;fail=value.fail;headerless=false;denied=false;retry=false;}});
+   }
    // Long Full scans read order details in batches: a stop keeps the verified batches, and after a
    // browser restart the next Full scan reads only the remaining orders before its complete commit.
    async function fullRun(){counts={lists:0,details:0,completed:0,failed:0};attempts.clear();await evaluate('const b='+root+'.querySelector("[data-import-mode=all]");b.click();return true;');await wait('return !'+root+'.querySelector("[data-import-mode=all]").disabled;','Full scan never finished');return evaluate('return '+root+'.querySelector("output").textContent;');}
@@ -140,11 +146,6 @@ try{
    const batchText=await fullRun();assert.equal(counts.details,250,'only the remaining orders are read');assert.match(batchText,/^Full import completed\n\nChecked 450 purchases\./u);
    const finishedPass=await saved();assert.equal(finishedPass.count,450);assert.equal(finishedPass.fingerprints.length,450);
    console.log('PASS installed FAN batched Full scan keeps verified batches across a stop and browser restart, then completes without rereading them');
-   if(central){
-     let glUrl;if(firefox){await driver.send('Marionette:SetContext',{value:'chrome'});const result=await driver.send('WebDriver:ExecuteScript',{script:'return WebExtensionPolicy.getByID(arguments[0]).getURL(arguments[1]);',args:[centralId,'options.html'],newSandbox:true});glUrl=result.value??result;await driver.send('Marionette:SetContext',{value:'content'});}else glUrl='chrome-extension://'+centralId+'/options.html';
-     centralOptionsUrl=glUrl;const fanUrl=reportUrl.replace('test-report.html','src/options.html');
-     await verifyFanaticalNativeSync({browser:firefox?'Firefox':'Chrome',peerId:fanId,navigate,evaluate,wait,glUrl,fanUrl,openOrders,scan,restart:async()=>{driver.close?.();child.kill();await exited;await startBrowser();},setSource:value=>{size=value.size;fail=value.fail;headerless=false;denied=false;retry=false;}});
-   }
    console.log('PASS installed FAN '+(firefox?'Firefox':'Chrome')+': partial Full, reload Quick retry, unchanged Quick, browser restart, empty Full/Quick preserve purchases, account, history and checkpoints');
    // Fresh-account 6/3/24 regression, with the Library tab kept open throughout.
    const optionsUrl=reportUrl.replace('test-report.html','src/options.html');await navigate(optionsUrl);await wait('return !!globalThis.LibraryBrowser&&!!document.querySelector("#preview-note").textContent;','Options initial render not ready');
@@ -174,6 +175,34 @@ try{
    sparseDetailFailure=false;await openOrders();await scan('new');assert.equal(counts.details,1);directSaved=await saved();assert.equal(directSaved.count,37);assert.equal(directSaved.fingerprints.length,4);
    driver.close?.();child.kill();await exited;await startBrowser();await navigate(optionsUrl);await wait('return !!globalThis.LibraryBrowser&&document.querySelector("#library-count").textContent.includes("37 unique items");','Direct purchased games lost after restart');
    console.log('PASS installed FAN direct games: ten selections, earlier 24 preserved, unchanged Quick, failed-detail retry, restart and no false complete checkpoint');
+   if (!legacyKeys && !baseline) {
+     // Emulate an earlier installation whose book purchases have fingerprints but no local route.
+     await evaluate('await chrome.storage.local.remove("fanaticalOrderNavigation");return true;');
+     const bookUrl=origin+'/en/orders/synthetic-order-0';
+     const openPurchase = async (view, button, expected) => {
+       await navigate(optionsUrl);
+       await wait('return !!globalThis.LibraryBrowser&&document.querySelector("#library-count").textContent.includes("37 unique items");','Library did not load');
+       const count = await evaluate(`return (await chrome.tabs.query({})).filter(tab=>tab.url===${JSON.stringify(expected)}).length;`);
+       const label = await evaluate(`
+         document.querySelector(${JSON.stringify(view)}).click();
+         const search=document.querySelector('#library-search');
+         search.value='Synthetic 0';search.dispatchEvent(new Event('input'));
+         const details=document.querySelector('#library-preview details');
+         details.querySelector('summary').click();
+         const action=details.querySelector('.library-open-purchase');
+         if(action.textContent===${JSON.stringify(button)}) action.click();
+         return action.textContent;
+       `);
+       assert.equal(label,button);
+       await wait(`return (await chrome.tabs.query({})).filter(tab=>tab.url===${JSON.stringify(expected)}&&tab.status==='complete').length>${count};`,'Library did not open '+expected);
+     };
+     await openPurchase('#library-view-titles','Find in Order History',origin+'/en/orders');
+     await openOrders();await scan('new');assert.equal(counts.details,0,'navigation recovery needs no known order detail requests');
+     await openPurchase('#library-view-titles','Open purchase',bookUrl);
+     await openPurchase('#library-view-groups','Open purchase',bookUrl);
+     assert.deepEqual((await saved()).items,directSaved.items);
+     console.log('PASS installed FAN Titles and Bundles & Orders: exact book order, missing-link fallback and Quick route recovery without rereading details');
+   }
    assert.equal(directSaved.items.filter(i=>i.keyStatus==='unrevealed').length,legacyKeys&&!process.argv.includes('--observation-peer')?0:10);
    if(!legacyKeys){
      await verifyStandaloneFanaticalReminders({navigate,evaluate,wait,fanUrl:optionsUrl,openOrders,scan,restart:async()=>{driver.close?.();child.kill();await exited;await startBrowser();}});
