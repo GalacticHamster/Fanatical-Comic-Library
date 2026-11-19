@@ -613,6 +613,14 @@
     return parsed;
   }
 
+  // A dotted game acronym names the same game as its undotted form (F.E.A.R. 2 and FEAR 2). Only the
+  // dots between single letters are removed; numbers, subtitles and edition words still decide.
+  function gameAcronymKey(title) {
+    return global.LibraryMatchingPolicy.presentationTitle(String(title ?? '').replace(/\b(?:[A-Za-z]\.){2,}[A-Za-z]\.?(?=\s|$)/gu, value => value.replace(/\./gu, '')), 'game');
+  }
+  const titlesMatchFully = (offered, owned, media) => global.LibraryMatchingPolicy.fullTitleMatches(offered, owned, media)
+    || media === 'game' && Boolean(gameAcronymKey(offered)) && gameAcronymKey(offered) === gameAcronymKey(owned);
+
   function makeIndexes(items) {
     if (indexCache.has(items)) return indexCache.get(items);
     const byId = new Map(); const bySteam = new Map(); const byIsbn = new Map(); const byTitle = new Map(); const byBase = new Map();
@@ -632,6 +640,10 @@
       for (const token of candidateTitleKeys(item.title, mediaType(item.mediaType ?? item.type))) {
         const possible = mediaType(item.mediaType ?? item.type) + ':' + token;
         byPossibleTitle.set(possible, [...(byPossibleTitle.get(possible) ?? []), item]);
+      }
+      if (item.title && mediaType(item.mediaType ?? item.type) === 'game') {
+        const acronym = 'game:acronym:' + gameAcronymKey(item.title);
+        byPresentation.set(acronym, [...(byPresentation.get(acronym) ?? []), item]);
       }
       const base = `${mediaType(item.mediaType ?? item.type)}:${editionBase(item.title)}`;
       if (item.title) byBase.set(base, [...(byBase.get(base) ?? []), item]);
@@ -724,13 +736,14 @@
     }
     const hasComponents = uniqueComponents.length > 0 || item?.componentCoverageUnknown === true;
     const titleMatches = [...new Set([...(indexes.byTitle.get(`${media}:${titleKey(item?.title)}`) ?? []),
-      ...(indexes.byPresentation.get(media + ':' + presentationTitle(item?.title, media)) ?? [])])];
+      ...(indexes.byPresentation.get(media + ':' + presentationTitle(item?.title, media)) ?? []),
+      ...(media === 'game' ? indexes.byPresentation.get('game:acronym:' + gameAcronymKey(item?.title)) ?? [] : [])])];
     const compatibleTitles = titleMatches.filter(owned => !identityConflicts(item, owned).length);
     const policy=global.LibraryMatchingPolicy;
-    const full=compatibleTitles.filter(owned=>policy.fullTitleMatches(item.title,owned.title,media)&&!differentGamePackage(item,owned)&&!identityConflicts(item,owned,true).length);
+    const full=compatibleTitles.filter(owned=>titlesMatchFully(item.title,owned.title,media)&&!differentGamePackage(item,owned)&&!identityConflicts(item,owned,true).length);
     const ambiguous=policy.ambiguousWorks(full,bibliographicFields);
     const exact = compatibleTitles.find((owned) => !differentGamePackage(item, owned) && !identityConflicts(item, owned, true).length
-      && policy.fullTitleMatches(item.title,owned.title,media) && !ambiguous);
+      && titlesMatchFully(item.title,owned.title,media) && !ambiguous);
     if (exact && !hasComponents) return { state: 'owned', provenance: 'fanatical', item: exact, reason: 'exact normalized title' };
     const steam = steamMatches.find((owned) => !differentGamePackage(item, owned));
     const steamProvesProduct = steam && !hasComponents && !componentProof && !identityConflicts(item, steam, true).length && (media !== 'game' || !gamePackageIdentity(item?.title));
