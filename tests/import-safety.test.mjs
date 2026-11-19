@@ -1112,3 +1112,60 @@ test('a Full-scan batch that verifies nothing ends the pass instead of reading t
  assert.equal(details,400,'the stalled second batch ends the pass; the third is never read');
  assert.equal(run.stored.fanaticalFullScanPass.done.length,200,'the pass stays open for the next Full scan');
 });
+
+test('a failure before the first batch or just before reconciliation never removes saved ownership',async()=>{
+ const history=longHistory(450);
+ const rejected=harness({respond:()=>({status:401,data:null})});
+ assert.equal((await rejected.send(true)).ok,false);
+ assert.deepEqual(rejected.stored.fanaticalLibraryItems,rejected.before.fanaticalLibraryItems);
+ assert.deepEqual(passKeys(rejected.stored),[]);
+ let rejectFinal=true;
+ const run=harness({respond:history.respond,onSet:changes=>{
+   if(rejectFinal&&changes.fanaticalImportSummary?.scanMode==='full'&&changes.fanaticalHistoricalItems?.length)throw Error('Synthetic rejection of final write');
+ }});
+ assert.equal((await run.send(true)).ok,false);
+ assert.equal(run.stored.fanaticalLibraryItems.length,451);
+ assert(run.stored.fanaticalLibraryItems.some(item=>item.sourceItemId==='product-654321'));
+ assert.deepEqual(run.stored.fanaticalImportSummary,run.before.fanaticalImportSummary);
+ assert.equal(run.stored.fanaticalFullScanPass.done.length,450,'already verified details remain recoverable');
+ const backup=await run.store('backup',[],`chrome-extension://${'a'.repeat(32)}/src/options.html`);
+ assert(backup.ok,backup.error);
+ const restored=harness({respond:history.respond});
+ assert((await restored.store('restore',[backup.result],`chrome-extension://${'a'.repeat(32)}/src/options.html`)).ok);
+ assert.deepEqual(restored.stored.fanaticalLibraryItems,run.stored.fanaticalLibraryItems);
+ assert.deepEqual(passKeys(restored.stored),[]);
+ rejectFinal=false;await settle();run.paths.length=0;
+ assert((await run.send(true)).ok);
+ assert.equal(detailPaths(run).length,0);
+ assert.deepEqual(libraryView(run.stored),await singleRunLibrary(history));
+});
+
+test('a restore queued behind a verified batch cannot attach that batch to a replacement library',async()=>{
+ const history=longHistory(450),replacementId='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+ const optionsUrl=`chrome-extension://${'a'.repeat(32)}/src/options.html`;
+ let restoration,backup;
+ const run=harness({respond:history.respond,onSet:changes=>{
+   if(!restoration&&changes.fanaticalLibraryItems?.length===201)restoration=run.store('restore',[{...backup,accountId:replacementId}],optionsUrl);
+ }});
+ const result=await run.store('backup',[],optionsUrl);assert(result.ok,result.error);backup=result.result;
+ const scan=await run.send(true);assert.equal(scan.ok,false);
+ assert((await restoration).ok);
+ assert.equal(run.stored.fanaticalAccountId,replacementId);
+ assert.deepEqual(run.stored.fanaticalLibraryItems,backup.items,'the replacement contains exactly its own backup records');
+ assert.deepEqual(passKeys(run.stored),[]);
+ assert.equal(detailPaths(run).length,200,'no second batch in the replacement account');
+});
+
+test('switching accounts between Full-scan batches stops the pass and keeps earlier batches in their original account',async()=>{
+ const history=longHistory(450),otherId='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+ let switched;
+ const run=harness({respond:history.respond,initial:{fanaticalProfileArchives:[{accountId:otherId,profileLabel:'other',items:[],historicalItems:[]}]},onSet:changes=>{
+   if(!switched&&changes.fanaticalFullScanPass?.parts===1)switched=run.store('selectProfile',[{profileLabel:'other',expectedActiveLabel:'fixture',confirmed:true}]);
+ }});
+ assert.equal((await run.send(true)).ok,false);
+ assert((await switched).ok);
+ assert.equal(run.stored.fanaticalAccountId,otherId);
+ assert.deepEqual(run.stored.fanaticalLibraryItems,[]);
+ assert.equal(run.stored.fanaticalProfileArchives.find(account=>account.profileLabel==='fixture').items.length,201);
+ assert.equal(detailPaths(run).length,200);
+});

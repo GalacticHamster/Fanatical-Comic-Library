@@ -114,8 +114,8 @@ async function importPurchases({ fullScan = false, profileLabel='', confirmed=fa
     if(!/^[a-f0-9]{32}$/u.test(progressId))return;
     try{void chrome.tabs.sendMessage(tab.id,{type:'FANATICAL_IMPORT_STATUS',progressId,phase}).catch(()=>{});}catch{/* Optional, same-extension UI only. */}
   };
-  const account=useSavedAccount?(await syncStore.execute('syncAccounts'))[0]:null;
-  const scan=await syncStore.execute('begin',[{fullScan,profileLabel:useSavedAccount?account?.label??'':profileLabel,confirmed,switchProfile,...(account?{reuseAccount:true,accountId:account.stableId}:{})},tab.id]);
+  const account=batch?.pass ? {label:batch.pass.label,stableId:batch.pass.accountId} : useSavedAccount?(await syncStore.execute('syncAccounts'))[0]:null;
+  const scan=await syncStore.execute('begin',[{fullScan,profileLabel:useSavedAccount?account?.label??'':profileLabel,confirmed,switchProfile,...(account?{reuseAccount:true,accountId:account.stableId}:{}),...(batch?.pass?{fullScanPass:batch.pass}:{})},tab.id]);
   fullScan=fullScan||scan.forceFull;const stored=scan.state;
   let stage='injection',pageDiagnostic={};
   try {
@@ -147,13 +147,15 @@ async function importPurchases({ fullScan = false, profileLabel='', confirmed=fa
     pageDiagnostic={compatibility:authority.compatibility,listingEvidence:projected.coverage.listingEvidence,accountAffinity:projected.coverage.accountAffinity,stage:primary.stage,pagesAttempted:projected.coverage.pagesFetched,pagesParsed:projected.coverage.pagesParsed,ordersRecognized:projected.coverage.listedOrders,detailsParsed:projected.ordersScanned,retries:projected.coverage.retries,terminalReached:projected.coverage.discoveryComplete,discoveryComplete:projected.coverage.discoveryComplete,paginationEvidence:projected.coverage.paginationEvidence,authentication:'accepted-response'};
     stage='storage';
     progressPhase('saving');
-    const partial=await syncStore.execute('commitPartial',[scan.token,projected,tab.id]);
-    return {...partial,...(batch?{batchRound:{...projected,compatibility:authority.compatibility}}:{}),failureExplanation:SCAN_FAILURES[primary.code],scanDiagnostic:scanReport({code:primary.code,diagnostic:pageDiagnostic,requestedFull,actualFull:fullScan,localAccountConfirmed:true,storageAdmission:'committed',outcome:partial.outcome,verifiedPurchasesSaved:partial.verifiedPurchasesSaved,verifiedProductRecordsSaved:projected.items.length,unresolvedOrders:partial.unresolvedOrders,failures:projected.failures,acquisitionComplete:partial.acquisitionComplete})};
+    const stageBatch=Boolean(batch&&(batch.pass||projected.deferredOrderFingerprints?.length));
+    const partial=await syncStore.execute('commitPartial',[scan.token,projected,tab.id,stageBatch]);
+    return {...partial,...(batch?{batchRound:{...projected,compatibility:authority.compatibility},batchToken:scan.token,batchTabId:tab.id}:{}),failureExplanation:SCAN_FAILURES[primary.code],scanDiagnostic:scanReport({code:primary.code,diagnostic:pageDiagnostic,requestedFull,actualFull:fullScan,localAccountConfirmed:true,storageAdmission:'committed',outcome:partial.outcome,verifiedPurchasesSaved:partial.verifiedPurchasesSaved,verifiedProductRecordsSaved:projected.items.length,unresolvedOrders:partial.unresolvedOrders,failures:projected.failures,acquisitionComplete:partial.acquisitionComplete})};
   }
   if(batch&&!fullScan){
-    // The final batch of a Full scan: its orders are carried to the pass's complete commit.
-    await syncStore.execute('release',[scan.token,tab.id]);
-    return {batchRound:{...projected,compatibility:authority.compatibility},batchComplete:true};
+    // Publish the last verified purchases before attempting reconciliation.
+    stage='storage';
+    const {addedProducts}=await syncStore.execute('commitFullScanBatch',[scan.token,projected,tab.id,true]);
+    return {batchRound:{...projected,compatibility:authority.compatibility},batchComplete:true,batchToken:scan.token,batchTabId:tab.id,addedProducts};
   }
   return await commitCompleteScan({scan,tab,stored,fullScan,scanHistoryMissing,projected,compatibility:authority.compatibility,requestedFull,progressPhase});
   }catch(error){
@@ -169,7 +171,7 @@ async function importPurchases({ fullScan = false, profileLabel='', confirmed=fa
 const FULL_SCAN_BATCH=200,FULL_SCAN_PASS_DAYS=7,FULL_SCAN_MAX_BATCHES=1000;
 const passFingerprints=value=>Array.isArray(value)&&value.length<=100000&&value.every(fp=>typeof fp==='string'&&/^[a-f0-9]{64}$/u.test(fp));
 async function importFullScan(options={}){
-  const area=chrome.storage.local,{pass:FULL_SCAN_PASS_KEY,part:fullScanPart}=fullScanStorage();
+  const area=chrome.storage.local,{pass:FULL_SCAN_PASS_KEY}=fullScanStorage();
   const saved=await area.get({fanaticalAccountId:null,fanaticalProfileLabel:'',[FULL_SCAN_PASS_KEY]:null});
   let pass=saved[FULL_SCAN_PASS_KEY];
   const sameAccount=!options.switchProfile&&(options.useSavedAccount||String(options.profileLabel??'').trim()===saved.fanaticalProfileLabel);
@@ -178,8 +180,8 @@ async function importFullScan(options={}){
   const later={...options,fullScan:false,useSavedAccount:true,confirmed:true,switchProfile:false};
   // Orders that failed are retried once per run, not once per batch.
   const done=new Set(pass?.done??[]),failed=new Set();
-  let round=pass?await importPurchases(later,{limit:FULL_SCAN_BATCH,known:[...done],retryLater:[]}):await importPurchases(options,{limit:FULL_SCAN_BATCH,known:[],retryLater:[]});
-  if(!pass&&!round.batchRound?.deferredOrderFingerprints?.length){const {batchRound,batchComplete,...result}=round;return result;}
+  let round=pass?await importPurchases(later,{limit:FULL_SCAN_BATCH,known:[...done],retryLater:[],pass}):await importPurchases(options,{limit:FULL_SCAN_BATCH,known:[],retryLater:[]});
+  if(!pass&&!round.batchRound?.deferredOrderFingerprints?.length){const {batchRound,batchComplete,batchToken,batchTabId,...result}=round;return result;}
   pass??={version:1,parts:0,startedAt:new Date().toISOString()};
   // The first real problem explains a partial pass better than the last batch's postponed orders.
   let problem=null,added=0;
@@ -190,22 +192,25 @@ async function importFullScan(options={}){
     if(!problem&&round.failureExplanation&&round.scanDiagnostic?.code!=='batch-deferred')problem=round;
     for(const fp of p.verifiedOrderFingerprints)done.add(fp);
     for(const fp of p.unresolvedOrderFingerprints)if(!deferred.has(fp))failed.add(fp);
-    const account=await area.get({fanaticalAccountId:null,fanaticalProfileLabel:''});
-    await area.set({[fullScanPart(pass.parts)]:{items:p.items,rejectedPurchaseItems:p.rejectedPurchaseItems??[]}});
-    pass={...pass,accountId:account.fanaticalAccountId,label:account.fanaticalProfileLabel,parts:pass.parts+1,done:[...done].sort(),updatedAt:new Date().toISOString()};
-    await area.set({[FULL_SCAN_PASS_KEY]:pass});
-    if(round.batchComplete)return finishFullScan({options,pass,final:p});
+    try {
+      pass=await syncStore.execute('stageFullScanBatch',[round.batchToken,round.batchTabId,pass,[...done].sort(),p]);
+    } catch (error) {
+      error.scanToken=round.batchToken;
+      error.scanTabId=round.batchTabId;
+      throw error;
+    }
+    if(round.batchComplete)return {...await finishFullScan({options,pass,final:p}),addedProducts:added};
     // A batch that verified nothing and only failed (for example after sign-out or while Fanatical
     // is refusing requests) ends the pass instead of spending requests on the remaining batches.
     const stalled=!p.verifiedOrderFingerprints.length&&p.unresolvedOrderFingerprints.some(fp=>!deferred.has(fp));
     if(!deferred.size||stalled||batches>=FULL_SCAN_MAX_BATCHES){
       // Some orders could not be read. Verified orders are saved; the pass stays open so the next
       // Full scan retries the rest without reading verified orders again.
-      const {batchRound,batchComplete,...result}=round;
+      const {batchRound,batchComplete,batchToken,batchTabId,...result}=round;
       const explained=problem??round;
       return {...result,addedProducts:added,verifiedPurchasesSaved:done.size,unresolvedOrders:failed.size+deferred.size,failureExplanation:explained.failureExplanation,fullScanPass:{verifiedOrders:done.size,remainingOrders:failed.size+deferred.size,batches:pass.parts},scanDiagnostic:{...explained.scanDiagnostic,verifiedPurchasesSaved:Math.min(done.size,100000),unresolvedOrders:Math.min(failed.size+deferred.size,100000)}};
     }
-    round=await importPurchases(later,{limit:FULL_SCAN_BATCH,known:[...done],retryLater:[...failed]});
+    round=await importPurchases(later,{limit:FULL_SCAN_BATCH,known:[...done],retryLater:[...failed],pass});
   }
   }catch(error){if(done.size)error.fullScanProgressSaved=done.size;throw error;}
 }
@@ -214,7 +219,7 @@ async function finishFullScan({options,pass,final}){
   const parts=await area.get(Object.fromEntries(Array.from({length:pass.parts},(_,n)=>[fullScanPart(n),null])));
   const items=[],rejected=[];
   for(let n=0;n<pass.parts;n++){const part=parts[fullScanPart(n)];if(!part||!Array.isArray(part.items))throw Object.assign(Error('Saved progress for this Full scan is incomplete. Run Rescan all purchases again.'),{scanDiagnostic:scanReport({code:'result-invalid',diagnostic:{stage:'validation'},requestedFull:true,actualFull:true,localAccountConfirmed:true})});items.push(...part.items);rejected.push(...(part.rejectedPurchaseItems??[]));}
-  const scan=await syncStore.execute('begin',[{fullScan:true,profileLabel:pass.label,confirmed:true,reuseAccount:true,accountId:pass.accountId},tab.id]);
+  const scan=await syncStore.execute('begin',[{fullScan:true,profileLabel:pass.label,confirmed:true,reuseAccount:true,accountId:pass.accountId,fullScanPass:pass},tab.id]);
   const stored=scan.state;
   const projected={...final,items,ordersScanned:pass.done.length,...(rejected.length?{rejectedPurchaseItems:rejected}:{})};
   const result=await commitCompleteScan({scan,tab,stored,fullScan:true,scanHistoryMissing:false,projected,compatibility:final.compatibility,requestedFull:true});

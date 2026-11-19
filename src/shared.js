@@ -1016,10 +1016,7 @@
       const { count } = purchaseCount(match.purchaseItems ?? []);
       return count > 1 ? `${label} \u00d7${count}` : label;
     }
-    if (match?.state === 'owned-elsewhere') {
-      const provider = String(match.provenance ?? 'another library');
-      return `Owned elsewhere — ${provider === 'gog' ? 'GOG' : provider.replace(/^./u, (letter) => letter.toUpperCase())}`;
-    }
+    if (match?.state === 'owned-elsewhere') return 'Owned elsewhere';
     if (match?.state === 'partial') return `Partial (${match.owned}/${match.total})`;
     return match?.state === 'possible' ? (match.ownershipReview ? 'Check ownership' : 'Possible') : 'New';
   }
@@ -1046,7 +1043,7 @@
     }
     card.classList?.add(`fanatical-library-card-${state}`, `fanatical-library-${state}-item`);
     badgeHost.classList?.add('fanatical-library-badge-host');
-    if (card.dataset) card.dataset.fanaticalLibraryBadge = state === 'owned-elsewhere' ? 'Owned elsewhere' : state === 'partial' ? `${match.owned}/${match.total} Owned` : overlayLabel(match);
+    if (card.dataset) card.dataset.fanaticalLibraryBadge = state === 'partial' ? `${match.owned}/${match.total} Owned` : overlayLabel(match);
     card.title = global.FanaticalLibrary.presentation.tooltip(match?.offered || {}, match || {state:'new'});
     badge.className = `fanatical-library-${state}-badge`;
     badge.textContent = overlayLabel(match);

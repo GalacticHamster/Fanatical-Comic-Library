@@ -232,6 +232,7 @@ function validatePartialScan(value,{fullScan,knownOrderFingerprints}){
 
 /** A Full scan read in batches keeps its progress here until its final complete commit. */
 const FULL_SCAN_PASS_KEY='fanaticalFullScanPass',FULL_SCAN_PART_PREFIX='fanaticalFullScanPart:';
+const sameFullScanPass=(saved,expected)=>saved&&saved.accountId===expected.accountId&&saved.label===expected.label&&saved.startedAt===expected.startedAt&&saved.parts===expected.parts&&saved.updatedAt===expected.updatedAt;
 export function fullScanStorage(){return {pass:FULL_SCAN_PASS_KEY,part:n=>FULL_SCAN_PART_PREFIX+n};}
 export async function removeFullScanPass(area){
   const pass=(await area.get({[FULL_SCAN_PASS_KEY]:null}))[FULL_SCAN_PASS_KEY],parts=Number.isSafeInteger(pass?.parts)&&pass.parts>0?Math.min(pass.parts,1000):0;
@@ -360,6 +361,10 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
     }
     if(operation==='begin'){
       const [options,tabId]=args;const state=await area.get(defaults);let label=String(options.profileLabel??'').trim();
+      if(options.fullScanPass){
+        const saved=(await area.get({[FULL_SCAN_PASS_KEY]:null}))[FULL_SCAN_PASS_KEY];
+        if(!sameFullScanPass(saved,options.fullScanPass))throw Error('Full scan progress changed. Start the scan again.');
+      }
       const reuse=options.reuseAccount===true&&options.accountId===state.fanaticalAccountId&&!options.switchProfile;
       if(options.reuseAccount&&!reuse)throw Error('The selected saved account changed. Start the update again.');
       if(reuse){if(label&&label!==state.fanaticalProfileLabel)throw Error('Use Change account to select another account; use Rename in Saved accounts to change its name.');label=state.fanaticalProfileLabel||'Default account';}
@@ -374,21 +379,28 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
       await area.set({[key]:{token,tabId,label,changing,fullScan:options.fullScan||forceFull}});
       return {token,forceFull,state:changing?{...defaults}:state};
     }
-    if(operation==='release'){
-      // Ends a Full-scan batch whose verified orders are carried to the pass's final commit.
-      const [token,tabId]=args,control=(await area.get({[key]:null}))[key];
+    if(operation==='stageFullScanBatch'){
+      // A restore or profile change invalidates the same token used to save the batch.
+      const [token,tabId,pass,done,receipt]=args;
+      const saved=await area.get({[key]:null,[FULL_SCAN_PASS_KEY]:null,fanaticalAccountId:null,fanaticalProfileLabel:''});
+      const control=saved[key];
       if(!control||control.token!==token||control.tabId!==tabId)throw new Error('Scan superseded by another scan, restore, or clear. Start a fresh scan.');
-      await area.set({[key]:null});return true;
+      if(pass.parts ? !sameFullScanPass(saved[FULL_SCAN_PASS_KEY],pass) : saved[FULL_SCAN_PASS_KEY]!==null)throw Error('Full scan progress changed. Start the scan again.');
+      const next={...pass,accountId:saved.fanaticalAccountId,label:saved.fanaticalProfileLabel,parts:pass.parts+1,done,updatedAt:new Date().toISOString()};
+      await area.set({[FULL_SCAN_PART_PREFIX+pass.parts]:{items:receipt.items,rejectedPurchaseItems:receipt.rejectedPurchaseItems??[]},[FULL_SCAN_PASS_KEY]:next,[key]:null});
+      return next;
     }
-    if(operation==='commit'||operation==='commitPartial'||operation==='failure'){
-      const [token,rawUpdates,tabId]=args;let updates=rawUpdates;const control=(await area.get({[key]:null}))[key];
+    if(operation==='commit'||operation==='commitPartial'||operation==='commitFullScanBatch'||operation==='failure'){
+      const [token,rawUpdates,tabId,stageBatch]=args;let updates=rawUpdates;const control=(await area.get({[key]:null}))[key];
       if(!control||control.token!==token||control.tabId!==tabId){if(operation==='failure')return false;throw new Error('Scan superseded by another scan, restore, or clear. Start a fresh scan.');}
       if(operation==='failure'){await area.set({fanaticalLastScanAttempt:{status:'incomplete',scanMode:control.fullScan?'full':'quick',attemptedAt:new Date().toISOString()},[key]:null});return true;}
       const state=await area.get(defaults);const archives=[...state.fanaticalProfileArchives];
-      const partial=operation==='commitPartial';let partialSummary;
+      const finalBatch=operation==='commitFullScanBatch',partial=operation==='commitPartial'||finalBatch;let partialSummary;
       if(partial){
-        const base=control.changing?defaults:state,receipt=validateScanResult(updates,{fullScan:control.fullScan,knownOrderFingerprints:base.fanaticalScannedOrderFingerprints});
-        if(!receipt.partialScanVersion||receipt.outcome==='complete')throw Error('A partial commit requires independently verified partial evidence.');
+        const base=control.changing?defaults:state;
+        // A final batch is already validated against the pass fingerprints in the worker.
+        const receipt=finalBatch?updates:validateScanResult(updates,{fullScan:control.fullScan,knownOrderFingerprints:base.fanaticalScannedOrderFingerprints});
+        if(!receipt.partialScanVersion||(receipt.outcome==='complete')!==finalBatch)throw Error('Unexpected acquisition outcome for a batch commit.');
         const priorItems=parseLibraryBackup({schemaVersion:1,items:base.fanaticalLibraryItems}),priorById=new Map(priorItems.map(item=>[item.sourceItemId,item]));
         const additions=receipt.items.map(item=>{
           const previous=priorById.get(item.sourceItemId);if(!previous)return item;
@@ -402,10 +414,10 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
         for(const fp of receipt.verifiedOrderFingerprints)fingerprints.add(fp);
         if(fingerprints.size>100000)throw Error('Saved scan history reached its safety limit.');
         const attempt={status:'partial',acquisitionComplete:receipt.acquisitionComplete,partialCheckpointVersion:1,outcome:receipt.outcome,scanMode:control.fullScan?'full':'quick',attemptedAt:new Date().toISOString(),discoveryComplete:receipt.coverage.discoveryComplete,completeCheckpointAdvanced:false,verifiedPurchasesSaved:receipt.verifiedOrderFingerprints.length,unresolvedOrders:receipt.unresolvedOrderFingerprints.length,unidentifiedRecords:receipt.unidentifiedRecords,failures:receipt.failures,pagesProcessed:receipt.coverage.pagesFetched};
-        if(!partialAttemptIsValid(attempt))throw Error('Invalid partial scan checkpoint.');
+        if(!finalBatch&&!partialAttemptIsValid(attempt))throw Error('Invalid partial scan checkpoint.');
         const existingIds=new Set(base.fanaticalLibraryItems.map(item=>item.sourceItemId));
         partialSummary={...attempt,ordersScanned:receipt.ordersScanned,ordersAvailable:receipt.ordersAvailable,ordersSkipped:receipt.orderFingerprints.length-receipt.ordersScanned,addedProducts:receipt.items.filter(i=>!existingIds.has(i.sourceItemId)).length,ownedLeafProducts:merged.length,coverage:receipt.coverage};
-        updates={fanaticalLibraryItems:merged,fanaticalScannedOrderFingerprints:[...fingerprints].sort(),fanaticalImportSummary:base.fanaticalImportSummary,fanaticalLastScanAttempt:attempt};
+        updates={fanaticalLibraryItems:merged,fanaticalScannedOrderFingerprints:[...fingerprints].sort(),fanaticalImportSummary:base.fanaticalImportSummary,fanaticalLastScanAttempt:finalBatch?base.fanaticalLastScanAttempt:attempt};
       }
       if(!partial&&control.fullScan&&updates.fanaticalImportSummary?.scanMode!=='full')throw new Error('This profile requires a full scan.');
       const parsedIncoming=parseLibraryBackup({schemaVersion:1,items:updates.fanaticalLibraryItems});
@@ -444,7 +456,7 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
         if(!observed.has(item.sourceItemId)&&!history.has(item.sourceItemId))history.set(item.sourceItemId,{profileLabel:control.label,missingSince:now,item});
       }
       if(!partial)for(const id of observed)history.delete(id);
-      await area.set({...updates,fanaticalAccountId:control.changing?crypto.randomUUID():state.fanaticalAccountId,fanaticalLibraryItems:incoming,fanaticalHistoricalItems:[...history.values()],fanaticalProfileLabel:control.label,fanaticalProfileArchives:archives,rejectedPurchaseItems:nextRejected,[key]:null});return partial?partialSummary:true;
+      await area.set({...updates,fanaticalAccountId:control.changing?crypto.randomUUID():state.fanaticalAccountId,fanaticalLibraryItems:incoming,fanaticalHistoricalItems:[...history.values()],fanaticalProfileLabel:control.label,fanaticalProfileArchives:archives,rejectedPurchaseItems:nextRejected,[key]:partial&&stageBatch?control:null});return partial?partialSummary:true;
     }
     if(operation==='backup'){
       const state=await area.get({...defaults,fanaticalImportSummary:null,fanaticalWishlistItems:[]});return createLibraryBackup(state.fanaticalLibraryItems,state.fanaticalImportSummary,undefined,state.fanaticalProfileLabel,state.fanaticalProfileArchives,state.fanaticalWishlistItems,state.fanaticalHistoricalItems,state.mediaTypeOverrides,state.rejectedPurchaseItems,state.fanaticalAccountId);

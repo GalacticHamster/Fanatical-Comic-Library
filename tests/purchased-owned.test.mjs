@@ -42,6 +42,14 @@ test('Independent platform evidence is found after marketplace records in the sa
 test('No local purchase retains Owned elsewhere with exact platform ownership, and New without evidence',async()=>{
  const {label}=await badge([],{matches:[exact()]});assert.equal(label,'Owned elsewhere');assert.equal((await badge([])).label,'New');
 });
+test('Owned elsewhere stays compact and explains both confirmed providers',async()=>{
+ const {f,match,label}=await badge([],{matches:[exact(),exact('gog',{itemRef:'gog-item'})]});
+ assert.equal(label,'Owned elsewhere');
+ const tooltip=P(f).tooltip(offered,match);
+ assert.match(tooltip,/Steam/);
+ assert.match(tooltip,/GOG/);
+ assert.deepEqual(Array.from(P(f).row(offered,match).providers).sort(),['GOG','Steam']);
+});
 test('Directly delivered books retain Owned and do not need a game ownership query',async()=>{
  const record={...purchase,kind:'book',mediaType:'book',title:'Distinctive Comic Volume 1',entitlement:'direct-download'};
  const {label}=await badge([record],null,{title:record.title,sourceItemId:'offer-book'},'book');assert.equal(label,'Owned');

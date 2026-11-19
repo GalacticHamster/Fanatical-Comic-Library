@@ -22,8 +22,11 @@ For source installation or temporary Firefox testing, see [Development and testi
 
 Open the extension popup and choose **Manage library**. In Extension options,
 select **Open Fanatical orders importer**, then use **Import new purchases** on
-that signed-in Orders page. Use **Rescan all purchases** to deliberately rebuild
-the local library from every completed order.
+that signed-in Orders page. **Rescan all purchases** saves verified purchases as
+it goes. If the scan is interrupted, run it again for the same saved account to
+continue. Earlier purchases stay available until a complete scan verifies the
+order history. Backups include purchases already saved during a scan. Restoring
+a backup starts with fresh scan progress.
 
 Importer messages distinguish **No new purchases**, new purchases, unchanged
 purchases skipped, and full rescans. Live progress shows purchase-list pages,

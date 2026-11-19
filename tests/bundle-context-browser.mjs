@@ -36,7 +36,7 @@ try{
  let ready=false;for(let n=0;n<100;n++){if(await evaluate(`document.querySelectorAll('${badgeSelector}').length===3 && [...document.querySelectorAll('${badgeSelector}')].some(b=>b.textContent==='Check ownership')`)){ready=true;break;}await pause(100);}
  assert(ready,'Production matching failed: '+JSON.stringify(await evaluate('({errors:fixtureErrors,requests:fixtureRequests,text:document.body.innerText})')));
  const summarySelector=hb?'#hcl-summary':'[data-fanatical-library-summary]';
- const badges=await evaluate(`Array.from(document.querySelectorAll('${badgeSelector}'),b=>b.textContent).sort()`);assert.deepEqual(badges,['Check ownership','New',hb?'Owned elsewhere':'Owned elsewhere \u2014 Kindle'].sort());
+ const badges=await evaluate(`Array.from(document.querySelectorAll('${badgeSelector}'),b=>b.textContent).sort()`);assert.deepEqual(badges,['Check ownership','New','Owned elsewhere'].sort());
  const summary=await evaluate(`document.querySelector('${summarySelector}').textContent`);
  const summaryBasis=await evaluate(`(()=>{const clone=document.querySelector('${summarySelector}').cloneNode(true);clone.querySelectorAll('.hcl-related-titles,.fanatical-library-related-titles').forEach(n=>n.remove());return clone.textContent;})()`);assert.match(summary,/new|New/);assert.match(summary,/5\.00/);
  await evaluate(`document.querySelector('[data-context-index="1"] ${badgeSelector}').click()`);await pause(100);

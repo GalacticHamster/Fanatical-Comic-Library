@@ -62,7 +62,8 @@ try{
  const badge=hb?'.hcl-status-button':'[data-fanatical-library-for]',selector=i=>'[data-index="'+i+'"] '+badge;
  const label=i=>'document.querySelector('+JSON.stringify(selector(i))+')?.textContent';const check=(condition,message)=>{assert(condition,message);checks++;};
  await wait('Boolean(globalThis.badgeRelease)');check(await evaluate(label(0))==='Purchased','Local-first key purchase badge');await evaluate('badgeRelease()');
- await wait(label(1)+'.startsWith("Owned elsewhere")');check(await evaluate(label(0))==='Purchased','Marketplace copies do not establish ownership');check(await evaluate(label(2))==='New','No purchase and no ownership remains New');
+ await wait(label(1)+'==="Owned elsewhere"');check(await evaluate(label(0))==='Purchased','Marketplace copies do not establish ownership');check(await evaluate(label(2))==='New','No purchase and no ownership remains New');
+ check(await evaluate('document.querySelector(\'[data-index="1"]\').title.includes("Steam")'),'The compact badge keeps the provider in the card tooltip');
  check(await evaluate(label(3))==='New','Cat Quest III rejects local and central Cat Quest II evidence');
  check(await evaluate(label(4))==='New','Portal 2 does not match the original Portal');
  const advanced=hb?'.hcl-advanced':'.fanatical-library-advanced';await evaluate('(()=>{document.querySelector('+JSON.stringify(advanced)+').open=true;return true;})()');

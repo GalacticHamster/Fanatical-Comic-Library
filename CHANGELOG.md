@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- A Full scan in progress cannot carry saved batches across an account switch or library restore. Verified purchases already saved remain in the account that imported them.
+- Bundle badges use **Owned elsewhere**, with store names available in the match explanation.
+
 - The Library can be filtered to titles with No known purchase date, as in Humble Library. The toolbar popup formats large counts and, when nothing is saved yet, says to open the Fanatical Orders page.
 - The bundle panel steps aside while a Fanatical dialog or the cart is open and returns unchanged afterwards, as in Humble Library. Moving, minimizing or expanding it, and purchase-sync or appearance updates, no longer recheck ownership or recreate badges; changes to saved purchases and display settings still refresh results.
 - Export title catalog (CSV) gives spreadsheet-ready titles with purchase status, first and last purchase dates, a numeric purchase count with its confidence, source, bundle names and every purchase date, in the same columns as Humble Library's CSV. Both catalogs now list the same merged titles as the Library page; the JSON format is unchanged.
