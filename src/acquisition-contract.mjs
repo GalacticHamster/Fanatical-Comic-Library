@@ -33,11 +33,11 @@ export function fanaticalCompatibilityReport(value){
   }
   if(value.productMismatches!==undefined){
     const pm=value.productMismatches,cats=['parent-missing','unexpected-detail-item','id-missing','direct-missing','product-missing','product-count'],bounded=n=>Number.isSafeInteger(n)&&n>=0&&n<=100000;
-    const ctxInts=['summaryParents','detailParents','promotionalDetailParents','unexpectedDetailParents','detailDirectParents','detailBundleParents','nonStringPickAndMix'],ctxKeys=[...ctxInts,'normalizedNameMatched'];
-    const validCtx=c=>c&&typeof c==='object'&&!Array.isArray(c)&&Object.keys(c).length===ctxKeys.length&&Object.keys(c).every(k=>ctxKeys.includes(k))&&ctxInts.every(k=>bounded(c[k]))&&typeof c.normalizedNameMatched==='boolean';
+    const ctxInts=['summaryParents','detailParents','promotionalDetailParents','unexpectedDetailParents','detailDirectParents','detailBundleParents','nonStringPickAndMix'],ctxBools=['missingParentHasId','promotionalIdMatched'],ctxKeys=[...ctxInts,'normalizedNameMatched',...ctxBools];
+    const validCtx=c=>c&&typeof c==='object'&&!Array.isArray(c)&&Object.keys(c).every(k=>ctxKeys.includes(k))&&ctxInts.every(k=>bounded(c[k]))&&typeof c.normalizedNameMatched==='boolean'&&ctxBools.every(k=>!Object.hasOwn(c,k)||typeof c[k]==='boolean');
     const validRecord=r=>r&&typeof r==='object'&&!Array.isArray(r)&&Object.keys(r).every(k=>['category','expectedCount','observedCount','parentContext'].includes(k))&&cats.includes(r.category)&&bounded(r.expectedCount)&&bounded(r.observedCount)&&(!Object.hasOwn(r,'parentContext')||validCtx(r.parentContext));
     if(!pm||pm.version!==1||Object.keys(pm).length!==3||Object.keys(pm).some(k=>!['version','records','truncated'].includes(k))||typeof pm.truncated!=='boolean'||!Array.isArray(pm.records)||pm.records.length>8||pm.records.some(r=>!validRecord(r)))return null;
-    result.productMismatches={version:1,records:pm.records.map(r=>({category:r.category,expectedCount:r.expectedCount,observedCount:r.observedCount,...(Object.hasOwn(r,'parentContext')?{parentContext:{...Object.fromEntries(ctxInts.map(k=>[k,r.parentContext[k]])),normalizedNameMatched:r.parentContext.normalizedNameMatched}}:{})})),truncated:pm.truncated};
+    result.productMismatches={version:1,records:pm.records.map(r=>({category:r.category,expectedCount:r.expectedCount,observedCount:r.observedCount,...(Object.hasOwn(r,'parentContext')?{parentContext:{...Object.fromEntries(ctxInts.map(k=>[k,r.parentContext[k]])),normalizedNameMatched:r.parentContext.normalizedNameMatched,...Object.fromEntries(ctxBools.filter(k=>Object.hasOwn(r.parentContext,k)).map(k=>[k,r.parentContext[k]]))}}:{})})),truncated:pm.truncated};
   }
   return result;
 }

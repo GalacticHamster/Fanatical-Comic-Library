@@ -704,8 +704,20 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     if(sparse){
       const actualParents=parentEvidence(order.items);
       let mismatchCategory=null,expCount=0,obsCount=0,missingName='';
+      // A promotional parent renamed between summary and detail (a revealed gift)
+      // stands in only for an otherwise unmatched summary parent carrying the same
+      // validated parent ID, one for one, and never for a purchased-product claim.
+      const renamedPromotional=new Map(),promotedNames=new Map(),promotedIds=new Map(),promotionalParentIds=new Set();
+      for(const parent of order.items)if(isPromotionalLeaf(parent)&&typeof parent._id==='string'&&safeIdInPage(parent._id)){promotionalParentIds.add(parent._id);if(!sparse.names.has(safeTextInPage(parent.name)))renamedPromotional.set(parent._id,(renamedPromotional.get(parent._id)??0)+1);}
+      for(const [key,n] of sparse.ids){
+        const [name,id]=JSON.parse(key),count=sparse.names.get(name)??0;
+        if(typeof id!=='string'||sparse.direct.has(JSON.stringify([id,name]))||(actualParents.pickAndMix.get(name)??0)>=count)continue;
+        const nameShort=count-(actualParents.names.get(name)??0)-(actualParents.promotional.get(name)??0)-(promotedNames.get(name)??0);
+        const idShort=n-(actualParents.ids.get(key)??0)-(actualParents.promotionalIds.get(key)??0),take=Math.min(nameShort,idShort,renamedPromotional.get(id)??0);
+        if(take>0){renamedPromotional.set(id,renamedPromotional.get(id)-take);promotedNames.set(name,(promotedNames.get(name)??0)+take);promotedIds.set(key,take);}
+      }
       for(const [name,count] of sparse.names){
-        const directCount=actualParents.names.get(name)??0,pamCount=actualParents.pickAndMix.get(name)??0,promoCount=actualParents.promotional.get(name)??0;
+        const directCount=actualParents.names.get(name)??0,pamCount=actualParents.pickAndMix.get(name)??0,promoCount=(actualParents.promotional.get(name)??0)+(promotedNames.get(name)??0);
         if(directCount+promoCount<count&&pamCount<count){mismatchCategory='parent-missing';expCount=count;obsCount=directCount+pamCount+promoCount;missingName=name;break;}
       }
       if(!mismatchCategory){
@@ -716,7 +728,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
         }
       }
       if(!mismatchCategory){
-        for(const [key,n] of sparse.ids){const obs=(actualParents.ids.get(key)??0)+(actualParents.promotionalIds.get(key)??0);if(obs<n){mismatchCategory='id-missing';expCount=n;obsCount=obs;break;}}
+        for(const [key,n] of sparse.ids){const obs=(actualParents.ids.get(key)??0)+(actualParents.promotionalIds.get(key)??0)+(promotedIds.get(key)??0);if(obs<n){mismatchCategory='id-missing';expCount=n;obsCount=obs;break;}}
       }
       if(!mismatchCategory){
         for(const [key,n] of sparse.direct){const obs=(actualParents.direct.get(key)??0)+(actualParents.promotionalDirect.get(key)??0);if(obs<n){mismatchCategory='direct-missing';expCount=n;obsCount=obs;break;}}
@@ -739,6 +751,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
             if(isDirectPurchasedItem(parent))detailDirectParents++;else detailBundleParents++;
           }
           const sumCounts=map=>Math.min(100000,[...map.values()].reduce((a,b)=>a+b,0));
+          const missingIds=[...sparse.ids.keys()].map(key=>JSON.parse(key)).filter(([name,id])=>name===missingName&&typeof id==='string').map(([,id])=>id);
           parentContext={
             summaryParents:sumCounts(sparse.names),
             detailParents:sumCounts(actualParents.names),
@@ -747,7 +760,9 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
             detailDirectParents:Math.min(100000,detailDirectParents),
             detailBundleParents:Math.min(100000,detailBundleParents),
             nonStringPickAndMix:Math.min(100000,nonStringPickAndMix),
-            normalizedNameMatched
+            normalizedNameMatched,
+            missingParentHasId:missingIds.length>0,
+            promotionalIdMatched:missingIds.some(id=>promotionalParentIds.has(id))
           };
         }
         recordMismatch(mismatchCategory,expCount,obsCount,parentContext);

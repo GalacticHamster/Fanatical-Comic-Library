@@ -1001,3 +1001,29 @@ test('orders sender security enforces parsed origin/path, top-frame, extension I
   assert.equal(subframePatch.ok,false);
   assert.match(subframePatch.error,/Untrusted/);
 });
+
+test('a sparse order whose gift is renamed in detail commits only with the matching parent ID, stays retryable otherwise and repeats idempotently',async()=>{
+ const giftId='synthetic-gift-parent',paid=n=>({_id:'synthetic-paid-'+n,name:'Synthetic paid '+n,bundles:[{games:[0,1].map(i=>({_id:`synthetic-paid-${n}-${i}`,name:`Paid ${n} ${i}`,type:'game'}))}]});
+ const gift={_id:giftId,name:'Synthetic revealed game',type:'game',display_type:'game',isFreeProduct:true,mystery:true,reveal_template:'present',status:'fulfilled',bundles:[],drm:{steam:true}};
+ const giftOrder='synthetic-gift-order',detailed={_id:giftOrder,status:'COMPLETE',date:'2026-11-12',items:[paid(1),paid(2),gift]};
+ const summaryFor=withId=>({_id:giftOrder,status:'COMPLETE',date:'2026-11-12',items:[{_id:'synthetic-paid-1',name:'Synthetic paid 1',bundles:[]},{_id:'synthetic-paid-2',name:'Synthetic paid 2',bundles:[]},{...(withId?{_id:giftId}:{}),name:'Synthetic seasonal present',bundles:[]}]});
+ const list=[summary,summaryFor(false)],details={[orderId]:detail,[giftOrder]:detailed},run=harness({list,details,initial:{rejectedPurchaseItems:[]}});
+ const first=await run.send(true);assert(first.ok,first.error);
+ assert.equal(first.summary.unresolvedOrders,1);assert.equal(first.summary.scanDiagnostic.compatibility.productMismatches.records[0].category,'parent-missing');
+ assert.equal(first.summary.scanDiagnostic.compatibility.productMismatches.records[0].parentContext.missingParentHasId,false);
+ assert(run.stored.fanaticalLibraryItems.some(i=>i.sourceItemId==='product-654321'),'existing purchase preserved');
+ assert(run.stored.fanaticalLibraryItems.some(i=>i.sourceItemId==='product-123456'),'verified order committed');
+ assert(!run.stored.fanaticalLibraryItems.some(i=>i.sourceItemId.startsWith('synthetic-paid-')),'unresolved order not committed');
+ assert(!run.stored.fanaticalScannedOrderFingerprints.includes(fingerprint(giftOrder)),'unresolved order remains retryable');
+ list[1]=summaryFor(true);await new Promise(r=>setImmediate(r));
+ const recovered=await run.send(false);assert(recovered.ok,recovered.error);
+ assert.equal(recovered.summary.unresolvedOrders??0,0);assert.equal(recovered.summary.scanDiagnostic.compatibility.summaryRecovery.recovered,1);
+ const ids=run.stored.fanaticalLibraryItems.map(i=>i.sourceItemId);
+ for(const id of ['product-654321','product-123456','synthetic-paid-1-0','synthetic-paid-1-1','synthetic-paid-2-0','synthetic-paid-2-1'])assert(ids.includes(id),id);
+ assert(!ids.includes(giftId)&&!run.stored.fanaticalLibraryItems.some(i=>/revealed|seasonal/i.test(i.title)),'gift never owned');
+ assert.deepEqual(run.stored.rejectedPurchaseItems.map(i=>i.title),['Synthetic revealed game']);
+ assert(run.stored.fanaticalScannedOrderFingerprints.includes(fingerprint(giftOrder)));
+ const saved=structuredClone({items:run.stored.fanaticalLibraryItems,rejected:run.stored.rejectedPurchaseItems,history:run.stored.fanaticalHistoricalItems??[]});await new Promise(r=>setImmediate(r));
+ const repeated=await run.send(false);assert(repeated.ok,repeated.error);
+ assert.deepEqual({items:run.stored.fanaticalLibraryItems,rejected:run.stored.rejectedPurchaseItems,history:run.stored.fanaticalHistoricalItems??[]},saved);
+});
