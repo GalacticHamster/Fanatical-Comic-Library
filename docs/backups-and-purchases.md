@@ -52,6 +52,10 @@ The scan report separately identifies whether acquisition finished and whether c
 
 Existing companion transfer limits still apply. For example, an unusually large single product record with hundreds of purchase origins can exceed the per-record transfer limit. Purchases remain saved in FAN, while sharing reports Needs attention instead of sending an incomplete record. This limit is separate from browser storage quota and does not justify clearing purchases.
 
+## Purchase counts
+
+Library rows, bundle badges (**Owned ×2**), the bundle summary ("purchased 2 times") and the CSV catalog use one count (`FanaticalLibrary.purchaseCount`), matching Humble Library's model. Each order counts once per product, times the copies Fanatical lists in it, so two orders of the same bundle are two purchases and a quantity of two in one order is two. The same order seen again, including when it returns from Galactic Library, is still one purchase. A record saved without an order reference counts once per bundle; when it shares a bundle with a referenced order it may be that order, so the total is shown as "at least". Ownership on Steam, Epic or other stores found through Galactic Library and promotional gifts are never counted. A record with neither an order nor a bundle is shown as a manual entry.
+
 A purchased game can appear directly in the authenticated order's `items` array with an empty `bundles` array. The importer validates that game itself rather than treating it as an empty bundle or consulting the public selection catalog. Its native identity and order evidence are retained. The `pickAndMix` label only groups products in Fanatical's display; it is not used as a product or bundle identifier. Direct items use their own identity as the stored parent reference. Other unsupported empty containers remain unresolved.
 
 Backups preserve supported dated Fanatical key observations with purchase provenance. They contain no redemption-key values. Restoring does not authorize companion synchronization; Full rescan refreshes older observations.

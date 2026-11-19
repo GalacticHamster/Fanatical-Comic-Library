@@ -714,7 +714,7 @@
       const offeredMedia=mediaType(item.mediaType??item.type),ownedMedia=mediaType(owned.mediaType??owned.type);
       if(offeredMedia!=='other'&&ownedMedia!=='other'&&offeredMedia!==ownedMedia)differences.push('Different media type');
       if(differentGamePackage(item,owned))differences.push('Different game package');
-      return {state:differences.length?'possible':'owned',provenance:'fanatical',item:owned,
+      return {state:differences.length?'possible':'owned',provenance:'fanatical',item:owned,purchaseItems:[owned],
         reason:differences.length?'Same Fanatical product ID, but '+differences.join('; ')+'. Review the library item.':'exact Fanatical product ID'};
     }
     const ids = externalIds(item);
@@ -744,14 +744,14 @@
     const ambiguous=policy.ambiguousWorks(full,bibliographicFields);
     const exact = compatibleTitles.find((owned) => !differentGamePackage(item, owned) && !identityConflicts(item, owned, true).length
       && titlesMatchFully(item.title,owned.title,media) && !ambiguous);
-    if (exact && !hasComponents) return { state: 'owned', provenance: 'fanatical', item: exact, reason: 'exact normalized title' };
+    if (exact && !hasComponents) return { state: 'owned', provenance: 'fanatical', item: exact, purchaseItems: full, reason: 'exact normalized title' };
     const steam = steamMatches.find((owned) => !differentGamePackage(item, owned));
     const steamProvesProduct = steam && !hasComponents && !componentProof && !identityConflicts(item, steam, true).length && (media !== 'game' || !gamePackageIdentity(item?.title));
-    if (steamProvesProduct) return { state: 'owned', provenance: 'fanatical', item: steam, reason: 'exact Steam App ID' };
+    if (steamProvesProduct) return { state: 'owned', provenance: 'fanatical', item: steam, purchaseItems: [steam], reason: 'exact Steam App ID' };
     const isbnCandidates = [...new Set(matchingIsbns(item).flatMap(isbn => indexes.byIsbn.get(isbn) ?? []))];
     const isbnMatches = isbnCandidates.filter(owned => compatibleMedia(media, owned.mediaType ?? owned.type) && !identityConflicts(item, owned, true).length);
     const isbn = !policy.ambiguousWorks(isbnMatches, bibliographicFields) && isbnMatches[0];
-    if (isbn && compatibleMedia(media, isbn.mediaType ?? isbn.type)) return { state: 'owned', provenance: 'fanatical', item: isbn, reason: 'exact ISBN' };
+    if (isbn && compatibleMedia(media, isbn.mediaType ?? isbn.type)) return { state: 'owned', provenance: 'fanatical', item: isbn, purchaseItems: [isbn], reason: 'exact ISBN' };
     const isbnRelated = isbnCandidates.find(owned => compatibleMedia(media, owned.mediaType ?? owned.type) && !identityConflicts(item, owned).length);
     if (isbnRelated) return { state: 'possible', provenance: 'fanatical', item: isbnRelated, reason: `Owned "${isbnRelated.title}"; offered "${item.title}". Shared validated ISBN but ${identityConflicts(item, isbnRelated, true).join('; ') || 'edition identity needs review'}.` };
     if (steamDifference) return {...packageRelationship(item, steamDifference, 'Shared Steam App ID identifies the base game only'),candidates:[...new Set([steamDifference,...steamMatches.filter(owned=>!identityConflicts(item,owned).length)])]};
@@ -972,9 +972,49 @@
     return {results,failed,failures};
   }
 
+  // How many times something was bought, counted one way for Library rows, bundle badges and the
+  // CSV catalog. Each order counts once per product, times the copies Fanatical lists in it; the same
+  // order seen again (for example when it returns from Galactic Library) is the same purchase.
+  // A record saved without an order reference counts once per bundle, as Humble Library counts
+  // older imports without an order key. When such a record shares a bundle with a referenced order
+  // it may be that order, so the total is the smallest possible (exact: false). Other stores'
+  // ownership and promotional gifts are never library purchases, so they are never counted.
+  function purchaseCount(items) {
+    const ordered = new Map(), unordered = new Map();
+    let bare = 0;
+    for (const item of items ?? []) {
+      if (!item || typeof item !== 'object' || item.source && item.source !== 'fanatical') continue;
+      const origins = Array.isArray(item.purchaseOrigins) ? item.purchaseOrigins : [];
+      // A record with neither order nor bundle carries no purchase evidence (shown as a manual entry).
+      if (!origins.length) { if (item.sourceItemId && (item.bundle?.sourceItemId || item.bundle?.title)) bare++; continue; }
+      for (const origin of origins) {
+        const copies = Number.isSafeInteger(origin?.quantity) && origin.quantity > 0 ? origin.quantity : 1;
+        const bundle = String(origin?.bundle?.sourceItemId || origin?.bundle?.title || '').toLowerCase();
+        if (typeof origin?.purchaseRef === 'string' && origin.purchaseRef) {
+          const key = JSON.stringify([origin.purchaseRef, bundle, item.sourceItemId ?? '']);
+          ordered.set(key, Math.max(ordered.get(key) ?? 0, copies));
+        } else {
+          const key = JSON.stringify([bundle, item.sourceItemId ?? '']);
+          unordered.set(key, Math.max(unordered.get(key) ?? 0, copies));
+        }
+      }
+    }
+    const sum = map => [...map.values()].reduce((total, copies) => total + copies, 0);
+    const orderedBundles = new Set([...ordered.keys()].map(key => JSON.parse(key).slice(1).join('\u0000')));
+    // An unreferenced record of a bundle that also has a referenced order may be that same order.
+    const separate = [...unordered].filter(([key]) => !orderedBundles.has(JSON.parse(key).join('\u0000'))).reduce((total, [, copies]) => total + copies, 0);
+    const count = sum(ordered) + separate + bare, max = sum(ordered) + sum(unordered) + bare;
+    return count === max ? { count, exact: true } : { count, max, exact: false };
+  }
+  const purchaseCountText = ({ count, exact }) => `${exact ? '' : 'at least '}${count.toLocaleString()} purchase${count === 1 ? '' : 's'}`;
+
   function overlayLabel(match) {
     if (match?.state === 'unchecked') return 'Check incomplete';
-    if (match?.state === 'owned') return global.FanaticalLibrary.presentation.status(match.offered||match.item||{},match);
+    if (match?.state === 'owned') {
+      const label = global.FanaticalLibrary.presentation.status(match.offered||match.item||{},match);
+      const { count } = purchaseCount(match.purchaseItems ?? []);
+      return count > 1 ? `${label} \u00d7${count}` : label;
+    }
     if (match?.state === 'owned-elsewhere') {
       const provider = String(match.provenance ?? 'another library');
       return `Owned elsewhere — ${provider === 'gog' ? 'GOG' : provider.replace(/^./u, (letter) => letter.toUpperCase())}`;
@@ -1524,7 +1564,7 @@
   }
 
   async function storageSet(updates){const response=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'patch',args:[updates]});if(!response?.ok)throw new Error(response?.error??'Settings storage is unavailable.');}
-  global.FanaticalLibrary = { formatScanSummary, purchaseImportScope, purchaseImportProgress, purchaseActivity, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, isCompleteBundleCatalogue, isBundleOverlapProduct, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, sendGalacticMatch, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, COMPANION_IDENTITIES, companionBrowser, builtinGalacticId, resolveGalacticId, galacticAvailability, galacticPermissionDenied, trustedGalacticSender, companionTargetProblem, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft, isComicItem, mediaOverrideKey };
+  global.FanaticalLibrary = { purchaseCount, purchaseCountText, formatScanSummary, purchaseImportScope, purchaseImportProgress, purchaseActivity, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, isCompleteBundleCatalogue, isBundleOverlapProduct, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, sendGalacticMatch, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, COMPANION_IDENTITIES, companionBrowser, builtinGalacticId, resolveGalacticId, galacticAvailability, galacticPermissionDenied, trustedGalacticSender, companionTargetProblem, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft, isComicItem, mediaOverrideKey };
 }(globalThis));
 
 /* Account picker; all changes use the serialized writer. */

@@ -41,7 +41,7 @@ const advancedChecks=presentationChecks+fs.readFileSync(new URL('./advanced-pari
 const mock = `
 globalThis.addEventListener('error', event => {fetch('/result?route='+encodeURIComponent(location.pathname),{method:'POST',body:JSON.stringify({ok:false,error:event.message})})});
 const listeners = [];
-globalThis.values = { fanaticalLibraryItems: [{source:'fanatical',sourceItemId:'product-123450',title:'Comic #10',mediaType:'book',bundle:{sourceItemId:'bundle-123456',title:'Test comics',slug:'test-comics'},purchaseDate:null}],galacticLibraryExtensionId:'b'.repeat(32),fanaticalScannedOrderFingerprints:['a'.repeat(64)] };
+globalThis.values = { fanaticalLibraryItems: [{source:'fanatical',sourceItemId:'product-123450',title:'Comic #10',mediaType:'book',bundle:{sourceItemId:'bundle-123456',title:'Test comics',slug:'test-comics'},purchaseDate:null,purchaseOrigins:[{purchaseRef:'${'a'.repeat(64)}',bundle:{sourceItemId:'bundle-123456',title:'Test comics'},purchaseDate:null,quantity:1},{purchaseRef:'${'b'.repeat(64)}',bundle:{sourceItemId:'bundle-123456',title:'Test comics'},purchaseDate:null,quantity:1}]}],galacticLibraryExtensionId:'b'.repeat(32),fanaticalScannedOrderFingerprints:['a'.repeat(64)] };
 if(location.pathname.endsWith('test-empty')){values.fanaticalLibraryItems=[];values.galacticLibraryExtensionId='';}
 if(location.pathname.includes('test-editions')) values.fanaticalLibraryItems=[${JSON.stringify(editionBase)},{...${JSON.stringify(editionBase)},sourceItemId:'edition-gold-123456',title:'Space Adventure Gold Edition'}];
 if(location.pathname.includes('test-contents')) values.fanaticalLibraryItems=[{source:'fanatical',sourceItemId:'owned-issue-123456',title:'Saga #1',mediaType:'book',run:'2020',language:'en'}];
@@ -122,6 +122,9 @@ try {
   assert(document.querySelectorAll('[data-fanatical-library-for]').length===4,'Missing card badges');
   assertBadgesVisible();
   assert([...document.querySelectorAll('.card-product-name')].map(node=>node.textContent).join('|')==='Comic #2|Comic #10|External comic|New comic','Natural sorting changed');
+  // Two separate orders of an owned title: the badge and the summary count purchases.
+  assert(document.querySelector('[data-fanatical-library-for="product-123450"]')?.textContent==='Owned \u00d72','Repeat purchase badge missing: '+document.querySelector('[data-fanatical-library-for="product-123450"]')?.textContent);
+  assert([...document.querySelectorAll('.fanatical-library-title-list[data-section="owned"] li')].some(row=>row.textContent.startsWith('Comic #10 — purchased 2 times')),'Repeat purchase summary row missing');
   assert(document.querySelector('.fanatical-library-owned-elsewhere-badge'),'Missing external match');
   const badge=document.querySelector('.fanatical-library-owned-elsewhere-badge');
   assert(badge.tagName==='BUTTON','Badge is not keyboard accessible');badge.click();

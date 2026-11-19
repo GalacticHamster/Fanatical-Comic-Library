@@ -398,7 +398,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
             (Array.isArray(item.drm) && (item.drm.includes('drm-free') || item.drm.includes('none')))
           );
         }
-        if (metadata === 'multi-origin') return typeof item === 'object' && Array.isArray(item.purchaseOrigins) && item.purchaseOrigins.length > 1;
+        if (metadata === 'multi-origin') return typeof item === 'object' && FanaticalLibrary.purchaseCount([item]).count > 1;
         return true;
       });
     }
@@ -445,24 +445,9 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     const title = typeof item === 'string' ? item : (item.title || '');
     const origins = sortOriginRecords(extractItemOrigins(item));
 
-    const distinctBundles = new Set();
-    for (const origin of origins) {
-      const bTitle = (origin.bundle?.title || origin.sourceBundle || '').trim();
-      if (bTitle) distinctBundles.add(bTitle);
-    }
-
-    let summarySuffix = '';
-    if (distinctBundles.size === 1) {
-      summarySuffix = ' — in 1 bundle';
-    } else if (distinctBundles.size > 1) {
-      summarySuffix = ` — in ${distinctBundles.size} bundles`;
-    } else if (origins.length === 1) {
-      summarySuffix = ' — single purchase';
-    } else if (origins.length > 1) {
-      summarySuffix = ` — ${origins.length} purchase origins`;
-    } else {
-      summarySuffix = ' — manual entry';
-    }
+    // Purchases, not bundles: two orders of one bundle are two purchases (FanaticalLibrary.purchaseCount).
+    const counted = typeof item === 'object' ? FanaticalLibrary.purchaseCount([item]) : { count: 0, exact: true };
+    const summarySuffix = counted.count ? ` — ${FanaticalLibrary.purchaseCountText(counted)}` : ' — manual entry';
 
     const headerText = `${title}${summarySuffix}`;
 

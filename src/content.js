@@ -429,6 +429,9 @@
 
   const parse = F.parseBundle;
 
+  // An owned title bought more than once says so in the bundle summary, as on its badge.
+  const repeatPurchases = match => { const { count } = match?.state === 'owned' ? F.purchaseCount(match.purchaseItems ?? []) : { count: 0 }; return count > 1 ? ` — purchased ${count} times` : ''; };
+
   async function loadPublicBundle(current) {
     const pageUrl = location.href, revision=state.revision;
     if (state.url === pageUrl && state.parsed) return state.parsed;
@@ -953,7 +956,7 @@ function restoreSummaryState(panel, state) {
         const match = matches[parsed.products.findIndex((candidate) => candidate.sourceItemId === product.sourceItemId)];
         const row = document.createElement('li');
         const view=F.presentation.row(product, match);
-        row.append(document.createTextNode(product.title+(view.providers.length?' — '+view.providers.join(', '):'')+(view.fraction?' — '+view.fraction:'')));
+        row.append(document.createTextNode(product.title+repeatPurchases(match)+(view.providers.length?' — '+view.providers.join(', '):'')+(view.fraction?' — '+view.fraction:'')));
         if (view.why) { const inspect=document.createElement('button'); inspect.type='button'; inspect.className='fanatical-library-inspect'; inspect.textContent='Why?'; inspect.setAttribute('aria-label','Why '+product.title); inspect.addEventListener('click',()=>showEvidence(match,inspect)); row.append(' ',inspect); }
         appendRelatedTitles(row,match);
         appendWishlistControl(row,product);
@@ -1092,7 +1095,7 @@ function restoreSummaryState(panel, state) {
         const match = matches[parsed.products.findIndex((candidate) => candidate.sourceItemId === product.sourceItemId)];
         const row = document.createElement('li');
         const view = F.presentation.row(product, match);
-        row.append(document.createTextNode(product.title + (view.providers.length ? ' — ' + view.providers.join(', ') : '') + (view.fraction ? ' — ' + view.fraction : '')));
+        row.append(document.createTextNode(product.title + repeatPurchases(match) + (view.providers.length ? ' — ' + view.providers.join(', ') : '') + (view.fraction ? ' — ' + view.fraction : '')));
         if (view.why) {
           const inspect = document.createElement('button'); inspect.type = 'button'; inspect.className = 'fanatical-library-inspect'; inspect.textContent = 'Why?'; inspect.setAttribute('aria-label', 'Why ' + product.title); inspect.addEventListener('click', () => showEvidence(match, inspect)); row.append(' ', inspect);
         }
