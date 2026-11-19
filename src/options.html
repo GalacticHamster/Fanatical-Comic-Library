@@ -42,7 +42,7 @@
       </section>
       <section>
         <h2>Key and access reminders</h2>
-        <p>Find the bundle and purchase date in Order History, then choose <strong>View Order &amp; Keys</strong>.</p>
+        <p>Open a purchase directly when its link is saved. Otherwise, find the bundle and purchase date in Order History.</p>
         <p id="local-key-status">Reminders work without Galactic Library.</p>
         <div class="key-reminder-filters">
           <label>Search reminders <input type="search" id="local-reminder-search" placeholder="Title or bundle"></label>
@@ -146,7 +146,7 @@
       </section>
       <section>
         <h2>Privacy</h2>
-        <p>Your library, wishlist and preferences stay in this browser. Galactic Library linking exchanges only the match or reminder evidence needed for the action you request; supported provider purchases are shared with your authorized companion after you enable automatic sync, or explicitly approve a manual transfer. Disconnect stops future automatic sharing and keeps existing purchases.</p><p>Purchase metadata is stored only in this browser. The importer reads Fanatical's session token only in the Fanatical page context; neither tokens nor raw order responses are stored, exported, or sent to another extension. Quick scans retain only SHA-256 fingerprints of completed-order IDs, never the IDs themselves.</p>
+        <p>Your library, wishlist and preferences stay in this browser. Galactic Library linking exchanges only the match or reminder evidence needed for the action you request; supported provider purchases are shared with your authorized companion after you enable automatic sync, or explicitly approve a manual transfer. Disconnect stops future automatic sharing and keeps existing purchases.</p><p>Purchase metadata is stored only in this browser. The importer reads Fanatical's session token only in the Fanatical page context; neither tokens nor raw order responses are stored, exported, or sent to another extension. Scans use fingerprints to identify orders. For direct reminder links, private order IDs are saved locally for the matching account and excluded from exports and companion sharing.</p>
       </section>
     </main>
     <script src="shared.js"></script><script type="module" src="options.js"></script>

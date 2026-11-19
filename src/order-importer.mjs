@@ -1,5 +1,5 @@
 /* Self-contained: Chrome serializes this exact function into the Fanatical page. */
-export async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerprints = [], scanHistoryMissing = false, progressId = '', operation = 'import', orderSummaries = [], orderDetails = [], returnFailure = false, allowPartial = false, accountOrderFingerprints = [], progressFormat = 'fan', detailLimit = 0, retryLaterOrderFingerprints = [] } = {}) {
+export async function importFanaticalOrdersInPage({ fullScan = false, knownOrderFingerprints = [], scanHistoryMissing = false, progressId = '', operation = 'import', orderSummaries = [], orderDetails = [], returnFailure = false, allowPartial = false, accountOrderFingerprints = [], progressFormat = 'fan', detailLimit = 0, retryLaterOrderFingerprints = [], orderNavigationRefs } = {}) {
   // Chrome does not propagate MAIN-world exceptions to InjectionResult. Keep
   // errors in an explicit, aggregate-only envelope when called by the worker.
   const listingEvidence={arrayPages:0,objectPages:0,otherPages:0,headersReadablePages:0,linkHeaderPages:0,totalCountHeaderPages:0,contentRangeHeaderPages:0,nextReferencePages:0};
@@ -651,8 +651,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     }catch(error){if(!allowPartial||fatal(error))throw error;unresolved.add(await fingerprintOrderInPage(order._id));note(error,'summaries');}
   }
   const complete = summaries.filter(order=>order.status==='COMPLETE'&&expectedProducts.has(order._id));
-  // Only opaque SHA-256 fingerprints leave the page world. This lets a quick
-  // scan identify unseen orders without persisting Fanatical order IDs.
+  // Fingerprints remain the identity used to compare orders and skip known details.
   const boundedMap = async (input, task) => {
     const results = new Array(input.length); let cursor = 0; let failure = null;
     const worker = async () => {
@@ -822,7 +821,17 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   // `token`, summaries, details, and raw leaves remain in this execution world.
   const outcome=!discoveryComplete?'partial-discovery':unresolved.size?'partial-extraction':'complete';
   const finished=outcome==='complete'||outcome==='partial-discovery'&&diagnostic.paginationEvidence==='array-only'&&diagnostic.pagesParsed===visitedPages.size&&!unresolved.size&&!unidentifiedRecords&&failureCounts.size===1&&[...failureCounts.values()][0].code==='discovery-unverified';
+  // FAN alone requests private navigation metadata. A saved purchase can recover
+  // its link from an eligible listing without a second detail request.
+  const navigationRefs = progressFormat === 'fan' && allowPartial && Array.isArray(orderNavigationRefs)
+    ? new Set(orderNavigationRefs.slice(0,100000)) : null;
+  if (navigationRefs) for (const item of items) for (const origin of item.purchaseOrigins) {
+    if (origin.keyCheckedAt && verified.has(origin.purchaseRef)) navigationRefs.add(origin.purchaseRef);
+  }
   return {
+    ...(navigationRefs ? {orderNavigation:completeWithFingerprints
+      .filter(({fingerprint})=>navigationRefs.has(fingerprint)&&!unresolved.has(fingerprint))
+      .map(({order,fingerprint})=>[fingerprint,order._id])} : {}),
     acquisitionContract:{version:1,provider:'fanatical',acquisition:{outcome:finished?'finished':'interrupted'},verified:[...verified].sort(),unresolved:[...unresolved].sort(),ineligible:[...ineligible].sort(),coverage:{status:outcome==='complete'?'verified':finished?'unverified':'incomplete',evidence:[diagnostic.paginationEvidence]},scope:{authority:accountOverlap?'saved-order-match':'declared-scope'},retry:[...unresolved].sort(),persistence:{outcome:'not-attempted'},reconciliation:{authority:'none'}},
     ...(allowPartial?{partialScanVersion:1,outcome,...(batched?{deferredOrderFingerprints:[...deferred].sort()}:{}),verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...listedFingerprints],failures:[...failureCounts.values()],unidentifiedRecords}:{}),
     schemaVersion: 1,

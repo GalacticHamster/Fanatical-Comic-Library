@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
-import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibraryBackup, createSyncStore, createTitleCatalog, createTitleCatalogCsv } from '../src/library-data.mjs';
+import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibraryBackup, createSyncStore, createTitleCatalog, createTitleCatalogCsv, FANATICAL_ORDERS_URL, orderNavigationUrl } from '../src/library-data.mjs';
 import '../src/shared.js';
 
 const code = fs.readFileSync(new URL('../src/options.js', import.meta.url), 'utf8').replace(/^import .*;\r?\n/u, '');
@@ -30,7 +30,7 @@ async function optionsHarness(initial = {}) {
       async remove(keys) { for (const key of Array.isArray(keys) ? keys : [keys]) delete stored[key]; }
     } }, tabs: { create() {} } },
     confirm: () => config.confirm, LibraryTitleSort:globalThis.LibraryTitleSort, LibraryAccountProfiles:{mount(host,options){accountChanged=options.onActiveChange;return {refresh:async()=>{}};}}, FanaticalLibrary: globalThis.FanaticalLibrary,
-    localKeyReminders, backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitleCatalog, createTitleCatalogCsv, Blob, URL, setTimeout, clearTimeout, Intl
+    localKeyReminders, backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitleCatalog, createTitleCatalogCsv, FANATICAL_ORDERS_URL, orderNavigationUrl, Blob, URL, setTimeout, clearTimeout, Intl
   });
   const store=createSyncStore(context.chrome.storage.local);const oldSend=context.chrome.runtime.sendMessage;
   context.chrome.runtime.sendMessage=async (...args)=>{const message=args[0];if(message?.type!=='FANATICAL_STORE')return oldSend(...args);try{return {ok:true,result:await store.execute(message.operation,message.args)};}catch(error){return {ok:false,error:error.message};}};

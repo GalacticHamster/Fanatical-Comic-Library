@@ -12,6 +12,8 @@ The importer temporarily reads the Fanatical session token from the site's signe
 
 For supported ordinary Steam purchases, the importer saves a dated non-secret observation when the order indicates an unrevealed key. It checks whether a key field exists without reading its value. Ambiguous or unsupported reveal evidence remains unknown. Local purchase-specific dismissal, snooze and restoration actions/dates are saved with the observations and included in full backups. Reveal status does not establish Steam activation, and the importer does not reveal or redeem keys.
 
+To open a reminder's exact order on Fanatical, the extension stores the original order ID in the browser for that saved account, after checking it against the purchase fingerprint. It is used only for navigation and is excluded from diagnostics, backups, title catalogs and companion messages. A backup moved to another installation can recover links on a later signed-in scan.
+
 Historical purchases can support history-only warnings; they do not by themselves establish current access. The user can also explicitly select a manual title file or backup for import.
 
 ## How data is used and shared

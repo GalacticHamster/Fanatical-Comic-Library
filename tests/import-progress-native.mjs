@@ -180,14 +180,15 @@ try{
      const reminderNavigation=await evaluate(`
        const list=document.querySelector('#local-reminder-list'), search=document.querySelector('#local-reminder-search');
        search.value='Selected 0';search.dispatchEvent(new Event('input'));
-       const link=list.querySelector('a'), title=list.querySelector('.key-reminder-heading span')?.textContent;
-       let destination;
-       link.addEventListener('click',event=>{event.preventDefault();destination=event.currentTarget.href;},{once:true});
-       link.click();
-       return {count:list.children.length,title,destination,label:link.textContent,blank:link.target==='_blank'&&link.rel==='noopener'};
+       const open=[...list.querySelectorAll('button')].find(button=>button.textContent==='Open purchase');
+       open.click();
+       return {count:list.children.length,title:list.querySelector('.key-reminder-heading span')?.textContent};
      `);
-     assert.deepEqual(reminderNavigation,{count:1,title:'Selected 0',destination:'https://www.fanatical.com/en/orders',label:'Find in Order History',blank:true});
-     console.log('PASS installed FAN reminder search and safe Order History navigation');
+     assert.deepEqual(reminderNavigation,{count:1,title:'Selected 0'});
+     const purchaseUrl=origin+'/en/orders/synthetic-order-3';
+     // Firefox's URL match patterns do not reliably match a host with a port.
+     await wait(`return (await chrome.tabs.query({})).some(tab=>tab.url===${JSON.stringify(purchaseUrl)}&&tab.status==='complete');`,'Reminder did not open the exact synthetic order');
+     console.log('PASS installed FAN reminder opens the exact order route in a new tab');
    }
    if(central&&(legacyKeys||process.argv.includes('--legacy-central')))await verifyFanaticalKeyCompatibility({observationsSupported:process.argv.includes('--observation-peer')||process.argv.includes('--legacy-observations'),browser:firefox?'Firefox':'Chrome',peerId:fanId,navigate,evaluate,wait,glUrl:centralOptionsUrl,fanUrl:optionsUrl,restart:async()=>{driver.close?.();child.kill();await exited;await startBrowser();}});
    if(central&&!legacyKeys&&!process.argv.includes('--legacy-central'))await verifyFanaticalKeyReminders({browser:firefox?'Firefox':'Chrome',peerId:fanId,navigate,evaluate,wait,glUrl:centralOptionsUrl,fanUrl:optionsUrl,openOrders,scan,setKeysPresent:()=>{directKeysPresent=true;},restart:async()=>{driver.close?.();child.kill();await exited;await startBrowser();}});

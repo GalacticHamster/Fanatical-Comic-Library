@@ -1,16 +1,16 @@
 {
   "contractVersion": 1,
-  "engine": "4b27e7a581532c8596715e56f6bff67eaa72656b17292e33fea035e394aa8e8c",
+  "engine": "8b54676322facd5311ccc4144db31cfff6141f7953da90aa7308b4b60eba62bc",
   "adapter": "9f220a9a89e90cbeb8d2624e87b37765d25ac32650d6cc25c07e33eed2b0263b",
   "contract": "361b3a81ca8d0f913954ee05d0c683808126d35f989cabb1a44aaed13fb4eef2",
-  "revision": "fanatical-v1-cc892d7ab7dc6261",
+  "revision": "fanatical-v1-55a57dcee45c18c3",
   "consumers": {
-    "GL": "0d9f3191473b71d9634bb45d80d6ccf87850f96f9ebf47785c155337f1d402e0",
-    "FAN": "4b27e7a581532c8596715e56f6bff67eaa72656b17292e33fea035e394aa8e8c"
+    "GL": "72dd7495ab52da84b5cbc363cb6d7fecf0e7b73b41c67c1144edd614e5024a47",
+    "FAN": "8b54676322facd5311ccc4144db31cfff6141f7953da90aa7308b4b60eba62bc"
   },
   "runtime": {
-    "src/order-importer.mjs": "4b27e7a581532c8596715e56f6bff67eaa72656b17292e33fea035e394aa8e8c",
+    "src/order-importer.mjs": "8b54676322facd5311ccc4144db31cfff6141f7953da90aa7308b4b60eba62bc",
     "src/acquisition-contract.mjs": "361b3a81ca8d0f913954ee05d0c683808126d35f989cabb1a44aaed13fb4eef2",
-    "src/service-worker.js": "201dc1490d584f89e2af7bfc8969ba7de0a73fe783afe22016cd6ddeb4188523"
+    "src/service-worker.js": "6f4835627d13210c08ba2756d8a373d7523f1382a6772c3f2bad89dada2cec64"
   }
 }

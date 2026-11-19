@@ -1,4 +1,4 @@
-import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitleCatalog, createTitleCatalogCsv } from './library-data.mjs';
+import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitleCatalog, createTitleCatalogCsv, FANATICAL_ORDERS_URL, orderNavigationUrl } from './library-data.mjs';
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Galactic Hamster
 
@@ -19,8 +19,8 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     }));
   }
 
-  const ordersUrl = 'https://www.fanatical.com/en/orders';
-  let localReminderItems = [], localReminderAccount = null, localReminderTimer;
+  const ordersUrl = FANATICAL_ORDERS_URL;
+  let localReminderItems = [], localReminderAccount = null, localReminderOrderIds = {}, localReminderTimer;
   function renderLocalReminders() {
     clearTimeout(localReminderTimer);
     const now = Date.now(), rows = localKeyReminders(localReminderItems, now);
@@ -88,10 +88,24 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     };
     if (row.hidden) act('Restore reminder', 'active');
     else { act('Dismiss reminder', 'dismissed'); act('Snooze 7 days', 'snoozed'); }
-    const open = part('a', 'key-reminder-link', 'Find in Order History');
-    open.href = ordersUrl;
-    open.target = '_blank';
-    open.rel = 'noopener';
+    const direct = accountId && orderNavigationUrl(localReminderOrderIds[row.purchaseRef]);
+    const open = direct ? part('button', '', 'Open purchase') : part('a', 'key-reminder-link', 'Find in Order History');
+    if (direct) {
+      open.type = 'button';
+      open.addEventListener('click', async () => {
+        open.disabled = true;
+        try {
+          const url = await mutate('keyReminderDestination',accountId,row.ref);
+          await chrome.tabs.create({url:url ?? ordersUrl});
+          if (!url) await refresh({libraryOnly:true});
+        } catch (error) { $('#local-reminder-action-status').textContent = error.message; }
+        finally { open.disabled = false; }
+      });
+    } else {
+      open.href = ordersUrl;
+      open.target = '_blank';
+      open.rel = 'noopener';
+    }
     actions.append(open);
     card.append(actions);
     return card;
@@ -799,7 +813,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
   let refreshChain=Promise.resolve();
   function refresh(options) {const next=refreshChain.then(()=>refreshNow(options));refreshChain=next.catch(()=>{});return next;}
   async function refreshNow({libraryOnly=false}={}) {
-    const state=await chrome.storage.local.get({fanaticalImportSummary:null,fanaticalLibraryItems:[],galacticLibraryExtensionId:'',fanaticalShowDiagnostics:false,fanaticalLastScanAttempt:null,fanaticalProfileLabel:'',fanaticalAccountId:null,fanaticalProfileArchives:[],fanaticalHistoricalItems:[]});
+    const state=await chrome.storage.local.get({fanaticalImportSummary:null,fanaticalLibraryItems:[],galacticLibraryExtensionId:'',fanaticalShowDiagnostics:false,fanaticalLastScanAttempt:null,fanaticalProfileLabel:'',fanaticalAccountId:null,fanaticalProfileArchives:[],fanaticalHistoricalItems:[],fanaticalOrderNavigation:{}});
     const {
       fanaticalImportSummary: summary = null,
       fanaticalLibraryItems: items = [],
@@ -814,7 +828,8 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     $('#library-count').textContent = `Active account nickname: ${scope.fanaticalProfileLabel||'Not yet named'}. ${scope.fanaticalProfileArchives.length} other saved accounts (selectable above; excluded from active matching). ${items.length} unique item${items.length === 1 ? '' : 's'} stored locally.`;
     const missing=scope.fanaticalHistoricalItems.filter(entry=>entry.profileLabel===scope.fanaticalProfileLabel).length;
     if(missing) $('#library-count').textContent += ' '+missing+' previously recorded products were not found in the latest scan; these warn as Check ownership and do not prove ownership.';
-    localReminderAccount=scope.fanaticalAccountId;localReminderItems=items;renderLocalReminders();
+    localReminderAccount=scope.fanaticalAccountId;localReminderItems=items;
+    localReminderOrderIds=scope.fanaticalOrderNavigation[localReminderAccount]??{};renderLocalReminders();
 
     $('#history-note').textContent = `${attempt?.status==='partial'&&attempt.acquisitionComplete===true?'Last import finished successfully. ':attempt?.status==='partial'?`Last scan was partial: ${attempt.verifiedPurchasesSaved} verified purchases saved; ${attempt.unresolvedOrders} purchases unresolved. ${attempt.discoveryComplete?'The listing was read, but some purchases remain unresolved.':'The end of the library was not verified.'} Earlier purchases and the last complete check were kept. `:attempt?.status === 'incomplete' ? 'Last scan incomplete: complete order-history coverage could not be confirmed. Previous purchases and the last successful scan were kept. ' : ''}${summary?.historyCoverage ?? 'No complete order-history check has been saved yet.'}`;
     if(diagnostics&&attempt?.status==='partial'&&attempt.acquisitionComplete===true) $('#history-note').textContent += ' Fanatical did not provide enough information to independently verify that the entire purchase history was returned. Existing purchases were preserved.';
@@ -1091,7 +1106,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     render: () => renderLibraryBrowser()
   };
   let liveDirty=false,liveRefresh=null;
-  const libraryKeys=['fanaticalLibraryItems','fanaticalImportSummary','fanaticalLastScanAttempt','fanaticalProfileLabel','fanaticalAccountId','fanaticalProfileArchives','fanaticalHistoricalItems','rejectedPurchaseItems','mediaTypeOverrides'];
+  const libraryKeys=['fanaticalLibraryItems','fanaticalImportSummary','fanaticalLastScanAttempt','fanaticalProfileLabel','fanaticalAccountId','fanaticalProfileArchives','fanaticalHistoricalItems','fanaticalOrderNavigation','rejectedPurchaseItems','mediaTypeOverrides'];
   chrome.storage.onChanged?.addListener((changes,area)=>{
     if(area!=='local'||!libraryKeys.some(key=>Object.hasOwn(changes,key)))return;
     liveDirty=true;

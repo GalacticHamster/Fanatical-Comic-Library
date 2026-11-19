@@ -2,7 +2,7 @@ import {assertFanaticalAcquisitionContract,fanaticalCompatibilityReport} from '.
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Galactic Hamster
 /* Chrome MV3 entry point. The only main-world execution is the strict importer. */
-import { safeId, validateScanResult, createSyncStore, mergeLibraryItems, fullScanStorage, removeFullScanPass } from './library-data.mjs';
+import { safeId, validateScanResult, createSyncStore, mergeLibraryItems, fullScanStorage, removeFullScanPass, savedOrderReferences, checkedOrderNavigation } from './library-data.mjs';
 import './theme.js';
 import './purchase-transfer.js';
 
@@ -126,9 +126,12 @@ async function importPurchases({ fullScan = false, profileLabel='', confirmed=fa
   if(!accountOrderFingerprints.length&&((stored[STORAGE_ITEMS]?.length??0)+(stored.fanaticalHistoricalItems?.length??0)>0)&&!confirmed){
     throw Object.assign(new Error(SCAN_FAILURES['account-attribution-required']),{scanDiagnostic:scanReport({code:'account-attribution-required',diagnostic:{stage:'account'},requestedFull,actualFull:fullScan,localAccountConfirmed:true})});
   }
+  const {fanaticalOrderNavigation} = await chrome.storage.local.get({fanaticalOrderNavigation:{}});
+  const savedNavigation = fanaticalOrderNavigation[stored.fanaticalAccountId] ?? {};
+  const orderNavigationRefs = [...savedOrderReferences(stored[STORAGE_ITEMS])].filter(ref => !savedNavigation[ref]).slice(0,100000);
   const result = await chrome.scripting.executeScript({
     target: { tabId: tab.id }, world: 'MAIN', func: importFanaticalOrdersInPage,
-    args: [{ fullScan, knownOrderFingerprints, scanHistoryMissing, returnFailure:true,allowPartial:true,accountOrderFingerprints,progressId:/^[a-f0-9]{32}$/u.test(progressId)?progressId:'',...(batch?{detailLimit:batch.limit,retryLaterOrderFingerprints:batch.retryLater}:{}) }]
+    args: [{ fullScan, knownOrderFingerprints, scanHistoryMissing, returnFailure:true,allowPartial:true,accountOrderFingerprints,orderNavigationRefs,progressId:/^[a-f0-9]{32}$/u.test(progressId)?progressId:'',...(batch?{detailLimit:batch.limit,retryLaterOrderFingerprints:batch.retryLater}:{}) }]
   });
   stage='validation';
   progressPhase('validation');
@@ -138,9 +141,18 @@ async function importPurchases({ fullScan = false, profileLabel='', confirmed=fa
     const report=scanReport({code:Object.hasOwn(SCAN_FAILURES,envelope.code)?envelope.code:'page-exception',diagnostic:envelope.diagnostic,requestedFull,actualFull:fullScan,localAccountConfirmed:true});
     throw Object.assign(new Error('Fanatical scan incomplete. '+SCAN_FAILURES[report.code]+' Your library and scan history were not changed.'),{scanDiagnostic:report});
   }
+  // Separate private navigation metadata before validating the unchanged
+  // acquisition contract. It never becomes part of that receipt or its reports.
+  let orderNavigation;
+  if(result[0]?.result && Object.hasOwn(result[0].result,'orderNavigation')){
+    const {orderNavigation:privateIds,...receipt}=result[0].result;
+    orderNavigation=privateIds;
+    result[0]={...result[0],result:receipt};
+  }
   const authority=assertFanaticalAcquisitionContract(result[0]?.result,{fullScan,knownOrderFingerprints,accountOrderFingerprints});
   const projected = validateScanResult(result[0]?.result, { fullScan, knownOrderFingerprints });
   if(authority.finished!==(projected.acquisitionComplete??true))throw Error('Fanatical acquisition/writer completeness disagreement.');
+  const navigation=await checkedOrderNavigation(orderNavigation,projected,orderNavigationRefs);
   if(projected.partialScanVersion&&projected.outcome!=='complete'){
     // Coverage limitations must not hide actionable order-reading failures.
     const primary=projected.failures.find(f=>!['discovery-unverified','batch-deferred'].includes(f.code))??projected.failures.find(f=>f.code!=='batch-deferred')??projected.failures[0];
@@ -148,16 +160,16 @@ async function importPurchases({ fullScan = false, profileLabel='', confirmed=fa
     stage='storage';
     progressPhase('saving');
     const stageBatch=Boolean(batch&&(batch.pass||projected.deferredOrderFingerprints?.length));
-    const partial=await syncStore.execute('commitPartial',[scan.token,projected,tab.id,stageBatch]);
+    const partial=await syncStore.execute('commitPartial',[scan.token,projected,tab.id,stageBatch,navigation]);
     return {...partial,...(batch?{batchRound:{...projected,compatibility:authority.compatibility},batchToken:scan.token,batchTabId:tab.id}:{}),failureExplanation:SCAN_FAILURES[primary.code],scanDiagnostic:scanReport({code:primary.code,diagnostic:pageDiagnostic,requestedFull,actualFull:fullScan,localAccountConfirmed:true,storageAdmission:'committed',outcome:partial.outcome,verifiedPurchasesSaved:partial.verifiedPurchasesSaved,verifiedProductRecordsSaved:projected.items.length,unresolvedOrders:partial.unresolvedOrders,failures:projected.failures,acquisitionComplete:partial.acquisitionComplete})};
   }
   if(batch&&!fullScan){
     // Publish the last verified purchases before attempting reconciliation.
     stage='storage';
-    const {addedProducts}=await syncStore.execute('commitFullScanBatch',[scan.token,projected,tab.id,true]);
+    const {addedProducts}=await syncStore.execute('commitFullScanBatch',[scan.token,projected,tab.id,true,navigation]);
     return {batchRound:{...projected,compatibility:authority.compatibility},batchComplete:true,batchToken:scan.token,batchTabId:tab.id,addedProducts};
   }
-  return await commitCompleteScan({scan,tab,stored,fullScan,scanHistoryMissing,projected,compatibility:authority.compatibility,requestedFull,progressPhase});
+  return await commitCompleteScan({scan,tab,stored,fullScan,scanHistoryMissing,projected,compatibility:authority.compatibility,requestedFull,progressPhase,navigation});
   }catch(error){
     error.scanDiagnostic??=scanReport({code:stage==='storage'?'save-failed':stage==='validation'?'result-invalid':'injection-failed',diagnostic:{...pageDiagnostic,stage},requestedFull,actualFull:fullScan,localAccountConfirmed:true,storageAdmission:stage==='storage'?'attempted':'not-reached'});
     error.scanToken=scan.token;error.scanTabId=tab.id;throw error;
@@ -229,7 +241,7 @@ async function finishFullScan({options,pass,final}){
 
 // Saves a complete scan. A Full scan replaces the active library with what it observed (absent
 // items move to history); a Quick scan adds to it.
-async function commitCompleteScan({scan,tab,stored,fullScan,scanHistoryMissing,projected,compatibility,requestedFull,progressPhase=()=>{}}){
+async function commitCompleteScan({scan,tab,stored,fullScan,scanHistoryMissing,projected,compatibility,requestedFull,progressPhase=()=>{},navigation}){
   let stage='storage',pageDiagnostic={};
   try{
   pageDiagnostic={compatibility,listingEvidence:projected.coverage.listingEvidence,accountAffinity:projected.coverage.accountAffinity,stage:'storage',pagesAttempted:projected.coverage.pagesFetched,pagesParsed:projected.coverage.pagesFetched,ordersRecognized:projected.coverage.listedOrders,detailsParsed:projected.ordersScanned,retries:projected.coverage.retries,terminalReached:true,discoveryComplete:projected.coverage.discoveryComplete,paginationEvidence:projected.coverage.paginationEvidence,authentication:'accepted-response'};
@@ -261,7 +273,7 @@ async function commitCompleteScan({scan,tab,stored,fullScan,scanHistoryMissing,p
     [STORAGE_SUMMARY]: summary,
     fanaticalLastScanAttempt: { status: 'complete', scanMode: summary.scanMode, attemptedAt: importedAt },
     ...(projected.rejectedPurchaseItems?{rejectedPurchaseItems:projected.rejectedPurchaseItems}:{})
-  },tab.id]);
+  },tab.id,false,navigation]);
   return {...summary,...(projected.partialScanVersion?{acquisitionComplete:true,outcome:'complete',verifiedPurchasesSaved:projected.ordersScanned,unresolvedOrders:0,completeCheckpointAdvanced:true}:{}),scanDiagnostic:scanReport({code:'complete',diagnostic:{...pageDiagnostic,stage:'complete'},requestedFull,actualFull:fullScan,localAccountConfirmed:true,storageAdmission:'committed',verifiedPurchasesSaved:projected.ordersScanned,verifiedProductRecordsSaved:projected.items.length})};
   }catch(error){
     error.scanDiagnostic??=scanReport({code:'save-failed',diagnostic:{...pageDiagnostic,stage},requestedFull,actualFull:fullScan,localAccountConfirmed:true,storageAdmission:'attempted'});
@@ -311,7 +323,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     const fanaticalPage=own&&_sender?.frameId===0&&isFanaticalUrl(_sender?.url)&&(_sender?.tab?.url===undefined||isFanaticalUrl(_sender.tab.url));
     const accountOperation=['profiles','selectProfile','renameProfile'].includes(message.operation);
     const ordersPage=isOrdersSender(_sender);
-    if(!['restore','clear','patch','unlink','wishlist','backup','profiles','selectProfile','renameProfile','setMediaOverride','resetMediaOverride','recoverRejectedItem','dismissRejectedItem','reviewKeyReminder'].includes(message.operation)||!(extensionPage||fanaticalPage&&['patch','wishlist'].includes(message.operation)||accountOperation&&ordersPage)){sendResponse({ok:false,error:'Untrusted storage request.'});return false;}
+    if(!['restore','clear','patch','unlink','wishlist','backup','profiles','selectProfile','renameProfile','setMediaOverride','resetMediaOverride','recoverRejectedItem','dismissRejectedItem','reviewKeyReminder','keyReminderDestination'].includes(message.operation)||!(extensionPage||fanaticalPage&&['patch','wishlist'].includes(message.operation)||accountOperation&&ordersPage)){sendResponse({ok:false,error:'Untrusted storage request.'});return false;}
     syncStore.execute(message.operation,message.args).then(result=>sendResponse({ok:true,result}),error=>sendResponse({ok:false,error:error.message}));return true;
   }
   if (message?.type === 'FANATICAL_IMPORT_PURCHASES') {

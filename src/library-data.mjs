@@ -7,6 +7,36 @@ import './shared.js';
 import './planning.js';
 const safeText = (value, max = 500) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 export const safeId = (value) => /^[a-zA-Z0-9_-]{6,128}$/u.test(String(value ?? '')) ? String(value) : '';
+export const FANATICAL_ORDERS_URL = 'https://www.fanatical.com/en/orders';
+export const orderNavigationUrl = id => typeof id === 'string' && safeId(id) ? FANATICAL_ORDERS_URL + '/' + id : null;
+async function orderMatchesReference(id, reference) {
+  if (!orderNavigationUrl(id) || typeof reference !== 'string' || !/^[a-f0-9]{64}$/u.test(reference)) return false;
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(id));
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('') === reference;
+}
+
+/** Reduce the private page projection to verified orders or known saved purchases. */
+export async function checkedOrderNavigation(raw, receipt, recoveryRefs) {
+  if (!Array.isArray(raw) || raw.length > 100000) return [];
+  const eligible = new Set(receipt.verifiedOrderFingerprints);
+  const saved = new Set(recoveryRefs);
+  for (const ref of receipt.orderFingerprints) if (saved.has(ref)) eligible.add(ref);
+  const checked = new Map();
+  for (let start = 0; start < raw.length; start += 64) {
+    const chunk = await Promise.all(raw.slice(start, start + 64).map(async pair =>
+      Array.isArray(pair) && pair.length === 2 && eligible.has(pair[0]) && await orderMatchesReference(pair[1],pair[0]) ? pair : null));
+    for (const pair of chunk) if (pair) checked.set(...pair);
+  }
+  return [...checked];
+}
+
+export function savedOrderReferences(items) {
+  const refs = new Set();
+  for (const item of items ?? []) for (const origin of item.purchaseOrigins ?? []) {
+    if (origin.purchaseRef && origin.keyCheckedAt && ['unrevealed','unknown'].includes(origin.keyStatus)) refs.add(origin.purchaseRef);
+  }
+  return refs;
+}
 const safeDate = (value) => typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? new Date(value).toISOString() : null;
 const safeList = (value) => [...new Set((Array.isArray(value) ? value : []).map((entry) => safeText(entry, 40)).filter(Boolean))].sort().slice(0, 30);
 const count = (value) => Number.isFinite(Number(value)) ? Math.max(0, Math.floor(Number(value))) : 0;
@@ -26,7 +56,7 @@ export function localKeyReminders(items,now=Date.now()){
  const rows=[];for(const item of items??[])for(const origin of item.purchaseOrigins??[]){
   if(!origin.purchaseRef||!['unrevealed','unknown'].includes(origin.keyStatus)||!safeDate(origin.keyCheckedAt))continue;
   const ref=JSON.stringify([item.sourceItemId,origin.purchaseRef,origin.bundle.sourceItemId]);
-  rows.push({ref,title:item.title,bundle:origin.bundle.title,purchasedAt:origin.purchaseDate,quantity:origin.quantity??1,status:origin.keyStatus,checkedAt:origin.keyCheckedAt,hidden:GalacticPurchaseSnapshot.keyReviewHidden(origin,now),review:GalacticPurchaseSnapshot.keyReview(origin.keyReview)});
+  rows.push({ref,purchaseRef:origin.purchaseRef,title:item.title,bundle:origin.bundle.title,purchasedAt:origin.purchaseDate,quantity:origin.quantity??1,status:origin.keyStatus,checkedAt:origin.keyCheckedAt,hidden:GalacticPurchaseSnapshot.keyReviewHidden(origin,now),review:GalacticPurchaseSnapshot.keyReview(origin.keyReview)});
  }return rows.sort((a,b)=>a.title.localeCompare(b.title)||a.ref.localeCompare(b.ref));
 }
 // Review state belongs to the purchase, including when it returns from history.
@@ -302,6 +332,15 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
       const state=await area.get(defaults),rows=await globalThis.GalacticPurchaseAdapters.accounts('fan',state);
       return rows;
     }
+    if (operation === 'keyReminderDestination') {
+      const [accountId, ref] = args;
+      const state = await area.get({fanaticalAccountId:null, fanaticalLibraryItems:[], fanaticalOrderNavigation:{}});
+      if (state.fanaticalAccountId !== accountId) throw Error('The saved account changed. Refresh reminders before opening a purchase.');
+      const reminder = localKeyReminders(state.fanaticalLibraryItems).find(row => row.ref === ref);
+      if (!reminder) throw Error('This reminder changed. Refresh reminders before opening a purchase.');
+      const id = state.fanaticalOrderNavigation[accountId]?.[reminder.purchaseRef];
+      return await orderMatchesReference(id,reminder.purchaseRef) ? orderNavigationUrl(id) : null;
+    }
     if(['handoffAccounts','handoffSnapshot','handoffImport','handoffPreview'].includes(operation)){
       const A=globalThis.GalacticPurchaseAdapters,S=globalThis.GalacticPurchaseSnapshot,state=await area.get(defaults);
       if(operation==='handoffAccounts')return A.accounts('fan',state);
@@ -391,7 +430,7 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
       return next;
     }
     if(operation==='commit'||operation==='commitPartial'||operation==='commitFullScanBatch'||operation==='failure'){
-      const [token,rawUpdates,tabId,stageBatch]=args;let updates=rawUpdates;const control=(await area.get({[key]:null}))[key];
+      const [token,rawUpdates,tabId,stageBatch,navigation]=args;let updates=rawUpdates;const control=(await area.get({[key]:null}))[key];
       if(!control||control.token!==token||control.tabId!==tabId){if(operation==='failure')return false;throw new Error('Scan superseded by another scan, restore, or clear. Start a fresh scan.');}
       if(operation==='failure'){await area.set({fanaticalLastScanAttempt:{status:'incomplete',scanMode:control.fullScan?'full':'quick',attemptedAt:new Date().toISOString()},[key]:null});return true;}
       const state=await area.get(defaults);const archives=[...state.fanaticalProfileArchives];
@@ -456,7 +495,16 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
         if(!observed.has(item.sourceItemId)&&!history.has(item.sourceItemId))history.set(item.sourceItemId,{profileLabel:control.label,missingSince:now,item});
       }
       if(!partial)for(const id of observed)history.delete(id);
-      await area.set({...updates,fanaticalAccountId:control.changing?crypto.randomUUID():state.fanaticalAccountId,fanaticalLibraryItems:incoming,fanaticalHistoricalItems:[...history.values()],fanaticalProfileLabel:control.label,fanaticalProfileArchives:archives,rejectedPurchaseItems:nextRejected,[key]:partial&&stageBatch?control:null});return partial?partialSummary:true;
+      const accountId=control.changing?crypto.randomUUID():state.fanaticalAccountId;
+      let navigationPatch={};
+      if (navigation?.length && accountId) {
+        const {fanaticalOrderNavigation:saved}=await area.get({fanaticalOrderNavigation:{}});
+        const previous=saved[accountId]??{};
+        const refs=savedOrderReferences(incoming);
+        const additions=navigation.filter(([ref,id])=>refs.has(ref)&&previous[ref]!==id);
+        if (additions.length) navigationPatch={fanaticalOrderNavigation:{...saved,[accountId]:{...previous,...Object.fromEntries(additions)}}};
+      }
+      await area.set({...updates,...navigationPatch,fanaticalAccountId:accountId,fanaticalLibraryItems:incoming,fanaticalHistoricalItems:[...history.values()],fanaticalProfileLabel:control.label,fanaticalProfileArchives:archives,rejectedPurchaseItems:nextRejected,[key]:partial&&stageBatch?control:null});return partial?partialSummary:true;
     }
     if(operation==='backup'){
       const state=await area.get({...defaults,fanaticalImportSummary:null,fanaticalWishlistItems:[]});return createLibraryBackup(state.fanaticalLibraryItems,state.fanaticalImportSummary,undefined,state.fanaticalProfileLabel,state.fanaticalProfileArchives,state.fanaticalWishlistItems,state.fanaticalHistoricalItems,state.mediaTypeOverrides,state.rejectedPurchaseItems,state.fanaticalAccountId);
@@ -466,12 +514,20 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
       const next=action==='remove'?current.filter(item=>F.wishlistKey(item)!==value):F.normalizeWishlist(action==='add'?[...current,...F.normalizeWishlist(value)]:value);await area.set({fanaticalWishlistItems:next});return next;
     }
     if(operation==='restore'){
-      const backup=args[0];const items=parseLibraryBackup(backup),replacement=await GalacticPurchaseSync.restoredAccounts('fan',backupRestoreState(items,backup)),retirement=await GalacticPurchaseSync.restorationPatch(area,{fanatical:[replacement.fanaticalAccountId,...replacement.fanaticalProfileArchives.map(a=>a.accountId)]});await removeFullScanPass(area);await area.set({galacticPurchaseAccountIds:{},...retirement.patch,...replacement,[key]:null});Promise.resolve().then(()=>onInvalidated(retirement.retired)).catch(()=>{});return true;
+      const backup=args[0];const items=parseLibraryBackup(backup),replacement=await GalacticPurchaseSync.restoredAccounts('fan',backupRestoreState(items,backup));
+      const profiles=[[replacement.fanaticalAccountId,replacement.fanaticalLibraryItems],...replacement.fanaticalProfileArchives.map(a=>[a.accountId,a.items])];
+      const retirement=await GalacticPurchaseSync.restorationPatch(area,{fanatical:profiles.map(([id])=>id)});
+      const {fanaticalOrderNavigation:saved}=await area.get({fanaticalOrderNavigation:{}});
+      const navigation=Object.fromEntries(profiles.filter(([id])=>saved[id]).map(([id,rows])=>{
+        const refs=savedOrderReferences(rows);
+        return [id,Object.fromEntries(Object.entries(saved[id]).filter(([ref])=>refs.has(ref)))];
+      }));
+      await removeFullScanPass(area);await area.set({galacticPurchaseAccountIds:{},...retirement.patch,...replacement,...(Object.keys(saved).length?{fanaticalOrderNavigation:navigation}:{}),[key]:null});Promise.resolve().then(()=>onInvalidated(retirement.retired)).catch(()=>{});return true;
     }
     if(operation==='clear'){
       const retirement=await GalacticPurchaseSync.retirementPatch(area);
       await removeFullScanPass(area);
-      await area.remove(['galacticPurchaseAccountIds','galacticPurchaseSync',...Object.keys(defaults),'fanaticalImportSummary','fanaticalLastScanAttempt',key]);Promise.resolve().then(()=>onInvalidated(retirement.retired)).catch(()=>{});return true;
+      await area.remove(['galacticPurchaseAccountIds','galacticPurchaseSync',...Object.keys(defaults),'fanaticalImportSummary','fanaticalLastScanAttempt','fanaticalOrderNavigation',key]);Promise.resolve().then(()=>onInvalidated(retirement.retired)).catch(()=>{});return true;
     }
     if (operation === 'setMediaOverride') {
       const [targetItem, targetKind] = args;

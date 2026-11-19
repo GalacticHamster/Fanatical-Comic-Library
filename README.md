@@ -224,8 +224,7 @@ evidence came from ranges, totals, a next-page chain, or just a bare array.
 A valid empty array is distinguished from an unreadable response. If the list
 omits previously scanned orders (including an unexpectedly empty list), the
 scan refuses to declare complete coverage. This conservative guard also means
-switching to a saved Fanatical account requires website-account confirmation and restores only that snapshot. New accounts require an initial full rescan. Inactive snapshots never contribute active ownership. No raw order IDs or response bodies leave the
-page context.
+switching to a saved Fanatical account requires website-account confirmation and restores only that snapshot. New accounts require an initial full rescan. Inactive snapshots never contribute active ownership. The importer retains private order IDs locally for reminder navigation. Raw response bodies stay in the page context.
 
 ## Development and testing
 

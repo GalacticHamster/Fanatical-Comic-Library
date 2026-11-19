@@ -5,7 +5,7 @@ import { createHash, webcrypto } from 'node:crypto';
 import test from 'node:test';
 const purchaseModules=['purchase-snapshot.js', 'purchase-transfer.js', 'purchase-sync.js', 'purchase-adapters.js'].map(file=>fs.readFileSync(new URL('../src/'+file,import.meta.url),'utf8')).join('\n');
 const dispatch=(listeners,message,sender,respond)=>{for(const fn of listeners)if(fn(message,sender,respond)===true)return;respond(null);};
-import { safeId, validateScanResult, createSyncStore, mergeLibraryItems, createLibraryBackup } from '../src/library-data.mjs';
+import { safeId, validateScanResult, createSyncStore, mergeLibraryItems, createLibraryBackup, createTitleCatalog, createTitleCatalogCsv, orderNavigationUrl, checkedOrderNavigation, localKeyReminders } from '../src/library-data.mjs';
 
 import {quotaProduct,quotaBaseline,quotaProtectedFields} from './fixtures/storage-quota.mjs';
 import {importFanaticalOrdersInPage} from '../src/order-importer.mjs';
@@ -912,10 +912,48 @@ test('an advertised last page remains mandatory when later headers omit it, and 
 });
 
 
-test('full and quick imports retain separate same-product purchases and multiplicity without raw order identifiers',async()=>{
-  const orders=[1,2].map(n=>{const id='repeat-order-'+n,leaf={...detail.items[0].bundles[0].games[0]};return {summary:{...summary,_id:id,items:[{name:'Bundle '+n,bundles:[{games:Array.from({length:n},()=>({name:leaf.name}))}]}]},detail:{...detail,_id:id,date:'2026-09-0'+n+'T00:00:00Z',items:[{...detail.items[0],name:'Bundle '+n,bundles:[{games:Array.from({length:n},()=>leaf)}]}]}};});
+test('same-product purchases and quantities retain distinct, private order destinations',async()=>{
+  const orders=[1,2].map(n=>{const id='repeat-order-'+n,leaf={...detail.items[0].bundles[0].games[0],status:'fulfilled',drm:{steam:true}};return {summary:{...summary,_id:id,items:[{name:'Bundle '+n,bundles:[{games:Array.from({length:n},()=>({name:leaf.name}))}]}]},detail:{...detail,_id:id,date:'2026-09-0'+n+'T00:00:00Z',items:[{...detail.items[0],name:'Bundle '+n,bundles:[{games:Array.from({length:n},()=>leaf)}]}]}};});
   const run=harness({respond:async path=>({status:200,headers:path==='/api/user/orders'?{'x-total-count':String(orders.length)}:{},data:path==='/api/user/orders'?orders.map(row=>row.summary):orders.find(row=>row.detail._id===path.split('/').at(-1))?.detail})});await run.scan();let item=run.stored.fanaticalLibraryItems[0];assert.equal(run.stored.fanaticalLibraryItems.length,1);assert.equal(item.purchaseOrigins.length,2);assert.deepEqual(item.purchaseOrigins.map(row=>row.quantity),[1,2]);assert.equal(item.bundle.title,'Bundle 2');
-  const third=structuredClone(orders[0]);third.summary._id=third.detail._id='repeat-order-3';third.detail.date='2026-09-03T00:00:00Z';orders.push(third);await run.scan(false);item=run.stored.fanaticalLibraryItems[0];assert.equal(item.purchaseOrigins.length,3);await run.scan(false);assert.equal(run.stored.fanaticalLibraryItems[0].purchaseOrigins.length,3);assert(!JSON.stringify(run.stored).includes('repeat-order'));
+  const third=structuredClone(orders[0]);third.summary._id=third.detail._id='repeat-order-3';third.detail.date='2026-09-03T00:00:00Z';orders.push(third);await run.scan(false);item=run.stored.fanaticalLibraryItems[0];assert.equal(item.purchaseOrigins.length,3);await run.scan(false);assert.equal(run.stored.fanaticalLibraryItems[0].purchaseOrigins.length,3);
+  const account=run.stored.fanaticalAccountId, url='chrome-extension://'+'a'.repeat(32)+'/src/options.html';
+  const rows=localKeyReminders(run.stored.fanaticalLibraryItems);
+  for(const row of rows) {
+    const n=Number(row.purchasedAt.slice(8,10));
+    assert.equal(row.purchaseRef,fingerprint('repeat-order-'+n));
+    assert.equal((await run.store('keyReminderDestination',[account,row.ref],url)).result,orderNavigationUrl('repeat-order-'+n));
+  }
+  assert.equal((await run.store('keyReminderDestination',['bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',rows[0].ref],url)).ok,false);
+  assert.equal((await run.store('keyReminderDestination',[account,rows[0].ref])).ok,false,'provider content scripts cannot request the destination');
+  const {fanaticalOrderNavigation,...publicState}=run.stored;
+  assert.equal(Object.keys(fanaticalOrderNavigation[account]).length,3);
+  const backup=(await run.store('backup',[],url)).result;
+  const [source]=await GalacticPurchaseAdapters.accounts('fan',run.stored);
+  const shared=await GalacticPurchaseAdapters.snapshot('fan',run.stored,source.accountRef);
+  assert(!JSON.stringify([publicState,backup,shared]).includes('repeat-order-'));
+  const catalog=createTitleCatalog(run.stored.fanaticalLibraryItems);
+  assert(!JSON.stringify(catalog).includes('repeat-order-'));
+  assert(!createTitleCatalogCsv(run.stored.fanaticalLibraryItems).includes('repeat-order-'));
+  delete run.stored.fanaticalOrderNavigation;
+  assert.equal((await run.store('keyReminderDestination',[account,rows[0].ref],url)).result,null);
+  run.paths.length=0;
+  const refreshed=await run.send(false);assert(refreshed.ok,refreshed.error);
+  assert.equal(run.paths.length,1,'a Quick scan recovers older links from the already-read listing');
+  assert.deepEqual(run.stored.fanaticalOrderNavigation,fanaticalOrderNavigation);
+  assert(!JSON.stringify(refreshed).includes('repeat-order-'));
+  const restored=await run.store('restore',[backup],url);assert(restored.ok,restored.error);
+  assert.deepEqual(run.stored.fanaticalOrderNavigation,fanaticalOrderNavigation,'same-account restore retains verified local links');
+  const portable=harness();
+  const copied=await portable.store('restore',[{...backup,fanaticalOrderNavigation}],url);assert(copied.ok,copied.error);
+  assert.equal((await portable.store('keyReminderDestination',[account,rows[0].ref],url)).result,null,'portable backup never contains a raw order ID');
+});
+
+test('navigation accepts an opaque path segment only when its digest matches eligible evidence',async()=>{
+  const id='000000a1b2c3d4e5f6000123', ref=fingerprint(id), foreign='000000a1b2c3d4e5f6000124';
+  const receipt={verifiedOrderFingerprints:[ref],orderFingerprints:[ref]};
+  for(const invalid of ['../orders','order/123','id%2fescape','https://www.fanatical.com/en/orders/abc',null,{}])assert.equal(orderNavigationUrl(invalid),null);
+  assert.equal(orderNavigationUrl(id),'https://www.fanatical.com/en/orders/'+id);
+  assert.deepEqual(await checkedOrderNavigation([[ref,foreign],[fingerprint(foreign),foreign],[ref,id]],receipt,[]),[[ref,id]]);
 });
 
 
@@ -1033,7 +1071,7 @@ const settle=()=>new Promise(resolve=>setImmediate(resolve));
 const libraryView=stored=>({items:stored.fanaticalLibraryItems,fingerprints:stored.fanaticalScannedOrderFingerprints,historical:(stored.fanaticalHistoricalItems??[]).map(entry=>entry.item.sourceItemId).sort(),mode:stored.fanaticalImportSummary?.scanMode,scanned:stored.fanaticalImportSummary?.ordersScanned});
 const passKeys=stored=>Object.keys(stored).filter(key=>key==='fanaticalFullScanPass'||key.startsWith('fanaticalFullScanPart:'));
 const detailPaths=run=>run.paths.filter(path=>/\/api\/user\/orders\/order-/u.test(path));
-async function singleRunLibrary(history){const single=harness({respond:history.respond});const reply=await single.scan(true);assert.equal(reply.ordersScanned,history.orders.length);return libraryView(single.stored);}
+async function singleRunLibrary(history,pageOverrides){const single=harness({respond:history.respond,pageOverrides});const reply=await single.scan(true);assert.equal(reply.ordersScanned,history.orders.length);return libraryView(single.stored);}
 
 test('a batched Full scan saves exactly what a single-run Full scan saves and leaves no progress records behind',async()=>{
  const history=longHistory(450),run=harness({respond:history.respond});
@@ -1047,19 +1085,25 @@ test('a batched Full scan saves exactly what a single-run Full scan saves and le
 
 test('an interrupted Full scan keeps verified batches, does not advance the complete checkpoint and resumes without rereading them',async()=>{
  const history=longHistory(450);let details=0,interrupt=true;
+ const keyed=[history.orders[0],history.orders.at(-1)];
+ for(const row of keyed)Object.assign(row.detail.items[0].bundles[0].games[0],{status:'fulfilled',drm:{steam:true}});
+ const pageOverrides={Date:class extends Date{constructor(...args){super(...(args.length?args:['2026-11-19T00:00:00Z']));}}};
  const respond=async(path,options)=>{const url=new URL(path,'https://www.fanatical.com');if(url.pathname==='/api/user/orders'&&interrupt&&details>=200)return {status:401,data:null};if(url.pathname!=='/api/user/orders')details++;return history.respond(path,options);};
- const run=harness({respond});
+ const run=harness({respond,pageOverrides});
  const first=await run.send(true);assert.equal(first.ok,false);
  const saved=run.stored.fanaticalLibraryItems.map(item=>item.sourceItemId);
  assert.equal(saved.length,201,'200 verified purchases saved beside the earlier one');assert(saved.includes('product-654321'),'earlier purchase kept');
  assert.deepEqual(run.stored.fanaticalImportSummary,run.before.fanaticalImportSummary,'complete checkpoint not advanced');
  assert.equal(run.stored.fanaticalLastScanAttempt.status,'incomplete');
  assert.equal(run.stored.fanaticalFullScanPass.done.length,200);assert.equal(run.stored.fanaticalFullScanPass.parts,1);
+ const navigation=()=>run.stored.fanaticalOrderNavigation?.[run.stored.fanaticalAccountId];
+ assert.deepEqual(navigation(),{[fingerprint(keyed[0].detail._id)]:keyed[0].detail._id});
  interrupt=false;await settle();run.paths.length=0;
  const resumed=await run.send(true);assert(resumed.ok,resumed.error);
  assert.equal(detailPaths(run).length,250,'only the remaining orders are read');
- assert.deepEqual(libraryView(run.stored),await singleRunLibrary(history));
+ assert.deepEqual(libraryView(run.stored),await singleRunLibrary(history,pageOverrides));
  assert.deepEqual(passKeys(run.stored),[]);
+ assert.deepEqual(navigation(),Object.fromEntries(keyed.map(row=>[fingerprint(row.detail._id),row.detail._id])));
  const before=structuredClone(libraryView(run.stored));await settle();
  const quick=await run.send(false);assert(quick.ok,quick.error);assert.deepEqual(libraryView(run.stored).items,before.items,'repeat scan is idempotent');
 });
