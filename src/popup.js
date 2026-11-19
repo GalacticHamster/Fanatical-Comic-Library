@@ -3,7 +3,7 @@
 (async function popup() {
   const { fanaticalLibraryItems: items = [] } = await chrome.storage.local.get({ fanaticalLibraryItems: [] });
   document.querySelector('#status').textContent = items.length
-    ? `${items.length} item${items.length === 1 ? '' : 's'} in your local library.`
-    : 'No titles imported yet.';
+    ? `${items.length.toLocaleString()} item${items.length === 1 ? '' : 's'} in your local library.`
+    : 'Nothing saved yet. Open your Fanatical Orders page to import your purchases.';
   document.querySelector('#open-options').addEventListener('click', () => chrome.runtime.openOptionsPage());
 }());

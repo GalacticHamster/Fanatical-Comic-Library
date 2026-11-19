@@ -585,3 +585,12 @@ test('FAN-only local reminder controls need no GL and stale rendered buttons can
 test('local reminder list is paginated and separates unknown evidence from actionable unrevealed keys',async()=>{
  const products=Array.from({length:52},(_,i)=>({...item('Game '+i,'product-'+String(i).padStart(6,'0')),purchaseOrigins:[{purchaseRef:'a'.repeat(64),bundle:{sourceItemId:'bundle-123456',title:'Bundle'},keyStatus:i===51?'unknown':'unrevealed',keyCheckedAt:'2026-11-09T12:00:00.000Z'}]}));const ui=await optionsHarness({fanaticalLibraryItems:products});assert.equal(ui.get('#local-reminder-list').children.length,50);await ui.click('#local-reminder-next');assert.equal(ui.get('#local-reminder-list').children.length,1);await ui.change('#local-reminder-filter','unknown');assert.equal(ui.get('#local-reminder-list').children.length,1);assert.match(ui.get('#local-reminder-list').children[0].children[0].textContent,/status unknown/);
 });
+
+test('options library metadata filter lists titles with no known purchase date, never inventing one', async () => {
+  const dated = { ...item('Dated Title', 'product-1'), purchaseOrigins: [{ purchaseRef: 'a'.repeat(64), bundle: { sourceItemId: 'b1', title: 'B1' }, purchaseDate: '2024-01-01T00:00:00Z', quantity: 1 }] };
+  const undated = { ...item('Undated Title', 'product-2'), purchaseOrigins: [{ purchaseRef: 'b'.repeat(64), bundle: { sourceItemId: 'b2', title: 'B2' }, purchaseDate: null, quantity: 1 }] };
+  const partly = { ...item('Partly Dated', 'product-3'), purchaseOrigins: [{ purchaseRef: 'c'.repeat(64), bundle: { sourceItemId: 'b3', title: 'B3' }, purchaseDate: null, quantity: 1 }, { purchaseRef: 'd'.repeat(64), bundle: { sourceItemId: 'b4', title: 'B4' }, purchaseDate: '2025-02-02T00:00:00Z', quantity: 1 }] };
+  const ui = await optionsHarness({ fanaticalLibraryItems: [dated, undated, partly] });
+  await ui.change('#library-filter-metadata', 'undated');
+  assert.deepEqual(ui.get('#library-preview').children.map(row => row.textContent), ['Undated Title — 1 purchase']);
+});

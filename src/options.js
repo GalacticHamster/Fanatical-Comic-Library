@@ -400,6 +400,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
           );
         }
         if (metadata === 'multi-origin') return typeof item === 'object' && FanaticalLibrary.purchaseCount([item]).count > 1;
+        if (metadata === 'undated') return typeof item !== 'object' || !FanaticalLibrary.purchaseList([item]).purchases.some(purchase => purchase.date) && !item.purchaseDate;
         return true;
       });
     }
