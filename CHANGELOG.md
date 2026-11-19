@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Export title catalog (CSV) gives spreadsheet-ready titles with purchase status, first and last purchase dates, a numeric purchase count with its confidence, source, bundle names and every purchase date, in the same columns as Humble Library's CSV. Both catalogs now list the same merged titles as the Library page; the JSON format is unchanged.
+- An undated purchase among several orders of the same title is no longer shown with another order's date.
 - Library rows count purchases instead of bundles, as Humble Library does: two orders of the same bundle are two purchases, a quantity of two in one order is two, and a total that may include the same order twice says "at least". Owned titles bought more than once show Owned ×N on bundle pages and "purchased N times" in the bundle summary. Ownership on other stores and promotional gifts are never counted. The Bought more than once filter replaces Multiple purchase origins.
 - A game whose name is a dotted acronym now matches its undotted title on bundle pages, as in Humble Library: F.E.A.R. 2 and FEAR 2 are the same game. Sequel numbers, editions, remasters, collections, subtitles and other media are still kept apart.
 - Rescan all purchases reads order details in batches of 200 and saves each batch's verified purchases as it goes. If the scan stops, running it again continues where it left off instead of starting over. The library is replaced and absent items move to history only once every order has been verified, as before.

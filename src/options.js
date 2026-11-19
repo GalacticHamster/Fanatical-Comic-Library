@@ -1,4 +1,4 @@
-import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitleCatalog } from './library-data.mjs';
+import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitleCatalog, createTitleCatalogCsv } from './library-data.mjs';
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Galactic Hamster
 
@@ -62,7 +62,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
 
   function setLibraryBusy(busy) {
     libraryBusy = busy;
-    for (const selector of ['#import-file', '#export', '#export-catalog', '#reset']) $(selector).disabled = busy;
+    for (const selector of ['#import-file', '#export', '#export-catalog', '#export-catalog-csv', '#reset']) $(selector).disabled = busy;
   }
 
   const STORAGE_KEY = 'fan_library_browser_state';
@@ -212,7 +212,8 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
           title: o.bundle?.title || item.bundle?.title || '',
           slug: o.bundle?.slug || ''
         },
-        purchaseDate: o.purchaseDate || item.purchaseDate || null,
+        // An item's date belongs to one order only when it has exactly one; an undated order of several stays undated.
+        purchaseDate: o.purchaseDate || (item.purchaseOrigins.length === 1 ? item.purchaseDate : null) || null,
         purchaseRef: o.purchaseRef || '',
         quantity: o.quantity || 1,
         drm: Array.isArray(o.drm) ? o.drm : (Array.isArray(item.drm) ? item.drm : (typeof item.drm === 'string' ? [item.drm] : [])),
@@ -983,10 +984,18 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     finally { setLibraryBusy(false); }
   });
 
-  $('#export-catalog').addEventListener('click',async()=>{
+  // Both catalogs list the same merged title rows the Library shows; saved records are only read.
+  const exportCatalog=async format=>{
     if(libraryBusy)return;setLibraryBusy(true);
-    try{const saved=await chrome.storage.local.get({fanaticalLibraryItems:[]}),catalog=createTitleCatalog(saved.fanaticalLibraryItems),link=document.createElement('a');link.href=URL.createObjectURL(new Blob([JSON.stringify(catalog,null,2)],{type:'application/json'}));link.download='fanatical-title-catalog.json';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),0);$('#local-status').textContent='Exported catalog titles and identity metadata only; this is not a recoverable ownership backup.';}catch{$('#local-status').textContent='Could not export the title catalog.';}finally{setLibraryBusy(false);}
-  });
+    try{
+      const saved=await chrome.storage.local.get({fanaticalLibraryItems:[]}),rows=consolidateLibrary(saved.fanaticalLibraryItems),link=document.createElement('a');
+      const csv=format==='csv',content=csv?createTitleCatalogCsv(rows):JSON.stringify(createTitleCatalog(rows),null,2);
+      link.href=URL.createObjectURL(new Blob([content],{type:csv?'text/csv;charset=utf-8':'application/json'}));link.download='fanatical-title-catalog.'+(csv?'csv':'json');link.click();setTimeout(()=>URL.revokeObjectURL(link.href),0);
+      $('#local-status').textContent=csv?`Exported ${rows.length.toLocaleString()} titles with their purchase counts and dates as CSV; this is not a recoverable ownership backup.`:'Exported catalog titles and identity metadata only; this is not a recoverable ownership backup.';
+    }catch{$('#local-status').textContent='Could not export the title catalog.';}finally{setLibraryBusy(false);}
+  };
+  $('#export-catalog').addEventListener('click',()=>exportCatalog('json'));
+  $('#export-catalog-csv').addEventListener('click',()=>exportCatalog('csv'));
 
   document.querySelector('#library-dismiss-all-rejected')?.addEventListener('click', async () => {
     if (!confirm('Dismiss all unimported/rejected items? You can recover them in a future rescan if needed.')) return;

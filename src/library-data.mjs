@@ -555,6 +555,27 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
 }
 
 /** Portable catalog metadata deliberately excludes purchase/ownership evidence. */
+/**
+ * Spreadsheet catalog: the same title rows as the Library page, with the purchase count and dates the
+ * Library and bundle badges use (FanaticalLibrary.purchaseList). Columns match Humble Library's CSV.
+ * Activation on Steam or another store is not known from Fanatical purchases and is not exported.
+ */
+export function createTitleCatalogCsv(rows){
+  const F=globalThis.FanaticalLibrary,catalog=createTitleCatalog(rows);
+  const cell=value=>{let text=String(value??'');if(/^[=+@\-\t\r]/u.test(text))text="'"+text;return '"'+text.replace(/"/gu,'""')+'"';};
+  // Calendar days in this browser's time zone, as the Library shows them; never inferred.
+  const time=value=>typeof value==='number'?value:typeof value==='string'?Date.parse(value):NaN;
+  const day=value=>{const t=time(value);if(!Number.isFinite(t))return '';const d=new Date(t);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
+  const out=[['Title','Media type','Purchase status','First purchased','Last purchased','Purchase count','Purchase count confidence','Source','Bundle / purchase name','Purchase dates']];
+  catalog.items.forEach((item,index)=>{
+    const row=rows[index],{purchases:list,exact}=F.purchaseList(typeof row==='object'?[row]:[]),purchased=list.length>0;
+    const purchases=list.map(p=>({name:String(p.name??'').trim(),time:time(p.date),date:day(p.date)})).sort((a,b)=>{const x=Number.isFinite(a.time),y=Number.isFinite(b.time);return x&&y?a.time-b.time:x?-1:y?1:0;});
+    const dated=purchases.filter(p=>p.date),media=item.mediaType==='book'&&typeof row==='object'&&F.isComicItem?.(row)?'comic':item.mediaType;
+    out.push([item.title,media,purchased?'Purchased':'Not recorded as a purchase',dated[0]?.date??'',dated.at(-1)?.date??'',purchases.length,purchased?(exact?'Exact':'At least'):'',purchased?'Fanatical purchase':'Added manually',purchases.map(p=>p.name).join('; '),purchases.map(p=>p.date||'unknown').join('; ')]);
+  });
+  return '\uFEFF'+out.map(row=>row.map(cell).join(',')).join('\r\n')+'\r\n';
+}
+
 export function createTitleCatalog(items){
   return {format:'fanatical-title-catalog',version:1,items:sanitizeImportResult({items}).items.map(item=>({title:item.title,mediaType:item.mediaType,...(item.externalIds?{externalIds:item.externalIds}:{}),...globalThis.FanaticalLibrary.bibliographicFields(item)}))};
 }

@@ -979,32 +979,33 @@
   // older imports without an order key. When such a record shares a bundle with a referenced order
   // it may be that order, so the total is the smallest possible (exact: false). Other stores'
   // ownership and promotional gifts are never library purchases, so they are never counted.
-  function purchaseCount(items) {
-    const ordered = new Map(), unordered = new Map();
-    let bare = 0;
+  // The individual purchases behind that count, each with its bundle name and purchase date, for the
+  // CSV catalog. A quantity of two in one order is two entries.
+  function purchaseList(items) {
+    const ordered = new Map(), unordered = new Map(), bare = [];
     for (const item of items ?? []) {
       if (!item || typeof item !== 'object' || item.source && item.source !== 'fanatical') continue;
       const origins = Array.isArray(item.purchaseOrigins) ? item.purchaseOrigins : [];
-      // A record with neither order nor bundle carries no purchase evidence (shown as a manual entry).
-      if (!origins.length) { if (item.sourceItemId && (item.bundle?.sourceItemId || item.bundle?.title)) bare++; continue; }
+      if (!origins.length) { if (item.sourceItemId && (item.bundle?.sourceItemId || item.bundle?.title)) bare.push({ name: String(item.bundle?.title ?? ''), date: item.purchaseDate ?? null }); continue; }
       for (const origin of origins) {
         const copies = Number.isSafeInteger(origin?.quantity) && origin.quantity > 0 ? origin.quantity : 1;
         const bundle = String(origin?.bundle?.sourceItemId || origin?.bundle?.title || '').toLowerCase();
-        if (typeof origin?.purchaseRef === 'string' && origin.purchaseRef) {
-          const key = JSON.stringify([origin.purchaseRef, bundle, item.sourceItemId ?? '']);
-          ordered.set(key, Math.max(ordered.get(key) ?? 0, copies));
-        } else {
-          const key = JSON.stringify([bundle, item.sourceItemId ?? '']);
-          unordered.set(key, Math.max(unordered.get(key) ?? 0, copies));
-        }
+        const entry = { name: String(origin?.bundle?.title ?? ''), date: origin?.purchaseDate ?? (origins.length === 1 ? item.purchaseDate : null) ?? null, copies };
+        const map = typeof origin?.purchaseRef === 'string' && origin.purchaseRef ? ordered : unordered;
+        const key = JSON.stringify(map === ordered ? [origin.purchaseRef, bundle, item.sourceItemId ?? ''] : [bundle, item.sourceItemId ?? '']);
+        if ((map.get(key)?.copies ?? 0) < copies) map.set(key, { ...entry, date: entry.date ?? map.get(key)?.date ?? null });
       }
     }
-    const sum = map => [...map.values()].reduce((total, copies) => total + copies, 0);
     const orderedBundles = new Set([...ordered.keys()].map(key => JSON.parse(key).slice(1).join('\u0000')));
-    // An unreferenced record of a bundle that also has a referenced order may be that same order.
-    const separate = [...unordered].filter(([key]) => !orderedBundles.has(JSON.parse(key).join('\u0000'))).reduce((total, [, copies]) => total + copies, 0);
-    const count = sum(ordered) + separate + bare, max = sum(ordered) + sum(unordered) + bare;
-    return count === max ? { count, exact: true } : { count, max, exact: false };
+    const expand = entries => entries.flatMap(({ name, date, copies }) => Array.from({ length: copies }, () => ({ name, date })));
+    const separate = [...unordered].filter(([key]) => !orderedBundles.has(JSON.parse(key).join('\u0000'))).map(([, entry]) => entry);
+    const purchases = [...expand([...ordered.values()]), ...expand(separate), ...bare];
+    const max = purchases.length + expand([...unordered].filter(([key]) => orderedBundles.has(JSON.parse(key).join('\u0000'))).map(([, entry]) => entry)).length;
+    return { purchases, exact: purchases.length === max, max };
+  }
+  function purchaseCount(items) {
+    const { purchases, exact, max } = purchaseList(items);
+    return exact ? { count: purchases.length, exact } : { count: purchases.length, max, exact };
   }
   const purchaseCountText = ({ count, exact }) => `${exact ? '' : 'at least '}${count.toLocaleString()} purchase${count === 1 ? '' : 's'}`;
 
@@ -1564,7 +1565,7 @@
   }
 
   async function storageSet(updates){const response=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'patch',args:[updates]});if(!response?.ok)throw new Error(response?.error??'Settings storage is unavailable.');}
-  global.FanaticalLibrary = { purchaseCount, purchaseCountText, formatScanSummary, purchaseImportScope, purchaseImportProgress, purchaseActivity, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, isCompleteBundleCatalogue, isBundleOverlapProduct, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, sendGalacticMatch, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, COMPANION_IDENTITIES, companionBrowser, builtinGalacticId, resolveGalacticId, galacticAvailability, galacticPermissionDenied, trustedGalacticSender, companionTargetProblem, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft, isComicItem, mediaOverrideKey };
+  global.FanaticalLibrary = { purchaseCount, purchaseList, purchaseCountText, formatScanSummary, purchaseImportScope, purchaseImportProgress, purchaseActivity, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, isCompleteBundleCatalogue, isBundleOverlapProduct, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, sendGalacticMatch, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, COMPANION_IDENTITIES, companionBrowser, builtinGalacticId, resolveGalacticId, galacticAvailability, galacticPermissionDenied, trustedGalacticSender, companionTargetProblem, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft, isComicItem, mediaOverrideKey };
 }(globalThis));
 
 /* Account picker; all changes use the serialized writer. */

@@ -192,6 +192,10 @@ try {
   $('#export').click();await wait();
   const backup=JSON.parse(await exportedBlob.text());assert(backup.items.length===1&&!backup.orderFingerprints&&backup.schemaVersion===4&&backup.wishlistItems[0].weight===7,'Backup omitted wishlist or leaked scan authority');
   const upload=async text=>{const transfer=new DataTransfer();transfer.items.add(new File([text],'backup.json',{type:'application/json'}));$('#import-file').files=transfer.files;$('#import-file').dispatchEvent(new Event('change'));for(let attempt=0;attempt<8;attempt++){await wait();if(!$('#import-file').disabled)return;}throw new Error('File import did not finish')};
+  $('#export-catalog-csv').click();await wait();const catalogBytes=new Uint8Array(await exportedBlob.arrayBuffer()),catalogCsv=await exportedBlob.text();
+  assert(catalogBytes[0]===0xEF&&catalogBytes[1]===0xBB&&catalogBytes[2]===0xBF,'CSV catalog lost its byte-order mark');
+  assert(catalogCsv.replace(/^\uFEFF/u,'').startsWith('"Title","Media type","Purchase status","First purchased","Last purchased","Purchase count","Purchase count confidence","Source","Bundle / purchase name","Purchase dates"\\r\\n'),'CSV catalog header changed');
+  assert(catalogCsv.includes('"Comic #10","comic","Purchased","","","2","Exact","Fanatical purchase","Test comics; Test comics","unknown; unknown"'),'CSV catalog row: '+catalogCsv.slice(0,600));
   $('#export-catalog').click();await wait();const catalog=JSON.parse(await exportedBlob.text());assert(catalog.format==='fanatical-title-catalog'&&!catalog.items[0].bundle&&!catalog.items[0].purchaseDate,'Catalog retained purchase evidence');await upload(JSON.stringify(catalog));assert(values.fanaticalLibraryItems.length===1&&$('#import-status').textContent.includes('failed'),'Catalog was accepted as ownership backup');
   await upload('invalid JSON');assert(values.fanaticalLibraryItems.length===1,'Invalid JSON changed library');
   confirmAnswer=false;await upload(JSON.stringify({schemaVersion:1,items:[]}));assert(values.fanaticalLibraryItems.length===1,'Cancelled restore changed library');
