@@ -6,9 +6,10 @@ const fan=()=>document.querySelector('#fanatical-library-importer'),gl=()=>docum
 const summary=()=>document.querySelector('[data-fanatical-library-summary]');
 const orders=async()=>{await until(()=>fan()&&gl());check(document.querySelectorAll('#fanatical-library-importer').length===1&&document.querySelectorAll('#galactic-library-fanatical-importer').length===1,'Exactly one banner and one GL popup on Orders');};
 const navigate=(path,method='pushState',dom=true)=>{history[method]({},'',path);if(dom)document.querySelector('main').innerHTML=path.includes('/bundle/')?navigationCards:'Unrelated website page';};
-const glClick=()=>navigationShadows.get(gl()).querySelector('button[data-mode]').click();
+const glClick=async()=>{const host=gl();await until(()=>host===gl()&&getComputedStyle(host).display!=='none');navigationShadows.get(host).querySelector('button[data-mode]').click();};
 try{
  await orders();
+ await until(()=>getComputedStyle(fan()).display!=='none'&&!fan().querySelector('[data-import-mode]').disabled);
  navigationHoldFan=true;fan().querySelector('[data-profile-label]').value='Fixture';fan().querySelector('[data-profile-confirm]').checked=true;fan().querySelector('[data-import-mode="new"]').click();
  await until(()=>globalThis.navigationReleaseFan);
  centralDelayMs=300;navigate('/en/bundle/test-comics');
@@ -21,15 +22,15 @@ try{
  navigate('/en/bundle/test-comics');await until(()=>summary()&&document.querySelector('.fanatical-library-owned-elsewhere-badge'));
  navigationReleaseFan();await until(()=>navigationCompletedFan===1);await pause(50);
  check(!fan()&&!gl(),'A completed detached FAN import does not recreate import UI');
- navigate('/en/orders','replaceState');await orders();
+ navigationImporterOwner='galactic';navigate('/en/orders','replaceState');await orders();
  check(!fan().querySelector('[data-import-mode]').disabled,'Returning Orders is usable after the existing background import finishes');
- navigationHoldGl=true;glClick();await until(()=>globalThis.navigationReleaseGl);
+ navigationHoldGl=true;await glClick();await until(()=>globalThis.navigationReleaseGl);
  navigate('/en/account');await until(()=>!fan()&&!gl()&&!summary());
  check(true,'Orders to unrelated page removes import and bundle UI');
  navigate('/en/orders','pushState',false);await orders(); // URL-only history transition.
  const fresh=gl();navigationReleaseGl();await pause(100);
  check(navigationCommits===0&&gl()===fresh,'Stale GL scan cannot commit through a replacement panel or recreate a detached popup');
- glClick();await until(()=>navigationCommits===1);
+ await glClick();await until(()=>navigationCommits===1);
  check(true,'Fresh GL import succeeds after returning to Orders');
  navigationHoldBundle=true;navigate('/en/bundle/test-comics');await until(()=>globalThis.navigationRejectBundle);
  navigate('/en/account','replaceState');await until(()=>!summary()&&!gl()&&!fan());

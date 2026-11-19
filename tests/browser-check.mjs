@@ -14,7 +14,9 @@ const themeMode=process.argv.includes('--theme'),themeWidth=process.argv.include
 const lifecycle=process.argv.includes('--lifecycle');
 const hydration=process.argv.includes('--hydration');
 const navigation=process.argv.includes('--navigation');
-const glPack=navigation?await(await import('../../GalacticLibrary/scripts/release.mjs')).createRelease(undefined,undefined,firefox?'firefox':'chrome'):null;
+const glPack=navigation?(process.env.GL_NAVIGATION_PACKAGE
+  ?{files:(await import('../../GalacticLibrary/scripts/release.mjs')).readRuntimeZip(fs.readFileSync(process.env.GL_NAVIGATION_PACKAGE))}
+  :await(await import('../../GalacticLibrary/scripts/release.mjs')).createRelease(undefined,undefined,firefox?'firefox':'chrome')):null;
 const packaged=process.argv.includes('--release')?(process.env.FAN_BROWSER_PACKAGE?{files:readRuntimeZip(fs.readFileSync(process.env.FAN_BROWSER_PACKAGE))}:await createRelease(undefined,undefined,firefox?'firefox':'chrome')):null;
 const readRuntime=name=>process.env.FAN_TEST_CONTENT_REF&&name==='src/content.js'
   ?execFileSync('git',['show',process.env.FAN_TEST_CONTENT_REF+':'+name],{cwd:root,windowsHide:true,encoding:'utf8',maxBuffer:4*1024*1024})
