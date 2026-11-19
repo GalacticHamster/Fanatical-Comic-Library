@@ -17,3 +17,12 @@ test('saved Fanatical media types outside the sharing vocabulary map like Humble
  assert(!JSON.stringify(data).includes('control'));
  assert.deepEqual(f.saved,before,'saved purchases and their media types are unchanged');
 });
+
+test('an unsafe optional store link is left out of a shared Fanatical record without withholding the purchase',async()=>{
+ const f=fixture(),item=(n,extra={})=>({title:'Synthetic '+n,mediaType:'game',source:'fanatical',sourceItemId:'product_'+n+'_id',bundle:{sourceItemId:'bundle_123',title:'Synthetic bundle'},...extra});
+ f.saved.fanaticalLibraryItems=[item(1,{detailUrl:'https://example.invalid/game'}),item(2,{detailUrl:'https://www.fanatical.com/en/game/synthetic'})];
+ const [account]=await f.store.execute('syncAccounts'),before=structuredClone(f.saved.fanaticalLibraryItems),data=await f.store.execute('handoffSnapshot',[account.accountRef]);
+ assert.deepEqual(data.records.map(r=>[r.providerItemId,r.metadata.detailUrl??null]),[['product_1_id',null],['product_2_id','https://www.fanatical.com/en/game/synthetic']]);
+ assert(data.limitations.includes('1 saved store link was not a Humble or Fanatical address and was left out; the purchase is still shared.'));
+ assert(!data.limitations.some(l=>/cannot be shared/.test(l)));assert.deepEqual(f.saved.fanaticalLibraryItems,before);
+});
