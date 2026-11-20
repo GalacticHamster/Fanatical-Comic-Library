@@ -86,6 +86,15 @@ class MockElement {
     this.attributes.delete(name);
   }
 
+  hasAttribute(name) {
+    return this.attributes.has(name);
+  }
+
+  toggleAttribute(name, force = !this.attributes.has(name)) {
+    if (force) this.attributes.set(name, ''); else this.attributes.delete(name);
+    return force;
+  }
+
   addEventListener(type, handler) {
     if (!this.listeners[type]) this.listeners[type] = [];
     this.listeners[type].push(handler);
@@ -360,6 +369,9 @@ function createHarness() {
       }
     }
   };
+  context.requestAnimationFrame = callback => setTimeout(() => callback(Date.now()), 0);
+  context.cancelAnimationFrame = handle => clearTimeout(handle);
+  context.getComputedStyle ??= () => ({ pointerEvents: "auto" });
   context.globalThis = context;
   vm.createContext(context);
 

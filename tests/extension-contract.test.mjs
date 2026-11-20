@@ -32,7 +32,8 @@ test('quick scans persist only opaque order fingerprints and full scans are expl
 
 test('library management follows the Fanatical Orders importer flow', () => {
   assert.match(popup, /openOptionsPage/);
-  assert.match(options, /https:\/\/www\.fanatical\.com\/en\/orders/);
+  assert.match(options, /FANATICAL_ORDERS_URL/);
+  assert.match(fs.readFileSync(new URL('src/library-data.mjs', root), 'utf8'), /FANATICAL_ORDERS_URL = 'https:\/\/www\.fanatical\.com\/en\/orders'/);
   assert.match(content, /isOrderHistoryPage/);
   assert.match(content, /Import new purchases/);
   assert.match(content, /Rescan all purchases/);
