@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 1.0.6
 
 - A purchase change saved while Galactic Library is sending purchases to Fanatical Library is now always sent to Galactic Library in the same sync, including with Galactic Library 1.0.4. Previously both extensions could show Synced until the next change.
 - After a Full scan that ends with unread orders, or is paused or cancelled, Options reports how many purchases the whole scan verified, not only its last batch of up to 200 orders.
@@ -46,7 +46,7 @@
 
 - Fixed imports failing after navigating to Fanatical's Orders page, improved handling of promotional items in purchases, and expanded diagnostics for incomplete imports.
 
-## Unreleased ? automatic local sharing
+## 1.0.4 — automatic local sharing
 
 - Automatically pair the sole saved provider account on each side, including populated libraries; retain relationships over sharing OFF/ON. Preserve valid historical Humble key dates and isolate malformed optional observations. Correct sharing checkbox alignment and actionable connection diagnostics.
 
