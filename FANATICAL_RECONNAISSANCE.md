@@ -268,3 +268,31 @@ first.
 - Firefox compatibility for Galactic's current external-message pairing.
 
 These are bounded validation tasks, not reasons to delay the P0 design.
+
+### Order-detail `serialExpiry` (unresolved)
+
+Order-detail product entries can carry a `serialExpiry` field. Its type,
+format and meaning are not established: no captured sample, provider
+documentation or support article describes it, and it may be a redemption
+deadline, a key-display expiry or something else. The only fixtures are
+synthetic.
+
+Current handling (`keyEvidenceInPage` in `src/order-importer.mjs`, mirrored
+from Galactic Library's `shared/fanatical-acquisition.js`) reads only whether
+the field is non-null. A non-null value makes an otherwise ordinary Steam key's
+reveal status `unknown`; the value is never stored, exported or shared. Such
+keys are listed under Unknown key status in Key and access reminders. They are
+never marked expired and never hidden.
+
+Before the field may produce a deadline or an Expired state:
+
+1. With the account owner's consent, capture redacted examples of non-null
+   values from a signed-in order history, recording type and format only.
+2. Compare them with what the Fanatical order page shows for the same key
+   (for example a "redeem by" date).
+3. If it is confirmed as a redemption deadline, carry a sanitised date through
+   the shared acquisition engine (Galactic Library source, mirrored with the
+   engine pin) and reuse Humble Library's deadline views (Expiring in 30 days,
+   Expired).
+
+Until then Fanatical Library cards say "No deadline recorded".
