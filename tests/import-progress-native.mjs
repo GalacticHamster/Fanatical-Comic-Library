@@ -183,13 +183,18 @@ try{
        await navigate(optionsUrl);
        await wait('return !!globalThis.LibraryBrowser&&document.querySelector("#library-count").textContent.includes("37 unique items");','Library did not load');
        const count = await evaluate(`return (await chrome.tabs.query({})).filter(tab=>tab.url===${JSON.stringify(expected)}).length;`);
-       const label = await evaluate(`
+       await evaluate(`
          document.querySelector(${JSON.stringify(view)}).click();
          const search=document.querySelector('#library-search');
          search.value='Synthetic 0';search.dispatchEvent(new Event('input'));
          const details=document.querySelector('#library-preview details');
          details.querySelector('summary').click();
-         const action=details.querySelector('.library-open-purchase');
+         return details.open;
+       `);
+       // Orders render their contents on the details toggle event.
+       await wait('return !!document.querySelector("#library-preview details[open] .library-open-purchase");','Expanded purchase action did not render');
+       const label = await evaluate(`
+         const action=document.querySelector('#library-preview details[open] .library-open-purchase');
          if(action.textContent===${JSON.stringify(button)}) action.click();
          return action.textContent;
        `);

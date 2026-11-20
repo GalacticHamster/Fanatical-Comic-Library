@@ -103,16 +103,40 @@ HTMLAnchorElement.prototype.click = function() {};
 const common = `
 const wait=()=>new Promise(resolve=>setTimeout(resolve,350));
 const assert=(condition,message)=>{if(!condition)throw new Error(message)};
-const assertBadgesVisible=()=>{const panel=document.querySelector('[data-fanatical-library-summary]'),oldVisibility=panel?.style.visibility;if(panel)panel.style.visibility='hidden';try{for(const badge of document.querySelectorAll('[data-fanatical-library-for]')){
-  const host=badge.parentElement,card=host.closest('article'),css=getComputedStyle(badge),outline=getComputedStyle(host),b=badge.getBoundingClientRect(),h=host.getBoundingClientRect();
-  if(!h.width||!h.height)continue;
-  assert(css.position==='absolute','Provider button CSS moved the ownership badge into normal flow');
-  assert(b.top>=h.top&&b.bottom<=h.bottom&&b.left>=h.left&&b.right<=h.right,'Ownership badge is clipped outside the cover');
-  assert(outline.outlineStyle==='solid'&&parseFloat(outline.outlineWidth)>=2,'Ownership status is missing its cover border');
-  assert(b.top-h.top<(card?.querySelector(':scope > .new-to-bundle-label')?45:15),'Ownership badge is not at the top of the cover');
-  if(card?.querySelector(':scope > .new-to-bundle-label'))assert(b.top-h.top>=35,'Ownership badge overlaps the native New to bundle label');
-  assert(document.elementFromPoint(b.left+Math.min(10,b.width/2),b.top+b.height/2)===badge||b.top>=innerHeight,'Ownership badge cannot receive a click above the native card link');
-}}finally{if(panel)panel.style.visibility=oldVisibility;}};
+const hitCenter=element=>{
+  const rect=element.getBoundingClientRect();
+  const x=Math.floor(rect.left+rect.width/2),y=Math.floor(rect.top+rect.height/2);
+  assert(x>=0&&x<document.documentElement.clientWidth&&y>=0&&y<document.documentElement.clientHeight,
+    'Fixture click point outside the viewport: '+JSON.stringify({x,y,width:document.documentElement.clientWidth,height:document.documentElement.clientHeight}));
+  return {target:document.elementFromPoint(x,y),x,y};
+};
+const clickHit=({target,x,y})=>target.dispatchEvent(new MouseEvent('click',{
+  bubbles:true,cancelable:true,composed:true,view:window,clientX:x,clientY:y
+}));
+const assertBadgesVisible=()=>{
+  const panel=document.querySelector('[data-fanatical-library-summary]');
+  const oldVisibility=panel?.style.visibility,previousX=scrollX,previousY=scrollY;
+  if(panel)panel.style.visibility='hidden';
+  try {
+    for(const badge of document.querySelectorAll('[data-fanatical-library-for]')){
+      const host=badge.parentElement,card=host.closest('article'),css=getComputedStyle(badge),outline=getComputedStyle(host);
+      const b=badge.getBoundingClientRect(),h=host.getBoundingClientRect();
+      if(!h.width||!h.height)continue;
+      const hasNativeLabel=card?.querySelector(':scope > .new-to-bundle-label');
+      assert(css.position==='absolute','Provider button CSS moved the ownership badge into normal flow');
+      assert(b.top>=h.top&&b.bottom<=h.bottom&&b.left>=h.left&&b.right<=h.right,'Ownership badge is clipped outside the cover');
+      assert(outline.outlineStyle==='solid'&&parseFloat(outline.outlineWidth)>=2,'Ownership status is missing its cover border');
+      assert(b.top-h.top<(hasNativeLabel?45:15),'Ownership badge is not at the top of the cover');
+      if(hasNativeLabel)assert(b.top-h.top>=35,'Ownership badge overlaps the native New to bundle label');
+      badge.scrollIntoView({block:'center',inline:'nearest'});
+      const {target}=hitCenter(badge);
+      assert(target?.closest('[data-fanatical-library-for]')===badge,'Ownership badge is covered by '+(target?.outerHTML.slice(0,160)??'no hit target'));
+    }
+  } finally {
+    scrollTo(previousX,previousY);
+    if(panel)panel.style.visibility=oldVisibility;
+  }
+};
 const diagnostics=()=>document.querySelector('[data-fanatical-library-diagnostics]');
 const finish=result=>{const node=document.createElement('pre');node.id='browser-check-result';node.textContent=JSON.stringify(result);document.body.append(node);fetch('/result?route='+encodeURIComponent(location.pathname),{method:'POST',body:JSON.stringify(result)})};
 `;
@@ -147,7 +171,15 @@ try {
    }finally{chrome.storage.local.get=libraryGet;}}
   assert(document.querySelector('.fanatical-library-owned-elsewhere-badge'),'Missing external match');
   const badge=document.querySelector('.fanatical-library-owned-elsewhere-badge');
-  assert(badge.tagName==='BUTTON','Badge is not keyboard accessible');badge.click();
+  assert(badge.tagName==='BUTTON','Badge is not keyboard accessible');
+  badge.scrollIntoView({block:'center',inline:'nearest'});
+  const productId=badge.dataset.fanaticalLibraryFor;
+  const initialHash=location.hash;
+  const badgeHit=hitCenter(badge);
+  assert(badgeHit.target===badge,'Pointer over the ownership badge did not hit the badge');
+  badge.focus({preventScroll:true});
+  clickHit(badgeHit);
+  assert(location.hash===initialHash,'Badge click followed the native card link');
   const inspector=document.querySelector('#fanatical-library-evidence');
   assert(inspector?.open&&inspector.textContent.includes('Offered: External comic'),'Evidence inspector did not open');
   assert(inspector.textContent.includes('unknown'),'Unknown freshness was not disclosed');
@@ -189,7 +221,18 @@ try {
   await chrome.storage.local.set({fanaticalProfileLabel:'different'});await wait();assert(!historicalBadge(),'Foreign-profile history supplied a candidate');
   await chrome.storage.local.set({fanaticalProfileLabel:'personal'});await wait();assert(historicalBadge(),'Same-profile history did not return');
   await chrome.storage.local.set({fanaticalHistoricalItems:[]});await wait();assert(!historicalBadge()&&document.querySelectorAll('.fanatical-library-new-badge').length===3,'Cleared history retained a stale candidate');
-  finish({ok:true,scenario:'bundle diagnostics, filtering, Galactic removal'});
+  // Follow the native link last because navigation can tear down the current panel.
+  // At the smallest fixture size the open summary can cover the center of the card.
+  document.querySelector('.fanatical-library-summary-minimize').click();
+  const currentBadge=document.querySelector('[data-fanatical-library-for="'+productId+'"]');
+  const cover=currentBadge.parentElement, nativeLink=cover.closest('article').querySelector('.fixture-native-link');
+  cover.scrollIntoView({block:'start',inline:'nearest'});
+  const coverHit=hitCenter(cover);
+  assert(coverHit.target===nativeLink,'Pointer over the cover away from the badge hit '+(coverHit.target?.outerHTML.slice(0,160)??'no target'));
+  clickHit(coverHit);
+  assert(location.hash===nativeLink.hash,'Clicking outside the badge did not follow the native card link');
+  assert(!document.querySelector('#fanatical-library-evidence'),'Native card click opened the ownership inspector');
+  finish({ok:true,scenario:'bundle diagnostics, filtering, Galactic removal, badge and native card clicks'});
 }catch(error){finish({ok:false,error:error.message})}
 `;
 const optionsChecks = `${common}
@@ -226,7 +269,13 @@ try {
   assert($('#library-preview li').textContent.includes('Restored comic'),'Preview did not refresh');
   assert(values.fanaticalShowDiagnostics&&values.galacticLibraryExtensionId,'Restore removed settings');assert(values.fanaticalSummaryPreferences.position==='top-right'&&values.fanaticalSummaryPreferences.minimized,'Restore changed display preferences');
   const profileSeed={format:'fanatical-library-backup',schemaVersion:4,items:[{source:'fanatical',sourceItemId:'personal-profile-item',title:'Personal item',mediaType:'book'}],profileLabel:'personal',profileArchives:[{profileLabel:'work',items:[{source:'fanatical',sourceItemId:'work-profile-item',title:'Work item',mediaType:'book'}],historicalItems:[]}],historicalItems:[],wishlistItems:wishes.wishlist};
-  await upload(JSON.stringify(profileSeed));await wait();const accounts=$('#account-profiles'),picker=accounts.querySelector('[data-account-list]');assert(picker.options.length===2,'Saved account picker missing accounts');picker.value='work';picker.dispatchEvent(new Event('change'));accounts.querySelector('[data-account-use]').click();await wait();assert(values.fanaticalProfileLabel==='personal','Account switch skipped confirmation');accounts.querySelector('[data-account-confirm]').checked=true;accounts.querySelector('[data-account-use]').click();await wait();assert(values.fanaticalProfileLabel==='work'&&values.fanaticalLibraryItems[0].title==='Work item','Saved account switch mixed ownership');accounts.querySelector('[data-account-name]').value='business';accounts.querySelector('[data-account-rename]').click();await wait();assert(values.fanaticalProfileLabel==='business'&&values.fanaticalLibraryItems[0].title==='Work item','Rename changed ownership');picker.value='personal';picker.dispatchEvent(new Event('change'));accounts.querySelector('[data-account-confirm]').checked=true;accounts.querySelector('[data-account-use]').click();await wait();assert(values.fanaticalProfileLabel==='personal'&&values.fanaticalLibraryItems[0].title==='Personal item','Switch back did not restore personal ownership');
+  await upload(JSON.stringify(profileSeed));await wait();
+  const accounts=$('#account-profiles'),picker=accounts.querySelector('[data-account-list]');
+  const labels=[...picker.options].map(option=>option.value);
+  assert(labels.includes('personal')&&labels.includes('work'),'Saved account picker missing restored accounts: '+JSON.stringify(labels));
+  assert(labels.includes('Account before restore')&&values.fanaticalProfileArchives.some(account=>account.profileLabel==='Account before restore'&&account.items.some(item=>item.title==='Restored comic')),
+    'Additive restore lost the previously saved account: '+JSON.stringify(labels));
+  picker.value='work';picker.dispatchEvent(new Event('change'));accounts.querySelector('[data-account-use]').click();await wait();assert(values.fanaticalProfileLabel==='personal','Account switch skipped confirmation');accounts.querySelector('[data-account-confirm]').checked=true;accounts.querySelector('[data-account-use]').click();await wait();assert(values.fanaticalProfileLabel==='work'&&values.fanaticalLibraryItems[0].title==='Work item','Saved account switch mixed ownership');accounts.querySelector('[data-account-name]').value='business';accounts.querySelector('[data-account-rename]').click();await wait();assert(values.fanaticalProfileLabel==='business'&&values.fanaticalLibraryItems[0].title==='Work item','Rename changed ownership');picker.value='personal';picker.dispatchEvent(new Event('change'));accounts.querySelector('[data-account-confirm]').checked=true;accounts.querySelector('[data-account-use]').click();await wait();assert(values.fanaticalProfileLabel==='personal'&&values.fanaticalLibraryItems[0].title==='Personal item','Switch back did not restore personal ownership');
   $('#remove-galactic').click();await wait();assert(!values.galacticLibraryExtensionId&&!$('#galactic-id').value,'Galactic removal failed');assert(!$('#reminder-list').children.length,'Unlink retained central reminders');
   finish({ok:true,scenario:'options preview, export/restore, Galactic controls, diagnostics setting'});
 }catch(error){finish({ok:false,error:error.message})}
@@ -420,7 +469,7 @@ try {
   }
 }catch(error){finish({ok:false,error:error.message})}
 `;
-const cards = (kind, items = products) => items.map((product,index) => `<div class="three-column-row"><article class="${kind} faux-block-link">${kind==='PickAndMixCard'&&index===0?'<span class="new-to-bundle-label">New to bundle</span>':''}<div class="cover-container"><img alt="${product.name}"></div><h2 class="card-product-name">${product.name}</h2></article></div>`).join('');
+const cards = (kind, items = products) => items.map((product,index) => `<div class="three-column-row"><article class="${kind} faux-block-link">${kind==='PickAndMixCard'&&index===0?'<span class="new-to-bundle-label">New to bundle</span>':''}<div class="cover-container"><img alt="${product.name}"></div><h2 class="card-product-name">${product.name}</h2><a class="fixture-native-link" href="#fixture-${product._id}" aria-label="${product.name}"></a></article></div>`).join('');
 const slowCentralChecks=common+fs.readFileSync(new URL('./slow-central-checks.js',import.meta.url),'utf8');
 const catalogue = [2, 10, null].map((days, index) => `<li class="HitCardContainer"><article class="HitCard"><a href="https://www.fanatical.com/en/bundle/test-${index}"><img alt="Test ${index}"><h2>Test ${index}</h2></a>${days === null ? '' : `<div class="CountdownTimer__clock">${days} Days Left</div>`}</article></li>`).join('');
 const pendingResults = new Map();
@@ -462,7 +511,7 @@ const server = http.createServer((request, response) => {
     const isCatalogue = url.endsWith('/books');
     const isEdition = url.endsWith('/test-editions');
     const isContents = url.endsWith('/test-contents');
-    return send('text/html', `<!doctype html><html><head><link rel="stylesheet" href="/src/theme.css"><link rel="stylesheet" href="/src/content.css"><link rel="stylesheet" href="/src/theme-overlays.css"><style>${themeMode?".fan-grid-container{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))!important}main{max-width:100%;overflow:hidden}":""}.fan-grid-container{display:grid;grid-template-columns:repeat(3,240px);gap:20px}.fanatical-library-pick-mix-reflow{grid-column:1/-1}article{min-height:350px;position:relative}.cover-container{height:310px;overflow:hidden;position:relative}.cover-container img{display:block;width:100%;height:310px}.faux-block-link a,.faux-block-link abbr[title],.faux-block-link button{position:relative;z-index:3}.new-to-bundle-label{position:absolute;top:0;left:0;z-index:3;height:32px}</style></head><body><main>${isCatalogue ? `<ul class="HitCardsRow row">${catalogue}</ul>` : `<section class="tier"><div class="fan-grid-container">${cards(url.includes('pick-and-mix') ? 'PickAndMixCard' : 'bundle-product-card', isContents ? contentsProducts : isEdition ? editionProducts : products)}</div></section>`}</main><script src="/mock.js"></script>${lifecycle?'<script src="/lifecycle-fixture.js"></script>':''}${hydration?'<script src="/hydration-fixture.js"></script>':''}<script src="/src/theme.js"></script><script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/${hydration ? 'hydration' : themeMode ? 'theme' : lifecycle ? 'lifecycle' : isCatalogue ? 'catalogue' : isContents ? 'contents' : isEdition ? 'edition' : slowCentral ? 'slow-central' : 'bundle'}-check.js"></script></body></html>`);
+    return send('text/html', `<!doctype html><html><head><link rel="stylesheet" href="/src/theme.css"><link rel="stylesheet" href="/src/content.css"><link rel="stylesheet" href="/src/theme-overlays.css"><style>${themeMode?".fan-grid-container{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))!important}main{max-width:100%;overflow:hidden}":""}.fan-grid-container{display:grid;grid-template-columns:repeat(3,240px);gap:20px}@media(max-width:800px){.fan-grid-container{grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr))}}.faux-block-link .fixture-native-link{position:absolute;inset:0}.fanatical-library-pick-mix-reflow{grid-column:1/-1}article{min-height:350px;position:relative}.cover-container{height:310px;overflow:hidden;position:relative}.cover-container img{display:block;width:100%;height:310px}.faux-block-link a,.faux-block-link abbr[title],.faux-block-link button{position:relative;z-index:3}.new-to-bundle-label{position:absolute;top:0;left:0;z-index:3;height:32px}</style></head><body><main>${isCatalogue ? `<ul class="HitCardsRow row">${catalogue}</ul>` : `<section class="tier"><div class="fan-grid-container">${cards(url.includes('pick-and-mix') ? 'PickAndMixCard' : 'bundle-product-card', isContents ? contentsProducts : isEdition ? editionProducts : products)}</div></section>`}</main><script src="/mock.js"></script>${lifecycle?'<script src="/lifecycle-fixture.js"></script>':''}${hydration?'<script src="/hydration-fixture.js"></script>':''}<script src="/src/theme.js"></script><script src="/src/shared.js"></script><script src="/src/planning.js"></script><script src="/src/planning-ui.js"></script><script src="/src/content.js"></script><script type="module" src="/${hydration ? 'hydration' : themeMode ? 'theme' : lifecycle ? 'lifecycle' : isCatalogue ? 'catalogue' : isContents ? 'contents' : isEdition ? 'edition' : slowCentral ? 'slow-central' : 'bundle'}-check.js"></script></body></html>`);
   }
   response.writeHead(404).end();
 });
