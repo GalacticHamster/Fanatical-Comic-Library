@@ -321,6 +321,65 @@ export function backupRestoreState(items, backup={}) {
     ...(backup.schemaVersion>=3?{fanaticalWishlistItems:globalThis.FanaticalLibrary.normalizeWishlist(backup.wishlistItems)}:{}) };
 }
 
+// Restore adds a backup to what this browser already saved. Purchases already saved here keep their
+// current or history placement, the backup adds missing purchases and purchase records, and each key
+// review keeps the newer decision. Accounts match only by saved account identity; a saved account
+// that the backup does not contain is kept as a saved account. Corrections and wishes already saved
+// here win, and the backup adds missing ones.
+function mergeAccountPurchases(restored,current,label){
+  const ids=rows=>new Set(rows.map(item=>item.sourceItemId));
+  // An identical saved copy needs no merge, which keeps repeated restores unchanged. Saved purchases
+  // are compared in backup form; any that no longer validate are kept exactly as saved.
+  const normal=rows=>{try{return parseLibraryBackup({schemaVersion:1,items:rows});}catch{return rows;}};
+  current={items:normal(current.items),historicalItems:current.historicalItems};
+  const saved=new Map([...current.items,...current.historicalItems.map(entry=>entry.item)].map(item=>[item.sourceItemId,JSON.stringify(item)]));
+  const changed=item=>saved.get(item.sourceItemId)!==JSON.stringify(item);
+  restored={items:restored.items.filter(changed),historicalItems:restored.historicalItems.filter(entry=>changed(entry.item))};
+  const currentActive=ids(current.items),currentHistory=new Map(current.historicalItems.map(entry=>[entry.item.sourceItemId,entry]));
+  const restoredHistory=restored.historicalItems.filter(entry=>!currentActive.has(entry.item.sourceItemId));
+  const toHistory=new Map([...restored.items,...restored.historicalItems.map(entry=>entry.item)].filter(item=>currentHistory.has(item.sourceItemId)).map(item=>[item.sourceItemId,item]));
+  const items=mergeLibraryItems([...restored.items.filter(item=>!currentHistory.has(item.sourceItemId)),...restored.historicalItems.filter(entry=>currentActive.has(entry.item.sourceItemId)).map(entry=>entry.item),...current.items]);
+  const history=new Map(restoredHistory.filter(entry=>!currentHistory.has(entry.item.sourceItemId)).map(entry=>[entry.item.sourceItemId,entry]));
+  for(const [id,entry] of currentHistory)history.set(id,toHistory.has(id)?{...entry,item:mergeLibraryItems([toHistory.get(id),entry.item])[0]}:entry);
+  const activeIds=ids(items);
+  return {items,historicalItems:[...history.values()].filter(entry=>!activeIds.has(entry.item.sourceItemId)).map(entry=>({...entry,profileLabel:label}))};
+}
+export function mergeRestoreState(current,restored){
+  const id=value=>value?String(value).toLowerCase():'';
+  const sources=[];
+  // Restore still resets scan history everywhere, so the next scan rechecks orders; it never removes purchases.
+  if(current.fanaticalLibraryItems?.length||current.fanaticalHistoricalItems?.length)sources.push({accountId:current.fanaticalAccountId,profileLabel:current.fanaticalProfileLabel,items:current.fanaticalLibraryItems,historicalItems:current.fanaticalHistoricalItems??[],archivedAt:new Date().toISOString()});
+  sources.push(...(current.fanaticalProfileArchives??[]).map(({localScanState,...entry})=>entry));
+  const next={...restored,fanaticalProfileArchives:[...restored.fanaticalProfileArchives]};
+  const labels=()=>new Set([next.fanaticalProfileLabel,...next.fanaticalProfileArchives.map(entry=>entry.profileLabel)]);
+  for(const source of sources){
+    const sid=id(source.accountId),sourceData={items:source.items??[],historicalItems:source.historicalItems??[]};
+    if(sid&&sid===id(next.fanaticalAccountId)){
+      const merged=mergeAccountPurchases({items:next.fanaticalLibraryItems,historicalItems:next.fanaticalHistoricalItems},sourceData,next.fanaticalProfileLabel);
+      Object.assign(next,{fanaticalLibraryItems:merged.items,fanaticalHistoricalItems:merged.historicalItems});
+      continue;
+    }
+    const index=sid?next.fanaticalProfileArchives.findIndex(entry=>id(entry.accountId)===sid):-1;
+    if(index>=0){
+      const entry=next.fanaticalProfileArchives[index],merged=mergeAccountPurchases({items:entry.items,historicalItems:entry.historicalItems??[]},sourceData,entry.profileLabel);
+      next.fanaticalProfileArchives[index]={...entry,...merged};
+      continue;
+    }
+    if(!sourceData.items.length&&!sourceData.historicalItems.length)continue;
+    const taken=labels();let name=source.profileLabel||'Account before restore';
+    if(taken.has(name)){const base=`${name} (before restore)`;name=base;for(let n=2;taken.has(name);n++)name=`${base} ${n}`;}
+    next.fanaticalProfileArchives.push({...source,profileLabel:name,historicalItems:sourceData.historicalItems.map(entry=>({...entry,profileLabel:name}))});
+  }
+  if(next.fanaticalProfileArchives.length>100)throw Error('Too many saved accounts. Export a backup first.');
+  const F=globalThis.FanaticalLibrary,wishes=new Map();
+  if(next.fanaticalWishlistItems)for(const item of [...F.normalizeWishlist(next.fanaticalWishlistItems),...F.normalizeWishlist(current.fanaticalWishlistItems??[])])wishes.set(F.wishlistKey(item),item);
+  const rejected=new Map([...(next.rejectedPurchaseItems??[]),...(current.rejectedPurchaseItems??[])].map(row=>[JSON.stringify(row),row]));
+  return {...next,
+    fanaticalWishlistItems:next.fanaticalWishlistItems?[...wishes.values()].slice(0,10000):F.normalizeWishlist(current.fanaticalWishlistItems??[]),
+    mediaTypeOverrides:{...(next.mediaTypeOverrides??{}),...(current.mediaTypeOverrides??{})},
+    rejectedPurchaseItems:fanaticalRejectedPurchaseItems([...rejected.values()])};
+}
+
 export function createSyncStore(area,{onInvalidated=()=>{}}={}){
   let tail=Promise.resolve();const key='fanaticalSyncControl';
   const defaults={fanaticalLibraryItems:[],fanaticalScannedOrderFingerprints:[],fanaticalProfileLabel:'',fanaticalAccountId:null,fanaticalProfileArchives:[],fanaticalHistoricalItems:[],fanaticalImportSummary:null,fanaticalLastScanAttempt:null,mediaTypeOverrides:{},rejectedPurchaseItems:[]};
@@ -523,7 +582,8 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
       const next=action==='remove'?current.filter(item=>F.wishlistKey(item)!==value):F.normalizeWishlist(action==='add'?[...current,...F.normalizeWishlist(value)]:value);await area.set({fanaticalWishlistItems:next});return next;
     }
     if(operation==='restore'){
-      const backup=args[0];const items=parseLibraryBackup(backup),replacement=await GalacticPurchaseSync.restoredAccounts('fan',backupRestoreState(items,backup));
+      const backup=args[0];const items=parseLibraryBackup(backup),current=await area.get({...defaults,fanaticalWishlistItems:[]});
+      const replacement=await GalacticPurchaseSync.restoredAccounts('fan',mergeRestoreState(current,backupRestoreState(items,backup)));
       const profiles=[[replacement.fanaticalAccountId,replacement.fanaticalLibraryItems],...replacement.fanaticalProfileArchives.map(a=>[a.accountId,a.items])];
       const retirement=await GalacticPurchaseSync.restorationPatch(area,{fanatical:profiles.map(([id])=>id)});
       const {fanaticalOrderNavigation:saved}=await area.get({fanaticalOrderNavigation:{}});

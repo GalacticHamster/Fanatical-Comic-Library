@@ -59,7 +59,7 @@ test('quick scans and initial profile assignment never infer missing records',as
   assert.deepEqual(legacy.state.fanaticalHistoricalItems,[]);
 });
 
-test('history is profile isolated, safely recoverable, removed on clear and reset by older backups',async()=>{
+test('history is profile isolated, safely recoverable, removed on clear and kept by older backups',async()=>{
   const f=fixture(),scan=await f.store.execute('begin',[options,1]);await f.store.execute('commit',[scan.token,update,1]);
   f.state.fanaticalHistoricalItems[0].item.key='SECRET';
   const backup=await f.store.execute('backup');assert.equal(backup.schemaVersion,4);assert.equal(JSON.stringify(backup).includes('SECRET'),false);
@@ -71,7 +71,7 @@ test('history is profile isolated, safely recoverable, removed on clear and rese
   await assert.rejects(f.store.execute('restore',[invalid]),/profile/);assert.deepEqual(f.state,before);
   invalid.historicalItems[0].profileLabel='personal';invalid.historicalItems[0].missingSince='invalid';
   await assert.rejects(f.store.execute('restore',[invalid]),/date/);assert.deepEqual(f.state,before);
-  await f.store.execute('restore',[{...backup,schemaVersion:3}]);assert.deepEqual(f.state.fanaticalHistoricalItems,[]);
+  await f.store.execute('restore',[{...backup,schemaVersion:3}]);assert.equal(f.state.fanaticalHistoricalItems.length,1,'an older backup without history keeps saved history');
   await f.store.execute('restore',[backup]);await f.store.execute('clear');assert.equal('fanaticalHistoricalItems' in f.state,false);
 });
 

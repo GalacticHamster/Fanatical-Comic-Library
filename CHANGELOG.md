@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Restoring a backup adds it to the saved library instead of replacing it, as in Humble Library. Purchases, purchase records, corrections, wishes and saved accounts already in the browser are kept and the backup fills in what is missing; a saved account that the backup does not contain stays as a saved account. Each key reminder keeps its newer dismiss, snooze or restore decision, and the confirmation names what happens to the wishlist. Scan history is still reset for a safe recheck.
+
 - Browse the Library by **Titles** or **Bundles & Orders**. Both views can open a verified Fanatical order, with Order History available for earlier records without a saved link.
 
 - Key reminders can open the exact Fanatical order. Quick updates recover missing links when the order appears in the signed-in history. Order IDs stay local to the saved account.

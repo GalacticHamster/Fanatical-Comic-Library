@@ -67,7 +67,7 @@
       </section>
       <section>
         <h2>Library</h2>
-        <p><strong>Export backup</strong> saves your library, including purchase and ownership details, so you can restore it later. <strong>Export title catalog</strong> lists titles and identifying details in JSON, or adds local purchase status, counts and dates in CSV. Neither catalog can restore purchases or ownership. Pairing, display settings, session tokens and scan fingerprints are excluded from backups. Restores reset scan authority for a safe recheck. Clear library removes all saved accounts, ownership and scan history; it keeps your wishlist, display preferences and Galactic Library link.</p>
+        <p><strong>Export backup</strong> saves your library, including purchase and ownership details, so you can restore it later. <strong>Export title catalog</strong> lists titles and identifying details in JSON, or adds local purchase status, counts and dates in CSV. Neither catalog can restore purchases or ownership. Pairing, display settings, session tokens and scan fingerprints are excluded from backups. Backups include your wishlist and key reminder reviews. A restore adds to your saved library, never removes purchases already here, and resets scan history so the next scan rechecks your orders. Clear library removes all saved accounts, ownership and scan history; it keeps your wishlist, display preferences and Galactic Library link.</p>
         <p id="library-count">Loading...</p>
         <p id="history-note">No order-history coverage has been checked yet.</p>
         <div id="library-classification-diagnostics" class="library-classification-diagnostics" aria-live="polite"></div>
@@ -156,7 +156,7 @@
       </section>
       <section>
         <h2>Restore backup</h2>
-        <p>Choose a backup exported by this Fanatical Library extension. HB and FAN ownership backups are not interchangeable. Restoring replaces all saved accounts, your local library and, in full backups, your wishlist after confirmation and resets scan history. Your Galactic link and settings are kept. The next quick scan rechecks all completed orders.</p>
+        <p>Choose a backup exported by this Fanatical Library extension. HB and FAN ownership backups are not interchangeable. Restoring adds the backup to what this browser already saved: purchases, corrections and saved accounts already here are kept, and the backup adds what is missing. A saved account that is not in the backup stays as a saved account. Wishes in the backup that are missing here are added to your wishlist. For each key reminder, the newer dismiss, snooze or restore decision is kept. Your Galactic link and settings are kept. Scan history is reset, so the next quick scan rechecks all completed orders. To start again from a backup alone, use <strong>Clear library</strong> first.</p>
         <input id="import-file" type="file" accept="application/json,.json" aria-label="Import Fanatical Library backup">
         <p id="import-status" role="status"></p>
       </section>

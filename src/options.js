@@ -1094,12 +1094,13 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
       let parsed;
       try { parsed = JSON.parse(await file.text()); } catch { throw new Error('The selected file is not valid JSON.'); }
       const items = parseLibraryBackup(parsed);
-      if (!confirm(`Replace all saved accounts and your current Fanatical library with ${items.length} unique items from this backup and reset scan history? Export your current library first if you want to keep it.`)) {
+      const wishes = parsed.schemaVersion >= 3 ? 'wishes missing here are added; your current wishes are kept' : 'this backup has no wishlist, so your wishlist does not change';
+      if (!confirm(`Add this backup (${items.length} unique items) to your saved library?\n\nPurchases, corrections and saved accounts already in this browser are kept; the backup adds what is missing. A saved account that is not in the backup stays as a saved account.\n\nWishlist: ${wishes}.\nKey reminder reviews: the newer decision is kept for each key.`)) {
         $('#import-status').textContent = 'Restore cancelled. Your library is unchanged.'; return;
       }
       await mutate('restore',parsed);
       await refresh();
-      $('#import-status').textContent = `Restored ${items.length} unique items. Scan history reset; your next quick scan will recheck all completed orders.`;
+      $('#import-status').textContent = `Backup restored: ${items.length} unique items from the backup were added to your saved library. Nothing already saved was removed; your next quick scan rechecks all completed orders.`;
     } catch (error) { $('#import-status').textContent = `Import failed: ${error.message}`; }
     finally { input.value = ''; setLibraryBusy(false); }
   });
