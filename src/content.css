@@ -172,3 +172,5 @@
 
 .library-import-profile > details { grid-column:1 / -1; }
 .library-import-profile > details > summary { cursor:pointer; }
+/* As in Humble Library: on short or narrow screens the expanded panel leaves at least half the window clear for the store page and scrolls inside. */
+.fanatical-library-summary { max-height: min(calc(100vh - 32px), max(50vh, 18rem)); }

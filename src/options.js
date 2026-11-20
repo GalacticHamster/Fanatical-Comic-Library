@@ -686,6 +686,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
   function renderLibraryRow(item) {
     const row = document.createElement('li');
     row.className = 'library-item';
+    row.dataset.rowKeys = 't:' + String(typeof item === 'string' ? 'other' : item?.mediaType || item?.kind || 'other').toLowerCase() + ':' + String(typeof item === 'string' ? item : item?.title || '').trim().toLowerCase();
 
     const title = typeof item === 'string' ? item : (item.title || '');
     const origins = sortOriginRecords(extractItemOrigins(item));
@@ -718,15 +719,16 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
         primary.className = 'library-provenance-primary';
         const primaryText = bTitle
           ? `Bundle: ${bTitle}`
-          : (origin.purchaseRef ? `Ref: ${origin.purchaseRef.slice(0, 16)}…` : 'Purchase record stored without bundle details');
+          : (origin.purchaseRef ? 'Individual purchase' : 'Purchase record stored without bundle details');
         primary.textContent = primaryText;
         li.append(primary);
 
         const secondaryParts = [];
         const pDate = formatPurchaseDate(origin.purchaseDate);
         if (pDate) secondaryParts.push(`Purchased: ${pDate}`);
-        if (origin.quantity && origin.quantity > 1) secondaryParts.push(`Qty: ${origin.quantity}`);
-        if (bTitle && origin.purchaseRef) secondaryParts.push(`Ref: ${origin.purchaseRef.slice(0, 16)}…`);
+        // Copies, as Bundles & Orders and reminder cards say. A verified order is named, never shown as a hash.
+        if (origin.quantity && origin.quantity > 1) secondaryParts.push(`${origin.quantity} copies`);
+        if (origin.purchaseRef) secondaryParts.push('Verified order');
         if (origin.drm && origin.drm.length) secondaryParts.push(`DRM: ${origin.drm.join(', ')}`);
 
         if (origin.delivery === 'streaming' || item.delivery === 'streaming' || item.streaming) {
@@ -764,8 +766,8 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
         const legacyParts = [];
         if (bTitle) legacyParts.push(`Bundle: ${bTitle}`);
         if (pDate) legacyParts.push(`Purchased: ${pDate}`);
-        if (origin.quantity && origin.quantity > 1) legacyParts.push(`Qty: ${origin.quantity}`);
-        if (origin.purchaseRef) legacyParts.push(`Ref: ${origin.purchaseRef.slice(0, 16)}…`);
+        if (origin.quantity && origin.quantity > 1) legacyParts.push(`${origin.quantity} copies`);
+        if (origin.purchaseRef) legacyParts.push('Verified order');
         if (origin.drm && origin.drm.length) legacyParts.push(`DRM: ${origin.drm.join(', ')}`);
         const fullLegacyText = legacyParts.join(' · ') || 'Purchase record stored without bundle details';
 
@@ -948,7 +950,20 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     const pageItems = processed.slice(start, start + pageSize);
 
     preview.start = start + 1;
+    // Re-rendering keeps expanded rows open, for example after a reminder review or a media change, as in Humble Library.
+    const rowKeys = row => String(row?.dataset?.rowKeys ?? '').split('\n').filter(Boolean);
+    const ownDetails = row => [...(row?.children ?? [])].find(child => child?.tagName === 'DETAILS' || child?.className === 'library-item-details');
+    const open = new Set([...(preview.children ?? [])].filter(row => ownDetails(row)?.open).flatMap(rowKeys));
     preview.replaceChildren(...pageItems.map(orders ? renderPurchaseGroup : renderLibraryRow));
+    if (open.size) for (const row of [...preview.children]) {
+      const details = ownDetails(row);
+      if (details && !details.open && rowKeys(row).some(key => open.has(key))) {
+        details.open = true;
+        // Bundles & Orders render contents on the toggle event; a test or older engine may not send one.
+        if (typeof details.dispatchEvent === 'function' && typeof Event === 'function') details.dispatchEvent(new Event('toggle'));
+        else details.listeners?.toggle?.();
+      }
+    }
 
     if (libraryPrevious) libraryPrevious.disabled = state.page === 0;
     if (libraryNext) libraryNext.disabled = (state.page + 1) * pageSize >= processed.length;
@@ -1039,6 +1054,17 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
 
   let refreshChain=Promise.resolve();
   function refresh(options) {const next=refreshChain.then(()=>refreshNow(options));refreshChain=next.catch(()=>{});return next;}
+  // Date coverage across the titles Library lists, as in Humble Library. A title counts as dated when any purchase has a known date.
+  function renderDateCoverage(items) {
+    const element = $('#library-date-coverage');
+    if (!element) return;
+    const titles = consolidateLibrary(items);
+    if (!titles.length) { element.textContent = ''; return; }
+    const dated = titles.filter(item => getItemPurchaseDate(item) !== null).length, undated = titles.length - dated;
+    const percent = Math.floor((dated / titles.length) * 1000) / 10;
+    element.textContent = `Purchase dates known for ${dated.toLocaleString()} of ${titles.length.toLocaleString()} title${titles.length === 1 ? '' : 's'} (${percent}%).`
+      + (undated ? ` ${undated.toLocaleString()} ${undated === 1 ? 'title has' : 'titles have'} no known purchase date. Choose “No known purchase date” under Metadata in Titles to list them.` : '');
+  }
   // An unfinished Full scan of the active account: what was saved and how to continue or discard it.
   async function renderFullScanState() {
     const box = $('#full-scan-state');
@@ -1065,6 +1091,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     void renderFullScanState();
     const scope=state;
     $('#library-count').textContent = `Active account nickname: ${scope.fanaticalProfileLabel||'Not yet named'}. ${scope.fanaticalProfileArchives.length} other saved accounts (selectable above; excluded from active matching). ${items.length} unique item${items.length === 1 ? '' : 's'} stored locally.`;
+    renderDateCoverage(items);
     const missing=scope.fanaticalHistoricalItems.filter(entry=>entry.profileLabel===scope.fanaticalProfileLabel).length;
     if(missing) $('#library-count').textContent += ' '+missing+' previously recorded products were not found in the latest scan; these warn as Check ownership and do not prove ownership.';
     activePurchaseAccount=scope.fanaticalAccountId;localReminderItems=items;
@@ -1165,7 +1192,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
         const recoverBtn = document.createElement('button');
         recoverBtn.type = 'button';
         recoverBtn.className = 'library-recover-btn secondary';
-        recoverBtn.textContent = 'Recover';
+        recoverBtn.textContent = 'Import to library';
         recoverBtn.addEventListener('click', async () => {
           try {
             await mutate('recoverRejectedItem', rec, recoverSelect.value);

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Smaller consistency fixes with Humble Library: Library shows how many titles have a known purchase date; title details say "Verified order" and "N copies" instead of a shortened order hash and "Qty"; expanded Library rows stay open after a reminder review or a media change; unimported items are recovered with Import to library; the toolbar popup also counts verified orders; and the bundle panel leaves at least half of a short window clear and scrolls inside.
+
 - Titles and Bundles & Orders can be sorted by Recently added, as in Humble Library. Fanatical Library now records when a scan or Galactic Library import first saves each product in this browser; it is kept by later scans, backups and restores and is never shown as a purchase date or shared. Products saved before this version have no such time and are listed after, newest purchase first; no time is invented for them. An opened purchase says when it was first saved.
 
 - A bundle page's Already purchased notice lists every saved purchase of the bundle, as in Humble Library: how many times it was bought, then each purchase's date, oldest first, with copies bought in quantity. A purchase without a saved date says "date unknown" instead of hiding the notice, and an earlier record that may be the same purchase as a verified order makes the count "at least".

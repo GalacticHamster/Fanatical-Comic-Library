@@ -528,8 +528,9 @@ test('exact duplicate library items consolidate into one row with expandable pro
   const list = details.children[1];
   assert.equal(list.className, 'library-provenance-list');
   assert.equal(list.children.length, 2);
-  assert.match(list.children[0].textContent, /Bundle: Second Bundle · Purchased: 2026-06-20 · Qty: 2 · Ref: b{16}… · DRM: steam/);
-  assert.match(list.children[1].textContent, /Bundle: First Bundle · Purchased: 2026-01-15 · Ref: a{16}… · DRM: steam/);
+  assert.match(list.children[0].textContent, /Bundle: Second Bundle · Purchased: 2026-06-20 · 2 copies · Verified order · DRM: steam/);
+  assert.match(list.children[1].textContent, /Bundle: First Bundle · Purchased: 2026-01-15 · Verified order · DRM: steam/);
+  assert(!/Ref:|[ab]{16}/.test(list.textContent ?? list.children.map(c => c.textContent).join(' ')), 'no order hash is shown');
 });
 
 test('repeated purchases from the same bundle count as separate purchases', async () => {
@@ -682,7 +683,7 @@ test('expanded purchase history displays primary bundle title and secondary meta
 
   const secondary = provItem.children.find((c) => c.className === 'library-provenance-secondary');
   assert(secondary, 'should have secondary line');
-  assert.equal(secondary.textContent, 'Purchased: 2026-05-12 · Qty: 2 · Ref: fan-order-123456… · DRM: steam');
+  assert.equal(secondary.textContent, 'Purchased: 2026-05-12 · 2 copies · Verified order · DRM: steam');
 });
 
 test('src/ui.css configures tabular numbers and comfortable disclosure spacing', () => {
@@ -767,4 +768,18 @@ test('Recently added lists products by when this browser first saved them, and o
   const row = ui.get('#library-preview').children[0].children[0];
   row.open = true; await row.listeners.toggle();
   assert(row.children[1].children.some(fact => /^First saved in this browser on 2026-11-18\. This is not the purchase date\.$/.test(fact.textContent)));
+});
+
+test('reviewing a reminder keeps expanded Library rows open', async () => {
+  const account = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const product = {...item('Expanded game'), purchaseOrigins: [{purchaseRef: 'a'.repeat(64), bundle: {sourceItemId: 'bundle-123456', title: 'Bundle'}, keyStatus: 'unrevealed', keyCheckedAt: '2026-11-09T12:00:00.000Z', quantity: 1}]};
+  const ui = await optionsHarness({fanaticalAccountId: account, fanaticalLibraryItems: [product, item('Other game', 'product-other')], fanaticalProfileLabel: 'A'});
+  const details = () => ui.get('#library-preview').children.find(row => row.children[0].children[0].textContent.startsWith('Expanded game')).children[0];
+  details().open = true;
+  const before = ui.get('#library-preview').children[0];
+  await ui.get('#local-reminder-list').children[0].children.at(-1).children[1].listeners.click();
+  assert.equal(ui.stored.fanaticalLibraryItems[0].purchaseOrigins[0].keyReview.action, 'dismissed');
+  assert.notEqual(ui.get('#library-preview').children[0], before, 'the list was rendered again');
+  assert.equal(details().open, true, 'the expanded row is still open');
+  assert.equal(ui.get('#library-preview').children.find(row => row.children[0].children[0].textContent.startsWith('Other game')).children[0].open === true, false);
 });
