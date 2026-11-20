@@ -349,8 +349,45 @@
     const quick = document.createElement('button'); quick.type = 'button'; quick.dataset.importMode = 'new'; quick.textContent = 'Import new purchases';
     quick.title = 'Checks for new purchases and skips previously imported purchases with saved scan history.';
     const full = document.createElement('button'); full.type = 'button'; full.dataset.importMode = 'all'; full.textContent = 'Rescan all purchases'; full.title = 'Reprocesses every completed order and rebuilds the local Fanatical library.';
-    actions.append(quick, full);
+    // Saved scan state and Full scan controls, as on Humble Library's sync panel. Stopping a scan never removes purchases.
+    const control = (label, title) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; b.title = title; b.hidden = true; return b; };
+    const resume = control('Continue full scan', 'Reads only the orders this Full scan has not verified yet.');
+    const pause = control('Pause', 'Stops after the batch being read. Saved progress is kept for Continue full scan.');
+    const cancel = control('Cancel', 'Stops after the batch being read and discards the unfinished Full scan. Purchases already saved stay in your library.');
+    const discard = control('Discard unfinished scan', 'Forgets the unfinished Full scan so the next one starts from the first order. Purchases already saved stay in your library.');
+    const browse = control('Browse your library', 'Opens Library in Extension options.'); browse.hidden = false;
+    actions.append(quick, full, resume, pause, cancel, discard, browse);
     const status = document.createElement('output'); status.setAttribute('aria-live', 'polite');
+    const savedState = document.createElement('p'); savedState.className = 'library-import-saved'; savedState.setAttribute('role', 'status');
+    const progressBar = document.createElement('progress'); progressBar.className = 'library-import-progress'; progressBar.hidden = true;
+    const scanControl = async action => { const response = await chrome.runtime.sendMessage({ type: 'FANATICAL_SCAN_CONTROL', action }); if (!response?.ok) throw Error(response?.error ?? 'Scan controls are unavailable.'); return response.result; };
+    let runningFull = false;
+    const renderSaved = async () => {
+      try {
+        const [scan, saved] = await Promise.all([scanControl('state'), chrome.storage.local.get({ fanaticalImportSummary: null })]);
+        if (!active()) return;
+        const busy = scan.running || Boolean(pendingOrderImport);
+        const u = scan.unfinished, when = value => value ? new Date(value).toLocaleString() : 'an unknown time';
+        if (scan.running && !pendingOrderImport) savedState.textContent = `A ${scan.mode === 'full' ? 'Full scan' : 'Quick update'} is running in another Fanatical tab.`;
+        else if (u && !runningFull) savedState.textContent = `Full scan unfinished: ${u.verifiedOrders.toLocaleString()} order${u.verifiedOrders === 1 ? '' : 's'} verified and saved in ${u.batches} batch${u.batches === 1 ? '' : 'es'}, last saved ${when(u.updatedAt)}. Continue full scan reads only the remaining orders. The progress is kept until ${when(u.expiresAt)}.`;
+        else if (!runningFull) savedState.textContent = saved.fanaticalImportSummary?.importedAt ? `Last ${saved.fanaticalImportSummary.scanMode === 'full' ? 'Full scan' : 'Quick update'} in this browser: ${when(saved.fanaticalImportSummary.importedAt)}.` : 'Not scanned in this browser yet. Import new purchases reads your signed-in Fanatical Orders.';
+        resume.hidden = discard.hidden = !u || busy;
+        pause.hidden = cancel.hidden = !runningFull;
+        pause.disabled = cancel.disabled = Boolean(scan.stopping);
+      } catch { if (active()) savedState.textContent = ''; }
+    };
+    const savedChanged = (changes, area) => { if (area === 'local' && (changes.fanaticalFullScanPass || changes.fanaticalImportSummary || changes.fanaticalSyncControl)) void renderSaved(); };
+    chrome.storage.onChanged.addListener(savedChanged);
+    browse.addEventListener('click', () => { void scanControl('browse').catch(() => {}); });
+    discard.addEventListener('click', async () => {
+      if (!active() || !confirm('Discard the unfinished Full scan? Purchases it already saved stay in your library; the next Full scan starts from the first order.')) return;
+      try { await scanControl('discard'); status.textContent = 'Unfinished Full scan discarded. No saved purchases were removed.'; } catch (error) { status.textContent = error.message; }
+      void renderSaved();
+    });
+    for (const [button, action] of [[pause, 'pause'], [cancel, 'cancel']]) button.addEventListener('click', async () => {
+      if (!active() || action === 'cancel' && !confirm('Cancel the Full scan? It stops after the batch being read and discards the unfinished progress. Purchases already saved stay in your library.')) return;
+      try { await scanControl(action); pause.disabled = cancel.disabled = true; status.textContent = action === 'pause' ? 'Pausing after the batch being read\u2026' : 'Cancelling after the batch being read\u2026'; } catch (error) { status.textContent = error.message; }
+    });
     const profileControls=document.createElement('div'); profileControls.className='library-import-profile';
     profileControls.innerHTML='<details><summary>Advanced accounts</summary><label>Account nickname <input data-profile-label maxlength="100" placeholder="e.g. personal"></label><label><input type="checkbox" data-profile-confirm> The signed-in account matches this nickname</label><label><input type="checkbox" data-profile-switch> Save a new account on full rescan</label></details>';
     chrome.storage.local.get({fanaticalProfileLabel:''}).then(saved=>{const input=profileControls.querySelector('[data-profile-label]');if(active()&&!input.value)input.value=saved.fanaticalProfileLabel;}).catch(()=>{});
@@ -358,6 +395,7 @@
     const help=document.createElement('details');help.innerHTML='<summary>How account nicknames work</summary><p>Choose a local nickname, such as personal. It does not sign you in or detect your account. Only the active account is checked for ownership. Use Saved accounts below to switch back to a saved snapshot, then Import new purchases to refresh it. Rename account keeps its purchases and scan history. For a new account, sign in on the website, enter a new nickname, select Save a new account, and rescan all purchases once.</p>';
     intro.append(heading,' ',description,help);
     const footer=document.createElement('div');footer.className='library-import-footer';footer.append(status,actions);
+    intro.append(savedState,progressBar);
     const scanDetails=document.createElement('details');scanDetails.hidden=true;
     const scanDetailsTitle=document.createElement('summary');scanDetailsTitle.textContent='Scan diagnostics';
     const scanInfo=document.createElement('p');
@@ -378,7 +416,7 @@
     profileControls.querySelector('[data-profile-label]').addEventListener('input',()=>{profileControls.querySelector('[data-profile-confirm]').checked=false;});
     const buttons = [quick, full];
     let removeProgress=()=>{};
-    disposeOrderPanel=()=>{chrome.runtime.onMessage.removeListener(pageStatus);removeProgress();accounts.destroy?.();panel.remove();};
+    disposeOrderPanel=()=>{chrome.runtime.onMessage.removeListener(pageStatus);chrome.storage.onChanged.removeListener(savedChanged);removeProgress();accounts.destroy?.();panel.remove();};
     const watch=promise=>{
       buttons.forEach(control=>{control.disabled=true;});
       promise.then(response=>{
@@ -390,15 +428,19 @@
         scanReport=response?.scanDiagnostic??response?.summary?.scanDiagnostic??null;
         if(scanReport)scanReport={...scanReport,progress:lastActivity,progressEvents:activityEvents,uiUpdates,elapsedMs:startedAt===null?null:Date.now()-startedAt};
         scanDetails.hidden=!scanReport;
+        runningFull=false;progressBar.hidden=true;void renderSaved();
         if(scanReport)scanInfo.textContent=(scanReport.acquisitionComplete===true&&scanReport.discoveryComplete===false?'The import finished successfully. Fanatical did not provide enough information to independently verify that the entire purchase history was returned. Existing purchases were preserved. ':'')+`${scanReport.code} · ${scanReport.stage}. The report contains scan counts and failure categories, not titles, order numbers, account details or credentials. Export it before leaving or reloading Orders.`;
         buttons.forEach(control=>{control.disabled=false;});
       });
     };
     if(pendingOrderImport){status.textContent='An import is still running. Saved progress is kept when you leave Orders.';watch(pendingOrderImport);}
-    for (const button of buttons) button.addEventListener('click', () => {
+    void renderSaved();
+    resume.dataset.importMode='all';
+    for (const button of [...buttons, resume]) button.addEventListener('click', () => {
       if(!active()||pendingOrderImport)return;
       const fullScan=button.dataset.importMode==='all';
-      if(fullScan&&!confirm('Full scan every completed Fanatical purchase? This can take longer.'))return;
+      if(fullScan&&button!==resume&&!confirm('Full scan every completed Fanatical purchase? This can take longer. If an unfinished Full scan was saved, it continues from there.'))return;
+      runningFull=fullScan;resume.hidden=discard.hidden=true;pause.hidden=cancel.hidden=!fullScan;pause.disabled=cancel.disabled=false;
       status.textContent='Loading your purchase list\u2026';
       scanReport=null;scanDetails.hidden=true;
       const progressId=[...crypto.getRandomValues(new Uint8Array(16))].map(value=>value.toString(16).padStart(2,'0')).join('');
@@ -413,7 +455,15 @@
       };
       window.addEventListener('message',onProgress);
       const onWorkerPhase=(message,sender)=>{
-        if(!listening||!active()||sender?.id!==chrome.runtime.id||message?.type!=='FANATICAL_IMPORT_STATUS'||message.progressId!==progressId||!['validation','saving'].includes(message.phase))return;
+        if(!listening||!active()||sender?.id!==chrome.runtime.id||message?.type!=='FANATICAL_IMPORT_STATUS'||message.progressId!==progressId)return;
+        if(message.phase==='batch'){
+          // A Full scan batch was saved; the next batch reports its own page progress.
+          const p=message.progress??{},verified=Number.isSafeInteger(p.verified)?p.verified:0,listed=Number.isSafeInteger(p.listed)&&p.listed>=verified?p.listed:null;
+          workerPhase=0;lastMessage=`Full scan: ${verified.toLocaleString()} order${verified===1?'':'s'} verified and saved${listed?` of ${listed.toLocaleString()}`:''}. Reading the next batch`;status.textContent=lastMessage;lastChanged=Date.now();uiUpdates++;
+          progressBar.hidden=!listed;if(listed){progressBar.max=listed;progressBar.value=verified;}
+          return;
+        }
+        if(!['validation','saving'].includes(message.phase))return;
         const rank=message.phase==='saving'?2:1;if(rank<=workerPhase)return;workerPhase=rank;lastMessage=message.phase==='saving'?'Comparing and saving verified purchases':'Validating the acquired purchases';status.textContent=lastMessage;lastChanged=Date.now();uiUpdates++;
       };
       chrome.runtime.onMessage.addListener(onWorkerPhase);

@@ -2,7 +2,7 @@ import {assertFanaticalAcquisitionContract,fanaticalCompatibilityReport} from '.
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Galactic Hamster
 /* Chrome MV3 entry point. The only main-world execution is the strict importer. */
-import { safeId, validateScanResult, createSyncStore, mergeLibraryItems, fullScanStorage, removeFullScanPass, savedOrderReferences, checkedOrderNavigation } from './library-data.mjs';
+import { safeId, validateScanResult, createSyncStore, mergeLibraryItems, fullScanStorage, removeFullScanPass, savedOrderReferences, checkedOrderNavigation, fullScanPassStatus } from './library-data.mjs';
 import './theme.js';
 import './purchase-transfer.js';
 
@@ -180,15 +180,19 @@ async function importPurchases({ fullScan = false, profileLabel='', confirmed=fa
 // at once like a partial import, and the pass remembers them, so an interruption, restart or
 // rate limit loses at most one batch. Only when every listed order has been verified does the
 // pass make its complete commit, which replaces the active library as a single Full scan would.
-const FULL_SCAN_BATCH=200,FULL_SCAN_PASS_DAYS=7,FULL_SCAN_MAX_BATCHES=1000;
+const FULL_SCAN_BATCH=200,FULL_SCAN_MAX_BATCHES=1000;
+// Pause or Cancel requested for the running Full scan. Both take effect between batches, so the
+// batch in progress is saved first; neither removes saved purchases.
+let fullScanStop=null;
 const passFingerprints=value=>Array.isArray(value)&&value.length<=100000&&value.every(fp=>typeof fp==='string'&&/^[a-f0-9]{64}$/u.test(fp));
 async function importFullScan(options={}){
   const area=chrome.storage.local,{pass:FULL_SCAN_PASS_KEY}=fullScanStorage();
   const saved=await area.get({fanaticalAccountId:null,fanaticalProfileLabel:'',[FULL_SCAN_PASS_KEY]:null});
   let pass=saved[FULL_SCAN_PASS_KEY];
   const sameAccount=!options.switchProfile&&(options.useSavedAccount||String(options.profileLabel??'').trim()===saved.fanaticalProfileLabel);
-  const resumable=pass?.version===1&&pass.accountId===saved.fanaticalAccountId&&pass.label===saved.fanaticalProfileLabel&&sameAccount&&Date.now()-Date.parse(pass.updatedAt)<FULL_SCAN_PASS_DAYS*86400000&&passFingerprints(pass.done)&&Number.isSafeInteger(pass.parts)&&pass.parts>=0;
+  const resumable=sameAccount&&fullScanPassStatus(saved)!==null&&passFingerprints(pass.done);
   if(pass&&!resumable){await removeFullScanPass(area);pass=null;}
+  fullScanStop=null;
   const later={...options,fullScan:false,useSavedAccount:true,confirmed:true,switchProfile:false};
   // Orders that failed are retried once per run, not once per batch.
   const done=new Set(pass?.done??[]),failed=new Set();
@@ -212,6 +216,14 @@ async function importFullScan(options={}){
       throw error;
     }
     if(round.batchComplete)return {...await finishFullScan({options,pass,final:p}),addedProducts:added};
+    batchProgress(options,{verified:done.size,batches:pass.parts,listed:Number.isSafeInteger(p.coverage?.listedOrders)?p.coverage.listedOrders:null});
+    if(fullScanStop&&deferred.size){
+      // Paused keeps the saved progress for Continue full scan; Cancel discards it. Saved purchases stay either way.
+      const mode=fullScanStop;fullScanStop=null;
+      if(mode==='cancel')await removeFullScanPass(area);
+      const {batchRound,batchComplete,batchToken,batchTabId,...result}=round;
+      return {...result,stopped:mode==='cancel'?'cancelled':'paused',addedProducts:added,verifiedPurchasesSaved:done.size,unresolvedOrders:failed.size+deferred.size,fullScanPass:{verifiedOrders:done.size,remainingOrders:failed.size+deferred.size,batches:pass.parts,kept:mode!=='cancel'}};
+    }
     // A batch that verified nothing and only failed (for example after sign-out or while Fanatical
     // is refusing requests) ends the pass instead of spending requests on the remaining batches.
     const stalled=!p.verifiedOrderFingerprints.length&&p.unresolvedOrderFingerprints.some(fp=>!deferred.has(fp));
@@ -225,6 +237,10 @@ async function importFullScan(options={}){
     round=await importPurchases(later,{limit:FULL_SCAN_BATCH,known:[...done],retryLater:[...failed],pass});
   }
   }catch(error){if(done.size)error.fullScanProgressSaved=done.size;throw error;}
+}
+function batchProgress({tab,progressId},progress){
+  if(!tab?.id||!/^[a-f0-9]{32}$/u.test(progressId??''))return;
+  try{void chrome.tabs.sendMessage(tab.id,{type:'FANATICAL_IMPORT_STATUS',progressId,phase:'batch',progress}).catch(()=>{});}catch{/* Optional, same-extension UI only. */}
 }
 async function finishFullScan({options,pass,final}){
   const {part:fullScanPart}=fullScanStorage(),area=chrome.storage.local,tab=options.tab??await activeFanaticalTab();
@@ -302,7 +318,7 @@ async function fetchPublicBundle(path) {
   return result[0].result;
 }
 
-let purchaseScan = null;
+let purchaseScan = null, purchaseScanMode = null;
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'FANATICAL_OPEN_GALACTIC_REVIEW') {
     if (!chrome.runtime.id || _sender?.id !== chrome.runtime.id) { sendResponse({ ok: false, error: 'Untrusted review request.' }); return false; }
@@ -329,13 +345,34 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'FANATICAL_IMPORT_PURCHASES') {
     if(!isOrdersSender(_sender)||!_sender.tab?.id){sendResponse({ok:false,error:'Import from the signed-in Fanatical orders page.'});return false;}
     if (purchaseScan) { sendResponse({ ok: false, error: 'A Fanatical purchase scan is already running. Wait for it to finish.' }); return true; }
+    purchaseScanMode = message.fullScan === true ? 'full' : 'quick';
     purchaseScan = (message.fullScan === true ? importFullScan : importPurchases)({ fullScan: message.fullScan === true,profileLabel:message.profileLabel,confirmed:message.confirmed===true,switchProfile:message.switchProfile===true,progressId:message.progressId,useSavedAccount:message.useSavedAccount===true,tab:_sender.tab }).then((summary) => sendResponse({ ok: true, summary })).catch(async (error) => {
       // Persist only an explicit coverage failure flag, never page/transport errors.
       try { if(error.scanToken)await syncStore.execute('failure',[error.scanToken,null,error.scanTabId]); } catch { /* Keep the on-page warning even when storage is unavailable. */ }
       const report=error.scanDiagnostic??scanReport({code:'account-check-failed',diagnostic:{stage:'account'},requestedFull:message.fullScan===true});
       const progress=error.fullScanProgressSaved?` ${error.fullScanProgressSaved} purchase${error.fullScanProgressSaved===1?'':'s'} already checked in this Full scan ${error.fullScanProgressSaved===1?'was':'were'} saved; run Rescan all purchases again to continue from there.`:'';
       sendResponse({ ok: false, error: `Scan incomplete; previous purchases and successful scan history were kept.${progress} ${SCAN_FAILURES[report.code]}`,scanDiagnostic:report,...(error.fullScanProgressSaved?{fullScanProgressSaved:error.fullScanProgressSaved}:{}) });
-    }).finally(() => { purchaseScan = null; });
+    }).finally(() => { purchaseScan = null; purchaseScanMode = null; fullScanStop = null; });
+    return true;
+  }
+  if (message?.type === 'FANATICAL_SCAN_CONTROL') {
+    // Status and controls for the Full scan, from the Orders page or Extension options.
+    const own=_sender?.id===chrome.runtime.id,extensionOrigin=parseUrl(chrome.runtime.getURL(''))?.origin,senderUrl=parseUrl(_sender?.url);
+    if(!(isOrdersSender(_sender)||own&&Boolean(extensionOrigin)&&senderUrl?.origin===extensionOrigin)){sendResponse({ok:false,error:'Untrusted scan request.'});return false;}
+    (async()=>{
+      const action=message.action;
+      if(['pause','cancel'].includes(action)){
+        if(!purchaseScan||purchaseScanMode!=='full')throw Error('No Full scan is running.');
+        fullScanStop=action;
+      } else if(action==='discard'){
+        if(purchaseScan)throw Error('Wait for the running scan to stop before discarding its progress.');
+        await removeFullScanPass(chrome.storage.local);
+      } else if(action==='browse'){
+        await chrome.runtime.openOptionsPage();
+      } else if(action!=='state')throw Error('Unsupported scan request.');
+      const {pass:key}=fullScanStorage(),saved=await chrome.storage.local.get({fanaticalAccountId:null,fanaticalProfileLabel:'',[key]:null});
+      return {running:Boolean(purchaseScan),mode:purchaseScan?purchaseScanMode:null,stopping:fullScanStop,unfinished:fullScanPassStatus(saved)};
+    })().then(result=>sendResponse({ok:true,result}),error=>sendResponse({ok:false,error:error.message}));
     return true;
   }
   if (message?.type === 'FANATICAL_GET_PUBLIC_BUNDLE') {

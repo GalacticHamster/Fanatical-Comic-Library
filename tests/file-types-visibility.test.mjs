@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
-import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibraryBackup, createSyncStore, createTitleCatalog, createTitleCatalogCsv, FANATICAL_ORDERS_URL, orderNavigationUrl } from '../src/library-data.mjs';
+import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibraryBackup, createSyncStore, createTitleCatalog, createTitleCatalogCsv, FANATICAL_ORDERS_URL, orderNavigationUrl, fullScanPassStatus } from '../src/library-data.mjs';
 import { projectOrderHistory } from '../src/projection.mjs';
 import '../src/shared.js';
 
@@ -67,7 +67,7 @@ async function createOptionsHarness(initial = {}) {
     LibraryTitleSort: globalThis.LibraryTitleSort,
     LibraryAccountProfiles: globalThis.LibraryAccountProfiles,
     FanaticalLibrary: globalThis.FanaticalLibrary,
-    localKeyReminders, backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitleCatalog, createTitleCatalogCsv, FANATICAL_ORDERS_URL, orderNavigationUrl,
+    localKeyReminders, backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitleCatalog, createTitleCatalogCsv, FANATICAL_ORDERS_URL, orderNavigationUrl, fullScanPassStatus,
     Blob, URL, setTimeout, clearTimeout, Intl
   });
 

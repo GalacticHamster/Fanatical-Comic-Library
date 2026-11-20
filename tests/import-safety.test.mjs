@@ -405,6 +405,7 @@ function harness({ list = [summary], details = { [orderId]: detail }, headers = 
     strictScan: (fullScan=true)=>vm.runInNewContext('('+importFanaticalOrdersInPage.toString()+')',page)({fullScan,knownOrderFingerprints:known,allowPartial:false}),
     get maxActive() { return maxActive; }, scan: (fullScan = true,progressId='') => worker.importPurchases({ fullScan,progressId,profileLabel:'fixture',confirmed:true }),
     store: (operation,args,url='https://www.fanatical.com/en/orders',id=chrome.runtime.id,senderOverrides={})=>new Promise(resolve=>dispatch(listeners,{type:'FANATICAL_STORE',operation,args},{id,url,frameId:0,tab:{id:1,url},...senderOverrides},resolve)),
+    control: action => new Promise(resolve => dispatch(listeners,{ type: 'FANATICAL_SCAN_CONTROL', action },{id:chrome.runtime.id,url:'https://www.fanatical.com/en/orders',frameId:0,tab:{id:1,url:'https://www.fanatical.com/en/orders'}},resolve)),
     send: (fullScan = true,overrides={},senderOverrides={}) => new Promise((resolve) => dispatch(listeners,{ type: 'FANATICAL_IMPORT_PURCHASES', fullScan,profileLabel:'fixture',confirmed:true,...overrides }, {id:chrome.runtime.id,url:'https://www.fanatical.com/en/orders',frameId:0,tab:{id:1,url:'https://www.fanatical.com/en/orders'},...senderOverrides}, resolve)) };
 }
 
@@ -1221,4 +1222,55 @@ test('switching accounts between Full-scan batches stops the pass and keeps earl
  assert.deepEqual(run.stored.fanaticalLibraryItems,[]);
  assert.equal(run.stored.fanaticalProfileArchives.find(account=>account.profileLabel==='fixture').items.length,201);
  assert.equal(detailPaths(run).length,200);
+});
+
+test('Pause stops a Full scan between batches, keeps verified purchases and Continue reads only the rest',async()=>{
+ const history=longHistory(450);let requested=false,during=null;
+ const run=harness({respond:history.respond,onSet:async changes=>{
+   if(!requested&&changes.fanaticalFullScanPass){requested=true;during=run.control('pause');}
+ }});
+ const paused=await run.send(true);assert(paused.ok,paused.error);await settle();
+ assert.equal(paused.summary.stopped,'paused');
+ assert.equal((await during).result.running,true);
+ assert.equal(detailPaths(run).length,200,'the batch being read finishes; no further batch starts');
+ assert.equal(run.stored.fanaticalLibraryItems.filter(item=>/^product-\d{6}$/u.test(item.sourceItemId)&&item.sourceItemId!=='product-654321').length,200,'verified purchases are saved');
+ assert.deepEqual(run.stored.fanaticalImportSummary,run.before.fanaticalImportSummary,'the complete-scan checkpoint is not advanced');
+ const state=(await run.control('state')).result;
+ assert.equal(state.running,false);assert.equal(state.unfinished.verifiedOrders,200);assert.equal(state.unfinished.batches,1);
+ assert(!/order-0|product-0/u.test(JSON.stringify(state)),'status carries counts only');
+ run.paths.length=0;
+ const resumed=await run.send(true);assert(resumed.ok,resumed.error);
+ assert.equal(resumed.summary.stopped,undefined);
+ assert.equal(detailPaths(run).length,250,'Continue reads only orders not yet verified');
+ assert.deepEqual(passKeys(run.stored),[]);
+ assert.deepEqual(libraryView(run.stored),await singleRunLibrary(history));
+});
+
+test('Cancel discards the unfinished Full scan but never the purchases it saved',async()=>{
+ const history=longHistory(450);let requested=false;
+ const run=harness({respond:history.respond,onSet:async changes=>{
+   if(!requested&&changes.fanaticalFullScanPass){requested=true;run.control('cancel');}
+ }});
+ const cancelled=await run.send(true);assert(cancelled.ok,cancelled.error);await settle();
+ assert.equal(cancelled.summary.stopped,'cancelled');
+ assert.equal(detailPaths(run).length,200);
+ assert.deepEqual(passKeys(run.stored),[],'the unfinished progress is discarded');
+ assert.equal(run.stored.fanaticalLibraryItems.filter(item=>/^product-\d{6}$/u.test(item.sourceItemId)&&item.sourceItemId!=='product-654321').length,200,'verified purchases stay');
+ assert(run.stored.fanaticalLibraryItems.some(item=>item.sourceItemId==='product-654321'),'earlier purchases stay');
+ assert.deepEqual(run.stored.fanaticalImportSummary,run.before.fanaticalImportSummary);
+ assert.equal((await run.control('state')).result.unfinished,null);
+});
+
+test('Discard needs no running scan, keeps saved purchases, and stop requests need a running Full scan',async()=>{
+ const history=longHistory(450);let requested=false;
+ const run=harness({respond:history.respond,onSet:async changes=>{
+   if(!requested&&changes.fanaticalFullScanPass){requested=true;const busy=await run.control('discard');assert.equal(busy.ok,false);run.control('pause');}
+ }});
+ assert((await run.send(true)).ok);await settle();
+ const items=structuredClone(run.stored.fanaticalLibraryItems);
+ assert.equal((await run.control('pause')).ok,false,'nothing to pause');
+ assert.equal((await run.control('discard')).ok,true);
+ assert.deepEqual(passKeys(run.stored),[]);
+ assert.deepEqual(run.stored.fanaticalLibraryItems,items);
+ assert.equal((await run.control('unknown')).ok,false);
 });

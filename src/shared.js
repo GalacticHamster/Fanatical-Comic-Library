@@ -1389,7 +1389,15 @@
     let detail = '';
     let library = '';
 
-    if (isFailed) {
+    if (summary.stopped === 'paused' || summary.stopped === 'cancelled') {
+      // Stopping a scan never removes purchases: verified batches were saved as they finished.
+      const saved = summary.fullScanPass?.verifiedOrders ?? summary.verifiedPurchasesSaved ?? 0;
+      title = summary.stopped === 'paused' ? 'Full scan paused' : 'Full scan cancelled';
+      detail = `${saved.toLocaleString()} order${saved === 1 ? '' : 's'} verified in this Full scan ${saved === 1 ? 'was' : 'were'} saved to your library.`;
+      library = summary.stopped === 'paused'
+        ? 'Continue full scan reads only the orders not yet verified. Earlier records were preserved.'
+        : 'Its unfinished progress was discarded, so the next Full scan starts from the first order. No saved purchases were removed.';
+    } else if (isFailed) {
       title = 'Import failed';
       const cat = summary.category ?? (
         /auth|sign.?in|session|401|403|denied/iu.test(summary.error ?? '') ? 'authentication'
@@ -1425,7 +1433,7 @@
       // A Full scan that stopped part-way has already saved the batches it verified.
       const progress = Number.isSafeInteger(summary.progressSaved) && summary.progressSaved > 0 ? summary.progressSaved : 0;
       library = progress
-        ? `${progress.toLocaleString()} purchase${progress === 1 ? '' : 's'} checked before it stopped ${progress === 1 ? 'was' : 'were'} saved; earlier records were preserved. Run Rescan all purchases again to continue.`
+        ? `${progress.toLocaleString()} purchase${progress === 1 ? '' : 's'} checked before it stopped ${progress === 1 ? 'was' : 'were'} saved; earlier records were preserved. Use Continue full scan to read the rest.`
         : 'Your existing library was not changed.';
     } else if (isPartial) {
       title = fullScan ? 'Full import partially completed' : 'Quick update partially completed';

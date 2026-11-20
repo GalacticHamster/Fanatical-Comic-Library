@@ -1,4 +1,4 @@
-import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitleCatalog, createTitleCatalogCsv, FANATICAL_ORDERS_URL, orderNavigationUrl } from './library-data.mjs';
+import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibraryBackup, createTitleCatalog, createTitleCatalogCsv, FANATICAL_ORDERS_URL, orderNavigationUrl, fullScanPassStatus } from './library-data.mjs';
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Galactic Hamster
 
@@ -941,6 +941,17 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
 
   let refreshChain=Promise.resolve();
   function refresh(options) {const next=refreshChain.then(()=>refreshNow(options));refreshChain=next.catch(()=>{});return next;}
+  // An unfinished Full scan of the active account: what was saved and how to continue or discard it.
+  async function renderFullScanState() {
+    const box = $('#full-scan-state');
+    if (!box) return;
+    const saved = await chrome.storage.local.get({ fanaticalAccountId: null, fanaticalProfileLabel: '', fanaticalFullScanPass: null });
+    const u = fullScanPassStatus(saved), when = value => value ? new Date(value).toLocaleString() : 'an unknown time';
+    box.hidden = !u;
+    if (!u) return;
+    $('#full-scan-note').textContent = `Full scan unfinished: ${u.verifiedOrders.toLocaleString()} order${u.verifiedOrders === 1 ? '' : 's'} verified and saved in ${u.batches} batch${u.batches === 1 ? '' : 'es'}, last saved ${when(u.updatedAt)}. Continue full scan on the Fanatical Orders page reads only the remaining orders. The progress is kept until ${when(u.expiresAt)}. Discarding it does not remove saved purchases.`;
+    $('#continue-full-scan').hidden = $('#discard-full-scan').hidden = false;
+  }
   async function refreshNow({libraryOnly=false}={}) {
     const state=await chrome.storage.local.get({fanaticalImportSummary:null,fanaticalLibraryItems:[],galacticLibraryExtensionId:'',fanaticalShowDiagnostics:false,fanaticalLastScanAttempt:null,fanaticalProfileLabel:'',fanaticalAccountId:null,fanaticalProfileArchives:[],fanaticalHistoricalItems:[],fanaticalOrderNavigation:{}});
     const {
@@ -953,6 +964,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     $('#last-import').textContent = summary
       ? `Last ${summary.scanMode === 'full' ? 'full' : 'quick'} scan: ${summary.addedProducts} item${summary.addedProducts === 1 ? '' : 's'} added; ${summary.ordersScanned} order${summary.ordersScanned === 1 ? '' : 's'} scanned${summary.ordersSkipped ? ` and ${summary.ordersSkipped} already-scanned order${summary.ordersSkipped === 1 ? '' : 's'} skipped` : ''} on ${new Date(summary.importedAt).toLocaleString()}.`
       : 'No Fanatical import has run yet.';
+    void renderFullScanState();
     const scope=state;
     $('#library-count').textContent = `Active account nickname: ${scope.fanaticalProfileLabel||'Not yet named'}. ${scope.fanaticalProfileArchives.length} other saved accounts (selectable above; excluded from active matching). ${items.length} unique item${items.length === 1 ? '' : 's'} stored locally.`;
     const missing=scope.fanaticalHistoricalItems.filter(entry=>entry.profileLabel===scope.fanaticalProfileLabel).length;
@@ -1175,6 +1187,13 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     }catch(error){$('#wishlist-status').textContent='Wishlist restore failed: '+error.message;}finally{input.value='';}
   });
 
+  $('#continue-full-scan').addEventListener('click', () => { chrome.tabs.create({ url: ordersUrl }); });
+  $('#discard-full-scan').addEventListener('click', async () => {
+    if (!confirm('Discard the unfinished Full scan? Purchases it already saved stay in your library; the next Full scan starts from the first order.')) return;
+    try { const response = await chrome.runtime.sendMessage({ type: 'FANATICAL_SCAN_CONTROL', action: 'discard' }); if (!response?.ok) throw Error(response?.error ?? 'Unavailable.'); $('#full-scan-note').textContent = 'Unfinished Full scan discarded. No saved purchases were removed.'; }
+    catch (error) { $('#full-scan-note').textContent = `Discard failed: ${error.message}`; }
+    await renderFullScanState();
+  });
   $('#open-orders').addEventListener('click', () => {
     chrome.tabs.create({ url: ordersUrl });
   });
@@ -1236,7 +1255,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     render: () => renderLibraryBrowser()
   };
   let liveDirty=false,liveRefresh=null;
-  const libraryKeys=['fanaticalLibraryItems','fanaticalImportSummary','fanaticalLastScanAttempt','fanaticalProfileLabel','fanaticalAccountId','fanaticalProfileArchives','fanaticalHistoricalItems','fanaticalOrderNavigation','rejectedPurchaseItems','mediaTypeOverrides'];
+  const libraryKeys=['fanaticalLibraryItems','fanaticalImportSummary','fanaticalFullScanPass','fanaticalLastScanAttempt','fanaticalProfileLabel','fanaticalAccountId','fanaticalProfileArchives','fanaticalHistoricalItems','fanaticalOrderNavigation','rejectedPurchaseItems','mediaTypeOverrides'];
   chrome.storage.onChanged?.addListener((changes,area)=>{
     if(area!=='local'||!libraryKeys.some(key=>Object.hasOwn(changes,key)))return;
     liveDirty=true;

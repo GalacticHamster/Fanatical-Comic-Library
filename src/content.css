@@ -71,6 +71,9 @@
 
 /* Three rows: description, account controls, then status and actions. */
 .library-import-description { width:100%; }
+.library-import-saved { margin:.4rem 0 0; font-size:.86rem; }
+.library-import-progress { display:block; width:100%; height:.5rem; margin-top:.35rem; accent-color:currentColor; }
+.library-import-progress[hidden] { display:none; }
 .library-import-description details { margin-top:.35rem; font-size:.82rem; }
 .library-import-description summary { cursor:pointer; }
 .library-import-description p { margin:.4rem 0; }

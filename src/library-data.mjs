@@ -267,6 +267,14 @@ function validatePartialScan(value,{fullScan,knownOrderFingerprints}){
 const FULL_SCAN_PASS_KEY='fanaticalFullScanPass',FULL_SCAN_PART_PREFIX='fanaticalFullScanPart:';
 const sameFullScanPass=(saved,expected)=>saved&&saved.accountId===expected.accountId&&saved.label===expected.label&&saved.startedAt===expected.startedAt&&saved.parts===expected.parts&&saved.updatedAt===expected.updatedAt;
 export function fullScanStorage(){return {pass:FULL_SCAN_PASS_KEY,part:n=>FULL_SCAN_PART_PREFIX+n};}
+// An unfinished Full scan is kept for this many days after its last saved batch.
+export const FULL_SCAN_PASS_DAYS=7;
+// The active account's unfinished Full scan, if it can still be continued. Counts only; never order data.
+export function fullScanPassStatus(state,now=Date.now()){
+  const pass=state?.[FULL_SCAN_PASS_KEY],updated=Date.parse(pass?.updatedAt);
+  if(pass?.version!==1||!state.fanaticalAccountId||pass.accountId!==state.fanaticalAccountId||pass.label!==state.fanaticalProfileLabel||!Array.isArray(pass.done)||!Number.isSafeInteger(pass.parts)||pass.parts<1||!Number.isFinite(updated)||now-updated>=FULL_SCAN_PASS_DAYS*86400000)return null;
+  return {verifiedOrders:pass.done.length,batches:pass.parts,startedAt:safeDate(pass.startedAt),updatedAt:safeDate(pass.updatedAt),expiresAt:new Date(updated+FULL_SCAN_PASS_DAYS*86400000).toISOString()};
+}
 export async function removeFullScanPass(area){
   const pass=(await area.get({[FULL_SCAN_PASS_KEY]:null}))[FULL_SCAN_PASS_KEY],parts=Number.isSafeInteger(pass?.parts)&&pass.parts>0?Math.min(pass.parts,1000):0;
   await area.remove([FULL_SCAN_PASS_KEY,...Array.from({length:parts},(_,n)=>FULL_SCAN_PART_PREFIX+n)]);

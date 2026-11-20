@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- An unfinished Full scan is visible and controllable, as in Humble Library. The Orders panel and Options show how many orders it verified and saved, when, and how long the progress is kept, with Continue full scan and Discard unfinished scan. While a Full scan runs, the panel shows saved progress per batch and offers Pause, which keeps the progress for Continue, and Cancel, which discards it; both stop after the batch being read. Stopping or discarding never removes saved purchases, and the last complete scan is not changed. The panel also shows the last scan in this browser and a Browse your library button.
+
 - Restoring a backup adds it to the saved library instead of replacing it, as in Humble Library. Purchases, purchase records, corrections, wishes and saved accounts already in the browser are kept and the backup fills in what is missing; a saved account that the backup does not contain stays as a saved account. Each key reminder keeps its newer dismiss, snooze or restore decision, and the confirmation names what happens to the wishlist. Scan history is still reset for a safe recheck.
 
 - Browse the Library by **Titles** or **Bundles & Orders**. Both views can open a verified Fanatical order, with Order History available for earlier records without a saved link.
