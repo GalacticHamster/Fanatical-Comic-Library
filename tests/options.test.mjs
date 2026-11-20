@@ -747,3 +747,24 @@ test('Bundles & Orders finds bundles bought more than once and pages large order
   assert.equal(list.children.length, 130);
   assert.equal(more.hidden, true);
 });
+
+test('Recently added lists products by when this browser first saved them, and older saves after', async () => {
+  const origin = (ref, date) => ({purchaseRef: ref.repeat(64), purchaseDate: date, quantity: 1, bundle: {sourceItemId: 'bundle-' + ref, title: 'Bundle ' + ref}});
+  const ui = await optionsHarness({fanaticalLibraryItems: [
+    {...item('Old purchase added today', 'product-a'), firstSeenAt: '2026-11-18T10:00:00.000Z', purchaseOrigins: [origin('a', '2019-01-01T12:00:00.000Z')]},
+    {...item('Added last week', 'product-b'), firstSeenAt: '2026-11-11T10:00:00.000Z', purchaseOrigins: [origin('b', '2026-11-10T12:00:00.000Z')]},
+    {...item('Saved before recording', 'product-c'), purchaseOrigins: [origin('c', '2026-11-17T12:00:00.000Z')]}
+  ]});
+  const titles = () => ui.get('#library-preview').children.map(r => r.textContent.split(' — ')[0]);
+  await ui.change('#library-sort', 'added-desc');
+  assert.deepEqual(titles(), ['Old purchase added today', 'Added last week', 'Saved before recording']);
+  assert.match(ui.get('#preview-note').textContent, /recently added first; titles saved before this browser recorded when they were added follow/);
+  ui.get('#library-view-groups').checked = true;
+  await ui.change('#library-view-groups');
+  await ui.change('#library-sort', 'added-desc');
+  const summaries = ui.get('#library-preview').children.map(row => row.children[0].children[0].textContent.split(' — ')[0]);
+  assert.deepEqual(summaries, ['Bundle a', 'Bundle b', 'Bundle c']);
+  const row = ui.get('#library-preview').children[0].children[0];
+  row.open = true; await row.listeners.toggle();
+  assert(row.children[1].children.some(fact => /^First saved in this browser on 2026-11-18\. This is not the purchase date\.$/.test(fact.textContent)));
+});

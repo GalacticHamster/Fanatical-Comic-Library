@@ -1075,7 +1075,8 @@ test('a sparse order whose gift is renamed in detail commits only with the match
 
 // Full scans read order details in batches of 200; these histories need three batches.
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
-const libraryView=stored=>({items:stored.fanaticalLibraryItems,fingerprints:stored.fanaticalScannedOrderFingerprints,historical:(stored.fanaticalHistoricalItems??[]).map(entry=>entry.item.sourceItemId).sort(),mode:stored.fanaticalImportSummary?.scanMode,scanned:stored.fanaticalImportSummary?.ordersScanned});
+// When each product was first saved differs between a batched and a single-run scan by design.
+const libraryView=stored=>({items:stored.fanaticalLibraryItems.map(({firstSeenAt,...item})=>item),fingerprints:stored.fanaticalScannedOrderFingerprints,historical:(stored.fanaticalHistoricalItems??[]).map(entry=>entry.item.sourceItemId).sort(),mode:stored.fanaticalImportSummary?.scanMode,scanned:stored.fanaticalImportSummary?.ordersScanned});
 const passKeys=stored=>Object.keys(stored).filter(key=>key==='fanaticalFullScanPass'||key.startsWith('fanaticalFullScanPart:'));
 const detailPaths=run=>run.paths.filter(path=>/\/api\/user\/orders\/order-/u.test(path));
 async function singleRunLibrary(history,pageOverrides){const single=harness({respond:history.respond,pageOverrides});const reply=await single.scan(true);assert.equal(reply.ordersScanned,history.orders.length);return libraryView(single.stored);}
@@ -1273,4 +1274,22 @@ test('Discard needs no running scan, keeps saved purchases, and stop requests ne
  assert.deepEqual(passKeys(run.stored),[]);
  assert.deepEqual(run.stored.fanaticalLibraryItems,items);
  assert.equal((await run.control('unknown')).ok,false);
+});
+
+test('a scan records when each new product was first saved and never stamps purchases saved earlier',async()=>{
+ const history=longHistory(3);
+ const run=harness({respond:history.respond});
+ const before=Date.now();
+ assert((await run.send(false)).ok);
+ const added=run.stored.fanaticalLibraryItems.filter(item=>/^product-00000\d$/u.test(item.sourceItemId));
+ assert.equal(added.length,3);
+ for(const item of added)assert(Date.parse(item.firstSeenAt)>=before-1000,'new products get the scan time');
+ const earlier=run.stored.fanaticalLibraryItems.find(item=>item.sourceItemId==='product-654321');
+ assert.equal(earlier.firstSeenAt,undefined,'a product saved before this was recorded is not given a time');
+ const first=Object.fromEntries(added.map(item=>[item.sourceItemId,item.firstSeenAt]));
+ await settle();
+ assert((await run.send(true)).ok);
+ for(const item of run.stored.fanaticalLibraryItems.filter(item=>first[item.sourceItemId]))assert.equal(item.firstSeenAt,first[item.sourceItemId],'a rescan keeps the first time');
+ const backup=await run.store('backup',[],`chrome-extension://${'a'.repeat(32)}/src/options.html`);
+ assert.equal(backup.result.items.find(item=>first[item.sourceItemId]).firstSeenAt,Object.values(first)[0],'backups keep it');
 });

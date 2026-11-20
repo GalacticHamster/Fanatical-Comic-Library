@@ -115,6 +115,7 @@ function mergeProduct(previous,incoming){
     }
   }
   const latest=Date.parse(previous.purchaseDate)>Date.parse(incoming.purchaseDate)?previous:incoming;
+  const firstSeen=[previous.firstSeenAt,incoming.firstSeenAt].filter(Boolean).sort()[0];
   const combinedFormats = Array.isArray(previous.formats) || Array.isArray(incoming.formats)
     ? [...new Set([...(previous.formats || []), ...(incoming.formats || [])])].sort()
     : undefined;
@@ -125,8 +126,20 @@ function mergeProduct(previous,incoming){
     ...(mergedDelivery ? { delivery: mergedDelivery } : {}),
     ...(mergedStreaming ? { streaming: true } : {}),
     ...(combinedFormats !== undefined ? { formats: combinedFormats } : {}),
-    purchaseOrigins:[...origins.values()],...keySummary([...origins.values()])
+    purchaseOrigins:[...origins.values()],...keySummary([...origins.values()]),
+    ...(firstSeen?{firstSeenAt:firstSeen}:{})
   };
+}
+// When this browser first saved each purchase, for Recently added. It is not a purchase date. Purchases
+// saved before this was recorded have none and are never given one; a product new to the account gets the
+// time of the scan or import that first saved it, and a known product keeps its earlier time.
+function stampFirstSeen(items,prior,now){
+  const seen=new Map(),known=new Set();
+  for(const item of prior){known.add(item.sourceItemId);if(item.firstSeenAt&&(!seen.has(item.sourceItemId)||item.firstSeenAt<seen.get(item.sourceItemId)))seen.set(item.sourceItemId,item.firstSeenAt);}
+  return items.map(item=>{
+    const first=[item.firstSeenAt,seen.get(item.sourceItemId)].filter(Boolean).sort()[0]??(known.has(item.sourceItemId)?null:now);
+    return first?{...item,firstSeenAt:first}:item;
+  });
 }
 export function mergeLibraryItems(items){return sanitizeImportResult({items}).items;}
 
@@ -157,6 +170,7 @@ export function sanitizeImportResult(value) {
       ...(Array.isArray(candidate?.formats) ? { formats: safeList(candidate.formats) } : {}),
       bundle: { sourceItemId: safeId(candidate?.bundle?.sourceItemId), title: safeText(candidate?.bundle?.title), ...(safeText(candidate?.bundle?.slug, 300) ? { slug: safeText(candidate.bundle.slug, 300) } : {}) },
       purchaseDate: safeDate(candidate?.purchaseDate),
+      ...(safeDate(candidate?.firstSeenAt)?{firstSeenAt:safeDate(candidate.firstSeenAt)}:{}),
       ...(candidate.purchaseOrigins!==undefined?{purchaseOrigins:purchaseOrigins(candidate.purchaseOrigins)}:{})
     };
     deduplicated.set(sourceItemId,mergeProduct(deduplicated.get(sourceItemId),projected));
@@ -427,9 +441,10 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
       if(target?.newLabel){const label=String(target.newLabel).trim();if(!label||label.length>100||A.fanScopes(state).some(value=>value.label===label)||target.expectedActiveLabel!==state.fanaticalProfileLabel)throw Error('Invalid or stale new account choice.');scope={label,items:[],state:{accountId:crypto.randomUUID()},fresh:true};}
       else scope=await A.selected('fan',state,target?.accountRef);
       if(operation==='handoffImport'&&target?.autoSync){const accountId=scope.stableId;await globalThis.GalacticPurchaseSync.assertCommit(area,data.provider,target,accountId);}
-      const result=A.fanMerge(scope.items,data.records,Boolean(target?.autoSync)),items=parseLibraryBackup({schemaVersion:1,items:retainKeyReviews(result.items,[...(scope.label===state.fanaticalProfileLabel?state.fanaticalHistoricalItems:scope.state?.historicalItems??[]).map(h=>h.item),...scope.items])});
+      let result=A.fanMerge(scope.items,data.records,Boolean(target?.autoSync)),items=parseLibraryBackup({schemaVersion:1,items:retainKeyReviews(result.items,[...(scope.label===state.fanaticalProfileLabel?state.fanaticalHistoricalItems:scope.state?.historicalItems??[]).map(h=>h.item),...scope.items])});
       if(operation==='handoffPreview')return {readOnly:true,sourceRecords:data.records.length,destinationRecords:scope.items.length,...result.stats,...A.previewTitles(scope.items,result.items.slice(scope.items.length)),updateBreakdownKnown:false,limitations:data.limitations};
       if(!result.stats.added&&!result.stats.updated&&!scope.fresh)return result.stats;
+      items=stampFirstSeen(items,[...scope.items,...(scope.label===state.fanaticalProfileLabel?state.fanaticalHistoricalItems:scope.state?.historicalItems??[]).map(h=>h.item)],new Date().toISOString());
       if(scope.label===state.fanaticalProfileLabel||!state.fanaticalProfileLabel&&!state.fanaticalLibraryItems.length)await area.set({fanaticalAccountId:scope.state.accountId??scope.stableId,fanaticalLibraryItems:items,fanaticalProfileLabel:scope.label});
       else {const archives=state.fanaticalProfileArchives.filter(p=>p.profileLabel!==scope.label);archives.push({...scope.state,accountId:scope.stableId??scope.state.accountId,profileLabel:scope.label,items,historicalItems:scope.state?.historicalItems??[],archivedAt:new Date().toISOString()});if(archives.length>100)throw Error('Too many saved accounts.');await area.set({fanaticalProfileArchives:archives});}
       return result.stats;
@@ -539,7 +554,7 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
       const overrides = state.mediaTypeOverrides ?? {};
       const reviewItems=control.changing?[]:[...state.fanaticalHistoricalItems.filter(h=>h.profileLabel===state.fanaticalProfileLabel).map(h=>h.item),...state.fanaticalLibraryItems];
       const withReviews=retainKeyReviews(parsedIncoming,reviewItems);
-      const incoming = withReviews.map(item => {
+      let incoming = withReviews.map(item => {
         const override = overrides[item.sourceItemId] || (item.title && overrides[`manual:${globalThis.FanaticalLibrary.titleKey(item.title)}`]);
         if (override) {
           return { ...item, mediaType: override, manualMediaType: override, automaticMediaType: item.automaticMediaType || item.mediaType || 'unclassified' };
@@ -554,6 +569,7 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
         }
       }
       const now=new Date().toISOString(),sameProfile=state.fanaticalProfileLabel===control.label;
+      incoming=stampFirstSeen(incoming,control.changing?[]:[...state.fanaticalLibraryItems,...state.fanaticalHistoricalItems.map(entry=>entry.item)],now);
       const history=new Map((sameProfile?parseHistoricalItems(state.fanaticalHistoricalItems,control.label):[]).map(entry=>[entry.item.sourceItemId,entry]));
       if(control.changing){const prior=archive(state);for(let n=archives.length-1;n>=0;n--)if(archives[n].profileLabel===prior.profileLabel||archives[n].profileLabel===control.label)archives.splice(n,1);archives.push(prior);if(archives.length>100)throw new Error('Too many archived profiles; export a backup first.');}
       const observed=new Set(incoming.map(item=>item.sourceItemId));

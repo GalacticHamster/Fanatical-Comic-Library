@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Titles and Bundles & Orders can be sorted by Recently added, as in Humble Library. Fanatical Library now records when a scan or Galactic Library import first saves each product in this browser; it is kept by later scans, backups and restores and is never shown as a purchase date or shared. Products saved before this version have no such time and are listed after, newest purchase first; no time is invented for them. An opened purchase says when it was first saved.
+
 - A bundle page's Already purchased notice lists every saved purchase of the bundle, as in Humble Library: how many times it was bought, then each purchase's date, oldest first, with copies bought in quantity. A purchase without a saved date says "date unknown" instead of hiding the notice, and an earlier record that may be the same purchase as a verified order makes the count "at least".
 
 - Purchase dates use the same calendar day as Humble Library: Titles, Bundles & Orders and reminder cards show a timestamp's day in this browser's time zone instead of in UTC, matching the CSV catalog, and a date saved without a time of day (exactly midnight UTC) shows that date. Purchase date (oldest) sorts titles by their first purchase instead of their latest, as in Humble Library; titles without a known date stay last, and the Library note says how each date sort works. Saved dates are unchanged.

@@ -486,6 +486,16 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
       if (sort === 'title-desc') {
         return collator.compare(titleB, titleA);
       }
+      // Recently added: when this browser first saved the product, newest first. Products saved before that was
+      // recorded follow, by newest purchase, as in Humble Library. It is never shown as a purchase date.
+      if (sort === 'added-desc') {
+        const addedA = Date.parse(a?.firstSeenAt), addedB = Date.parse(b?.firstSeenAt);
+        if (Number.isFinite(addedA) !== Number.isFinite(addedB)) return Number.isFinite(addedA) ? -1 : 1;
+        if (Number.isFinite(addedA) && addedA !== addedB) return addedB - addedA;
+        const dateA = getItemPurchaseDate(a), dateB = getItemPurchaseDate(b);
+        if (dateA !== dateB) return dateA === null ? 1 : dateB === null ? -1 : dateB - dateA;
+        return collator.compare(titleA, titleB);
+      }
       if (sort === 'date-desc') {
         const dateA = getItemPurchaseDate(a);
         const dateB = getItemPurchaseDate(b);
@@ -571,7 +581,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
         const quantity = Number.isSafeInteger(origin.quantity) && origin.quantity > 0 ? origin.quantity : 1;
         if (!previous || quantity > previous.quantity) {
           order.lines.set(lineKey, {id:item.sourceItemId, title:item.title, media:item.mediaType || item.kind,
-            bundle, bundleId:isBundle ? bundleId || bundle : '', quantity});
+            bundle, bundleId:isBundle ? bundleId || bundle : '', quantity, firstSeenAt:item.firstSeenAt ?? null});
         }
       }
     }
@@ -581,8 +591,10 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
       const oneBundle = first.bundle && contents.every(line => line.bundleId === first.bundleId);
       const categories = {};
       for (const line of contents) { const key = orderMediaCategory(line.media); categories[key] = (categories[key] ?? 0) + 1; }
+      // First saved when its earliest product was, and unknown if any product was saved before that was recorded.
+      const added = contents.every(line => line.firstSeenAt) ? contents.map(line => line.firstSeenAt).sort()[0] : null;
       return {ref, title:oneBundle ? first.bundle : contents.length === 1 ? first.title : 'Fanatical order',
-        purchaseDate:dates.size === 1 ? [...dates][0] : null,
+        purchaseDate:dates.size === 1 ? [...dates][0] : null, addedAt:added,
         products:new Set(contents.map(line => line.id)).size, quantity:contents.reduce((total,line) => total + line.quantity,0), contents, categories,
         bundles:new Set(contents.filter(line => line.bundleId).map(line => line.bundleId)).size, standalone:contents.filter(line => !line.bundleId).length};
     });
@@ -610,6 +622,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     if (order.quantity > order.products) facts.push(`${order.quantity.toLocaleString()} copies in total: some products were bought in quantity.`);
     facts.push(order.ref ? 'Verified Fanatical order, read from your signed-in Order History.' : 'Earlier purchase evidence without a verified order reference.');
     if (!order.purchaseDate) facts.push('No purchase date is saved for this record.');
+    if (order.addedAt) facts.push(`First saved in this browser on ${formatPurchaseDate(order.addedAt)}. This is not the purchase date.`);
     if (order.sameNamePurchases > 1) facts.push(`One of ${order.sameNamePurchases} separate purchases with this name.`);
     return facts;
   }
@@ -955,6 +968,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
         const sortLabel = state.sort === 'date-desc' ? (orders ? 'by purchase date (newest), purchases without a known date last' : 'by latest purchase date (newest), titles without a known date last')
           : state.sort === 'date-asc' ? (orders ? 'by purchase date (oldest), purchases without a known date last' : 'by first purchase date (oldest), titles without a known date last')
           : state.sort === 'title-desc' ? 'reverse alphabetically'
+          : state.sort === 'added-desc' ? `recently added first; ${orders ? 'purchases' : 'titles'} saved before this browser recorded when they were added follow, newest purchase first`
           : orders && state.sort === 'count-desc' ? 'by most products'
           : orders && state.sort === 'count-asc' ? 'by fewest products'
           : 'alphabetically';
@@ -986,6 +1000,11 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
         if (byDate) return sort === 'date-asc' ? byDate : -byDate;
       }
       if ((sort === 'count-desc' || sort === 'count-asc') && a.products !== b.products) return sort === 'count-desc' ? b.products - a.products : a.products - b.products;
+      if (sort === 'added-desc') {
+        if (Boolean(a.addedAt) !== Boolean(b.addedAt)) return a.addedAt ? -1 : 1;
+        const byAdded = (b.addedAt || '').localeCompare(a.addedAt || '') || (b.purchaseDate || '').localeCompare(a.purchaseDate || '');
+        if (byAdded) return byAdded;
+      }
       const byName = LibraryTitleSort.compare(a.title,b.title);
       return (sort === 'title-desc' ? -byName : byName) || a.ref.localeCompare(b.ref);
     });
