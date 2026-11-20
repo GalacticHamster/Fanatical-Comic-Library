@@ -32,8 +32,8 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     }
     const filter = $('#local-reminder-filter').value || 'pending';
     const query = ($('#local-reminder-search').value || '').trim().toLowerCase();
-    const active = rows.filter(row => !row.hidden && row.status === 'unrevealed').length;
-    $('#local-key-status').textContent = active.toLocaleString() + ' active purchase ' + (active === 1 ? 'reminder' : 'reminders') + '. Reminders work without Galactic Library.';
+    // One count, for the selected view, as in Humble Library.
+    $('#local-key-status').textContent = 'Reminders work without Galactic Library.';
     const shown = rows.filter(row => {
       const matchesView = row.hidden ? filter === 'hidden' || filter === row.review?.action
         : filter === 'unknown' ? row.status === 'unknown' : filter === 'pending' && row.status === 'unrevealed';
@@ -58,15 +58,17 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     const day = value => new Date(value).toLocaleDateString();
     const date = row.purchasedAt ? new Date(row.purchasedAt).toLocaleDateString(undefined, {timeZone:'UTC'}) : null;
     const badge = row.hidden ? row.review.action === 'snoozed' ? 'Snoozed until ' + day(row.review.until) : 'Dismissed'
-      : row.status === 'unrevealed' ? 'Reported unrevealed' : 'Key reveal status unknown';
+      : row.status === 'unrevealed' ? 'Not yet revealed' : 'Key status unknown';
     const heading = part('div', 'key-reminder-heading', '');
     heading.append(part('span', '', row.title), part('span', 'key-reminder-status', badge));
     const context = [row.bundle || 'Individual purchase', date ? 'Purchased ' + date : 'Purchase date unknown',
       row.quantity > 1 ? row.quantity.toLocaleString() + ' copies' : ''].filter(Boolean).join(' \u00b7 ');
-    const observation = row.hidden ? row.status === 'unrevealed' ? 'Key reported unrevealed. ' : 'Key reveal status unknown. ' : '';
+    const observation = row.status === 'unrevealed' ? 'Fanatical reports this key as not yet revealed. ' : 'Fanatical does not report whether this key was revealed. ';
     const details = observation + 'Checked ' + day(row.checkedAt) + '. Activation is unknown. No deadline recorded.';
     card.append(heading, part('div', 'key-reminder-source', context), part('div', 'key-reminder-meta', details));
     const actions = part('div', 'key-reminder-actions', '');
+    // Navigation first, then the review actions, as on Humble Library cards.
+    actions.append(purchaseNavigation(row.purchaseRef, row.title, row.ref));
     const accountId = activePurchaseAccount;
     const act = (text, action) => {
       const button = part('button', 'secondary', text);
@@ -88,7 +90,6 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     };
     if (row.hidden) act('Restore reminder', 'active');
     else { act('Dismiss reminder', 'dismissed'); act('Snooze 7 days', 'snoozed'); }
-    actions.append(purchaseNavigation(row.purchaseRef, row.title, row.ref));
     card.append(actions);
     return card;
   }

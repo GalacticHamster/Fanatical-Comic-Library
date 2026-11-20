@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Key reminder cards follow Humble Library's layout: the order link comes first, then Dismiss and Snooze, and the status reads Not yet revealed or Key status unknown with a sentence saying what Fanatical reported. The views are ordered as in Humble Library, and the reminder section shows one count for the selected view.
+
 - Bundles & Orders matches Humble Library's purchase browsing more closely. A search for a contained title counts the matching titles on each purchase and lists them first, marked Match, when it opens. Purchases can be filtered by contents (games, books or comics, software, audiobooks, video or mixed media) and to bundles bought more than once, and sorted by most or fewest products. An opened purchase lists its media, bundles and standalone products, copies bought in quantity, whether it is a verified order and how many separate purchases share its name. Contents name a bundle only when it differs from the purchase name and appear in batches of 100.
 
 - An unfinished Full scan is visible and controllable, as in Humble Library. The Orders panel and Options show how many orders it verified and saved, when, and how long the progress is kept, with Continue full scan and Discard unfinished scan. While a Full scan runs, the panel shows saved progress per batch and offers Pause, which keeps the progress for Continue, and Cancel, which discards it; both stop after the batch being read. Stopping or discarding never removes saved purchases, and the last complete scan is not changed. The panel also shows the last scan in this browser and a Browse your library button.
