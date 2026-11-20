@@ -559,48 +559,97 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
         }
       }
     }
-    return [...orders.values()].map(({ref, dates, lines}) => {
+    const groups = [...orders.values()].map(({ref, dates, lines}) => {
       const contents = [...lines.values()].sort((a,b) => LibraryTitleSort.compare(a.bundle,b.bundle) || LibraryTitleSort.compare(a.title,b.title));
       const first = contents[0];
       const oneBundle = first.bundle && contents.every(line => line.bundleId === first.bundleId);
+      const categories = {};
+      for (const line of contents) { const key = orderMediaCategory(line.media); categories[key] = (categories[key] ?? 0) + 1; }
       return {ref, title:oneBundle ? first.bundle : contents.length === 1 ? first.title : 'Fanatical order',
         purchaseDate:dates.size === 1 ? [...dates][0] : null,
-        products:new Set(contents.map(line => line.id)).size, quantity:contents.reduce((total,line) => total + line.quantity,0), contents};
+        products:new Set(contents.map(line => line.id)).size, quantity:contents.reduce((total,line) => total + line.quantity,0), contents, categories,
+        bundles:new Set(contents.filter(line => line.bundleId).map(line => line.bundleId)).size, standalone:contents.filter(line => !line.bundleId).length};
     });
+    // Separate verified orders with the same name, as Humble Library counts repeat purchases of a bundle.
+    const names = new Map();
+    for (const group of groups) if (group.ref && group.title !== 'Fanatical order') { const key = FanaticalLibrary.titleKey(group.title); names.set(key, (names.get(key) ?? 0) + 1); }
+    for (const group of groups) group.sameNamePurchases = group.ref && group.title !== 'Fanatical order' ? names.get(FanaticalLibrary.titleKey(group.title)) ?? 1 : 1;
+    return groups;
   }
 
-  function renderPurchaseGroup(order) {
+  // Contents categories for the Bundles & Orders media filter and facts. Comics count as books, as in Humble Library.
+  const ORDER_MEDIA_LABELS = { game: ['game', 'games'], book: ['book or comic', 'books or comics'], software: ['software item', 'software items'], audiobook: ['audiobook', 'audiobooks'], video: ['video', 'videos'], other: ['other item', 'other items'] };
+  function orderMediaCategory(media) {
+    const kind = String(media || '').toLowerCase();
+    return kind === 'comic' || kind === 'book' ? 'book' : ['game', 'software', 'audiobook', 'video'].includes(kind) ? kind : 'other';
+  }
+  const ORDER_CONTENT_BATCH = 100;
+  const countText = (n, [one, many]) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+
+  function orderFacts(order) {
+    const facts = [];
+    const media = Object.entries(order.categories).sort(([,a],[,b]) => b - a).map(([key, n]) => countText(n, ORDER_MEDIA_LABELS[key]));
+    if (media.length) facts.push(`Contains ${media.join(', ')}${Object.keys(order.categories).length > 1 ? ' (mixed media)' : ''}.`);
+    if (order.bundles > 1 || order.bundles && order.standalone) facts.push(`${countText(order.bundles, ['bundle', 'bundles'])}${order.standalone ? ` and ${countText(order.standalone, ['standalone product', 'standalone products'])}` : ''} in this order.`);
+    if (order.quantity > order.products) facts.push(`${order.quantity.toLocaleString()} copies in total: some products were bought in quantity.`);
+    facts.push(order.ref ? 'Verified Fanatical order, read from your signed-in Order History.' : 'Earlier purchase evidence without a verified order reference.');
+    if (!order.purchaseDate) facts.push('No purchase date is saved for this record.');
+    if (order.sameNamePurchases > 1) facts.push(`One of ${order.sameNamePurchases} separate purchases with this name.`);
+    return facts;
+  }
+
+  function renderPurchaseGroup(entry) {
+    const { order, matches = [], nameMatch = false } = entry.order ? entry : { order: entry };
     const row = document.createElement('li');
     row.className = 'library-item library-group';
+    row.dataset.rowKeys = 'g:' + (order.ref || order.contents.map(line => line.id).join('\u0001'));
     const details = document.createElement('details');
     details.className = 'library-item-details';
     const summary = document.createElement('summary');
     summary.className = 'library-item-summary';
     summary.textContent = `${order.title} — ${order.purchaseDate || 'Date unknown'} · ${order.products.toLocaleString()} ${order.products === 1 ? 'product' : 'products'}`;
     if (order.quantity > order.products) summary.textContent += ` · ${order.quantity.toLocaleString()} copies`;
+    // A title found inside a large order is counted here and listed first when the order opens.
+    if (matches.length && !nameMatch) summary.textContent += ` · ${countText(matches.length, ['matching title', 'matching titles'])}`;
     details.append(summary);
-    if (!order.ref) {
-      const note = document.createElement('p');
-      note.className = 'library-provenance-empty';
-      note.textContent = 'Earlier purchase evidence without a verified order reference.';
-      details.append(note);
-    }
-    details.append(purchaseNavigation(order.ref, [order.title,order.purchaseDate].filter(Boolean).join(' · ')));
-    const list = document.createElement('ul');
-    list.className = 'library-provenance-list';
-    for (const line of order.contents) {
-      const entry = document.createElement('li');
-      entry.className = 'library-provenance-item';
-      const title = document.createElement('div');
-      title.className = 'library-provenance-primary';
-      title.textContent = line.title;
-      const facts = document.createElement('div');
-      facts.className = 'library-provenance-secondary';
-      facts.textContent = [line.bundle, mediaTypeLabel(line.media), line.quantity > 1 ? `${line.quantity.toLocaleString()} copies` : ''].filter(Boolean).join(' · ');
-      entry.append(title,facts);
-      list.append(entry);
-    }
-    details.append(list);
+    let rendered = false;
+    const render = () => {
+      if (rendered) return;
+      rendered = true;
+      const facts = document.createElement('ul');
+      facts.className = 'library-group-facts';
+      facts.append(...orderFacts(order).map(text => { const li = document.createElement('li'); li.textContent = text; return li; }));
+      details.append(facts, purchaseNavigation(order.ref, [order.title,order.purchaseDate].filter(Boolean).join(' · ')));
+      const matched = new Set(matches), sequence = [...matches, ...order.contents.map((_, i) => i).filter(i => !matched.has(i))];
+      const list = document.createElement('ul');
+      list.className = 'library-provenance-list library-group-contents';
+      const more = document.createElement('button');
+      more.type = 'button';
+      more.className = 'secondary library-group-more';
+      let shown = 0;
+      const step = () => {
+        for (const i of sequence.slice(shown, shown + ORDER_CONTENT_BATCH)) {
+          const line = order.contents[i], item = document.createElement('li');
+          item.className = 'library-provenance-item';
+          const title = document.createElement('div');
+          title.className = 'library-provenance-primary';
+          title.textContent = (matched.has(i) ? 'Match: ' : '') + line.title;
+          const secondary = document.createElement('div');
+          secondary.className = 'library-provenance-secondary';
+          // The bundle is named only when it differs from the purchase name above.
+          secondary.textContent = [line.bundle && line.bundle !== order.title ? line.bundle : line.bundleId ? '' : order.bundles ? 'Standalone product' : '', mediaTypeLabel(line.media), line.quantity > 1 ? `${line.quantity.toLocaleString()} copies` : ''].filter(Boolean).join(' · ');
+          item.append(title, secondary);
+          list.append(item);
+        }
+        shown = Math.min(sequence.length, shown + ORDER_CONTENT_BATCH);
+        more.hidden = shown >= sequence.length;
+        more.textContent = `Show ${Math.min(ORDER_CONTENT_BATCH, sequence.length - shown)} more of ${sequence.length - shown} remaining products`;
+      };
+      more.addEventListener('click', step);
+      step();
+      details.append(list, more);
+    };
+    details.addEventListener('toggle', () => { if (details.open) render(); });
     row.append(details);
     return row;
   }
@@ -839,6 +888,9 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
       '#library-search-label': {textContent: orders ? 'Find bundles and orders' : 'Find titles'},
       '#library-search': {value: state.search, placeholder: orders ? 'Filter by bundle or contained title…' : 'Filter by title…'},
       '#library-title-media': {hidden: orders},
+      '#library-order-media': {hidden: !orders},
+      '#library-sort-size-desc': {hidden: !orders, disabled: !orders},
+      '#library-sort-size-asc': {hidden: !orders, disabled: !orders},
       '#library-search-scope': {value: state.searchScope},
       '#library-title-metadata': {hidden: orders},
       '#library-order-metadata': {hidden: !orders},
@@ -851,6 +903,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
       if (element) for (const [key,value] of Object.entries(props)) if (element[key] !== value) element[key] = value;
     }
     if (libraryFilterMedia && !orders) libraryFilterMedia.value = state.media;
+    if (orders && $('#library-filter-order-media')) $('#library-filter-order-media').value = state.media;
     if (libraryFilterMetadata && !orders) libraryFilterMetadata.value = state.metadata;
     if (librarySort) librarySort.value = state.sort;
     if (libraryPageSize) libraryPageSize.value = String(state.pageSize);
@@ -886,27 +939,37 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
         const sortLabel = state.sort === 'date-desc' ? 'by purchase date (newest)'
           : state.sort === 'date-asc' ? 'by purchase date (oldest)'
           : state.sort === 'title-desc' ? 'reverse alphabetically'
+          : orders && state.sort === 'count-desc' ? 'by most products'
+          : orders && state.sort === 'count-asc' ? 'by fewest products'
           : 'alphabetically';
-        note.textContent = `Showing ${pageItems.length} of ${processed.length} ${unit}${filterInfo}${pageInfo}, ${sortLabel}.`;
+        // Say how a search treats contained titles, so a match inside a large order is not a surprise.
+        const searchInfo = orders && state.search.trim() && state.searchScope !== 'bundle' ? ' Purchases containing a matching title show how many match; open one to see those titles first.' : '';
+        note.textContent = `Showing ${pageItems.length} of ${processed.length} ${unit}${filterInfo}${pageInfo}, ${sortLabel}.${searchInfo}`;
       }
     }
   }
 
-  function filterPurchaseGroups(groups, {search,searchScope,metadata,sort}) {
+  // Returns {order, matches, nameMatch}: matches are the contained titles a search found, listed first when the order opens.
+  function filterPurchaseGroups(groups, {search,searchScope,media = '',metadata,sort}) {
     const term = search.trim().toLowerCase();
-    return groups.filter(order => {
-      if (metadata === 'dated' && !order.purchaseDate || metadata === 'undated' && order.purchaseDate) return false;
-      if (metadata === 'legacy' && order.ref || metadata === 'bundle' && !order.contents.some(line => line.bundleId)) return false;
-      return !term
-        || (searchScope !== 'bundle' && order.contents.some(line => line.title.toLowerCase().includes(term)))
-        || (searchScope !== 'title' && (order.title.toLowerCase().includes(term)
-          || order.contents.some(line => line.bundle.toLowerCase().includes(term))));
-    }).sort((a,b) => {
+    const results = [];
+    for (const order of groups) {
+      if (metadata === 'dated' && !order.purchaseDate || metadata === 'undated' && order.purchaseDate) continue;
+      if (metadata === 'legacy' && order.ref || metadata === 'bundle' && !order.contents.some(line => line.bundleId)) continue;
+      if (metadata === 'repeat' && !(order.sameNamePurchases > 1)) continue;
+      if (media === 'mixed' ? Object.keys(order.categories).length < 2 : media && !order.categories[media]) continue;
+      const nameMatch = Boolean(term) && searchScope !== 'title' && (order.title.toLowerCase().includes(term) || order.contents.some(line => line.bundle.toLowerCase().includes(term)));
+      const matches = term && searchScope !== 'bundle' ? order.contents.map((line, i) => line.title.toLowerCase().includes(term) ? i : -1).filter(i => i >= 0) : [];
+      if (term && !nameMatch && !matches.length) continue;
+      results.push({order, matches, nameMatch});
+    }
+    return results.sort(({order:a},{order:b}) => {
       if (sort === 'date-asc' || sort === 'date-desc') {
         if (Boolean(a.purchaseDate) !== Boolean(b.purchaseDate)) return a.purchaseDate ? -1 : 1;
         const byDate = (a.purchaseDate || '').localeCompare(b.purchaseDate || '');
         if (byDate) return sort === 'date-asc' ? byDate : -byDate;
       }
+      if ((sort === 'count-desc' || sort === 'count-asc') && a.products !== b.products) return sort === 'count-desc' ? b.products - a.products : a.products - b.products;
       const byName = LibraryTitleSort.compare(a.title,b.title);
       return (sort === 'title-desc' ? -byName : byName) || a.ref.localeCompare(b.ref);
     });
@@ -920,7 +983,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     });
   }
   for (const [selector,property] of [
-    ['#library-search','search'], ['#library-search-scope','searchScope'], ['#library-filter-media','media'], ['#library-filter-metadata','metadata'],
+    ['#library-search','search'], ['#library-search-scope','searchScope'], ['#library-filter-media','media'], ['#library-filter-order-media','media'], ['#library-filter-metadata','metadata'],
     ['#library-filter-orders','metadata'], ['#library-sort','sort'], ['#library-page-size','pageSize']
   ]) {
     $(selector)?.addEventListener(property === 'search' ? 'input' : 'change', () => {

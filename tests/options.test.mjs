@@ -100,10 +100,26 @@ test('Titles and Bundles & Orders keep order identity, contents, quantities and 
     'Fanatical order — 2026-01-02 · 3 products · 4 copies',
     'Test bundle — Date unknown · 1 product'
   ]);
+  // Contents render when the purchase opens; facts explain it, and a contained-title search lists matches first.
+  const open = async index => { const node = ui.get('#library-preview').children[index].children[0]; node.open = true; await node.listeners.toggle(); return node; };
+  await ui.input('#library-search','Selected');
+  assert.deepEqual(summaries(),['Pick & Mix — 2026-02-02 · 1 product · 1 matching title','Fanatical order — 2026-01-02 · 3 products · 4 copies · 2 matching titles']);
+  const matched = await open(1);
+  assert.deepEqual(matched.children.at(-2).children.map(row => row.children[0].textContent),['Match: Selected book','Match: Selected game','Standalone']);
+  assert.deepEqual(matched.children[1].children.map(fact => fact.textContent),['Contains 2 games, 1 book or comic (mixed media).','2 bundles and 1 standalone product in this order.','4 copies in total: some products were bought in quantity.','Verified Fanatical order, read from your signed-in Order History.']);
+  assert.match(ui.get('#preview-note').textContent,/open one to see those titles first/);
+  await ui.input('#library-search','');
+  await ui.change('#library-filter-order-media','book');
+  assert.deepEqual(summaries(),['Fanatical order — 2026-01-02 · 3 products · 4 copies']);
+  await ui.change('#library-filter-order-media','');
+  await ui.change('#library-sort','count-desc');
+  assert.match(summaries()[0],/^Fanatical order — 2026-01-02 · 3 products/);
+  assert.match(ui.get('#preview-note').textContent,/by most products/);
+  await ui.change('#library-sort','date-desc');
   await ui.input('#library-search','Book bundle');
   assert.equal(summaries().length,1);
-  const group = ui.get('#library-preview').children[0].children[0];
-  assert.deepEqual(group.children.at(-1).children.map(row => row.children[0].textContent),['Standalone','Selected book','Selected game']);
+  const group = await open(0);
+  assert.deepEqual(group.children.at(-2).children.map(row => row.children[0].textContent),['Standalone','Selected book','Selected game']);
   await ui.change('#library-search-scope','title');
   assert.deepEqual(summaries(),[]);
   await ui.change('#library-search-scope','both');
@@ -689,4 +705,31 @@ test('options library metadata filter lists titles with no known purchase date, 
   const ui = await optionsHarness({ fanaticalLibraryItems: [dated, undated, partly] });
   await ui.change('#library-filter-metadata', 'undated');
   assert.deepEqual(ui.get('#library-preview').children.map(row => row.textContent), ['Undated Title — 1 purchase']);
+});
+
+test('Bundles & Orders finds bundles bought more than once and pages large orders in batches of 100', async () => {
+  const origin = (ref, date) => ({purchaseRef: ref.repeat(64), purchaseDate: date, quantity: 1, bundle: {sourceItemId: 'bundle-repeat', title: 'Repeat Bundle'}});
+  const big = Array.from({length: 130}, (_, n) => ({...item('Big item ' + String(n).padStart(3, '0'), 'product-big-' + n), purchaseOrigins: [{purchaseRef: 'c'.repeat(64), purchaseDate: '2025-05-05', quantity: 1, bundle: {sourceItemId: 'bundle-big', title: 'Big Bundle'}}]}));
+  const ui = await optionsHarness({fanaticalLibraryItems: [{...item('Repeat game', 'product-repeat'), purchaseOrigins: [origin('a', '2025-01-01'), origin('b', '2026-01-01')]}, ...big]});
+  const summaries = () => ui.get('#library-preview').children.map(row => row.children[0].children[0].textContent);
+  ui.get('#library-view-groups').checked = true;
+  await ui.change('#library-view-groups');
+  await ui.change('#library-filter-orders', 'repeat');
+  assert.deepEqual(summaries().sort(), ['Repeat Bundle — 2025-01-01 · 1 product', 'Repeat Bundle — 2026-01-01 · 1 product']);
+  const repeat = ui.get('#library-preview').children[0].children[0];
+  repeat.open = true; await repeat.listeners.toggle();
+  assert(repeat.children[1].children.some(fact => fact.textContent === 'One of 2 separate purchases with this name.'));
+  await ui.change('#library-filter-orders', '');
+  await ui.input('#library-search', 'Big item 129');
+  const bigRow = ui.get('#library-preview').children[0].children[0];
+  assert.match(summaries()[0], /^Big Bundle — 2025-05-05 · 130 products · 1 matching title$/);
+  bigRow.open = true; await bigRow.listeners.toggle();
+  const [list, more] = bigRow.children.slice(-2);
+  assert.equal(list.children.length, 100);
+  assert.equal(list.children[0].children[0].textContent, 'Match: Big item 129', 'a match in a large order is listed first');
+  assert.equal(more.hidden, false);
+  assert.equal(more.textContent, 'Show 30 more of 30 remaining products');
+  await more.listeners.click();
+  assert.equal(list.children.length, 130);
+  assert.equal(more.hidden, true);
 });

@@ -115,6 +115,15 @@
               <option value="video">Video</option>
               <option value="unclassified">Unclassified</option>
             </select></label>
+            <label id="library-order-media" hidden>Contents <select id="library-filter-order-media">
+              <option value="">All media</option>
+              <option value="game">Contains games</option>
+              <option value="book">Contains books / comics</option>
+              <option value="software">Contains software</option>
+              <option value="audiobook">Contains audiobooks</option>
+              <option value="video">Contains video</option>
+              <option value="mixed">Mixed media</option>
+            </select></label>
             <label id="library-title-metadata">Metadata <select id="library-filter-metadata">
               <option value="">All items</option>
               <option value="dated">With purchase date</option>
@@ -130,12 +139,15 @@
               <option value="undated">No known purchase date</option>
               <option value="bundle">With bundle details</option>
               <option value="legacy">Without a verified order reference</option>
+              <option value="repeat">Bought more than once</option>
             </select></label>
             <label>Sort <select id="library-sort">
               <option id="library-sort-name-asc" value="title-asc">Title (A–Z)</option>
               <option id="library-sort-name-desc" value="title-desc">Title (Z–A)</option>
               <option value="date-desc">Purchase date (newest)</option>
               <option value="date-asc">Purchase date (oldest)</option>
+              <option id="library-sort-size-desc" value="count-desc" hidden disabled>Most products</option>
+              <option id="library-sort-size-asc" value="count-asc" hidden disabled>Fewest products</option>
             </select></label>
             <label>Per page <select id="library-page-size">
               <option value="20">20</option>
