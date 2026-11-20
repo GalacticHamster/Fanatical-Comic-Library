@@ -708,9 +708,9 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
 export function createTitleCatalogCsv(rows){
   const F=globalThis.FanaticalLibrary,catalog=createTitleCatalog(rows);
   const cell=value=>{let text=String(value??'');if(/^[=+@\-\t\r]/u.test(text))text="'"+text;return '"'+text.replace(/"/gu,'""')+'"';};
-  // Calendar days in this browser's time zone, as the Library shows them; never inferred.
+  // Calendar days as the Library shows them (FanaticalLibrary.calendarDay); never inferred.
   const time=value=>typeof value==='number'?value:typeof value==='string'?Date.parse(value):NaN;
-  const day=value=>{const t=time(value);if(!Number.isFinite(t))return '';const d=new Date(t);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
+  const day=value=>globalThis.FanaticalLibrary.calendarDay(value);
   const out=[['Title','Media type','Purchase status','First purchased','Last purchased','Purchase count','Purchase count confidence','Source','Bundle / purchase name','Purchase dates']];
   catalog.items.forEach((item,index)=>{
     const row=rows[index],{purchases:list,exact}=F.purchaseList(typeof row==='object'?[row]:[]),purchased=list.length>0;

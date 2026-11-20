@@ -56,7 +56,7 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
       return node;
     };
     const day = value => new Date(value).toLocaleDateString();
-    const date = row.purchasedAt ? new Date(row.purchasedAt).toLocaleDateString(undefined, {timeZone:'UTC'}) : null;
+    const date = row.purchasedAt ? formatPurchaseDate(row.purchasedAt) || null : null;
     const badge = row.hidden ? row.review.action === 'snoozed' ? 'Snoozed until ' + day(row.review.until) : 'Dismissed'
       : row.status === 'unrevealed' ? 'Not yet revealed' : 'Key status unknown';
     const heading = part('div', 'key-reminder-heading', '');
@@ -176,6 +176,18 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
     return latest;
   }
 
+  // The earliest known purchase date of a title (its first purchase), for oldest-first sorting.
+  function getItemEarliestPurchaseDate(item) {
+    if (!item || typeof item !== 'object') return null;
+    const list = Array.isArray(item.purchaseOrigins) ? item.purchaseOrigins : (Array.isArray(item.provenance) ? item.provenance : []);
+    let earliest = null;
+    for (const raw of [item.purchaseDate || item.purchasedAt, ...list.map(rec => rec?.purchaseDate || rec?.purchasedAt)]) {
+      const time = raw ? Date.parse(raw) : NaN;
+      if (Number.isFinite(time) && (earliest === null || time < earliest)) earliest = time;
+    }
+    return earliest;
+  }
+
   function mediaTypeLabel(type) {
     switch (type) {
       case 'comic': return 'Comic';
@@ -192,7 +204,8 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
   function formatPurchaseDate(timestamp) {
     if (!timestamp) return '';
     try {
-      return new Date(timestamp).toISOString().slice(0, 10);
+      // The same calendar day as Humble Library and both CSV catalogs show (FanaticalLibrary.calendarDay).
+      return FanaticalLibrary.calendarDay(timestamp);
     } catch {
       return '';
     }
@@ -484,9 +497,11 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
         if (dateB !== null) return 1;
         return collator.compare(titleA, titleB);
       }
+      // Oldest first uses each title's first purchase, as in Humble Library. Titles without a known date are
+      // listed last in both directions, never treated as old purchases.
       if (sort === 'date-asc') {
-        const dateA = getItemPurchaseDate(a);
-        const dateB = getItemPurchaseDate(b);
+        const dateA = getItemEarliestPurchaseDate(a);
+        const dateB = getItemEarliestPurchaseDate(b);
         if (dateA !== null && dateB !== null) {
           if (dateA !== dateB) return dateA - dateB;
           return collator.compare(titleA, titleB);
@@ -937,8 +952,8 @@ import { localKeyReminders, backupRestoreState, createLibraryBackup, parseLibrar
       } else {
         const pageInfo = totalPages > 1 ? ` (page ${state.page + 1} of ${totalPages})` : '';
         const filterInfo = processed.length !== uniqueItems.length ? ` (filtered from ${uniqueItems.length})` : '';
-        const sortLabel = state.sort === 'date-desc' ? 'by purchase date (newest)'
-          : state.sort === 'date-asc' ? 'by purchase date (oldest)'
+        const sortLabel = state.sort === 'date-desc' ? (orders ? 'by purchase date (newest), purchases without a known date last' : 'by latest purchase date (newest), titles without a known date last')
+          : state.sort === 'date-asc' ? (orders ? 'by purchase date (oldest), purchases without a known date last' : 'by first purchase date (oldest), titles without a known date last')
           : state.sort === 'title-desc' ? 'reverse alphabetically'
           : orders && state.sort === 'count-desc' ? 'by most products'
           : orders && state.sort === 'count-asc' ? 'by fewest products'

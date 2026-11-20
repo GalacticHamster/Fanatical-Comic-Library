@@ -1570,7 +1570,19 @@
   }
 
   async function storageSet(updates){const response=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'patch',args:[updates]});if(!response?.ok)throw new Error(response?.error??'Settings storage is unavailable.');}
-  global.FanaticalLibrary = { purchaseCount, purchaseList, purchaseCountText, formatScanSummary, purchaseImportScope, purchaseImportProgress, purchaseActivity, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, isCompleteBundleCatalogue, isBundleOverlapProduct, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, sendGalacticMatch, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, COMPANION_IDENTITIES, companionBrowser, builtinGalacticId, resolveGalacticId, galacticAvailability, galacticPermissionDenied, trustedGalacticSender, companionTargetProblem, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft, isComicItem, mediaOverrideKey };
+  // The calendar day (YYYY-MM-DD) shown for a purchase date, the same in Humble Library and Fanatical Library.
+  // A date-only value is that day. A value saved as exactly midnight UTC carries no time of day (a date-only
+  // source normalised when saved), so it is that UTC date. Any other timestamp is its day in this browser's
+  // time zone. Saved values are never changed.
+  function calendarDay(value) {
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/u.test(value)) return value;
+    const time = typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) : NaN;
+    if (!Number.isFinite(time)) return '';
+    const d = new Date(time);
+    if (time % 86400000 === 0) return d.toISOString().slice(0, 10);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  global.FanaticalLibrary = { calendarDay, purchaseCount, purchaseList, purchaseCountText, formatScanSummary, purchaseImportScope, purchaseImportProgress, purchaseActivity, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, isCompleteBundleCatalogue, isBundleOverlapProduct, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, sendGalacticMatch, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, COMPANION_IDENTITIES, companionBrowser, builtinGalacticId, resolveGalacticId, galacticAvailability, galacticPermissionDenied, trustedGalacticSender, companionTargetProblem, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft, isComicItem, mediaOverrideKey };
 }(globalThis));
 
 /* Account picker; all changes use the serialized writer. */

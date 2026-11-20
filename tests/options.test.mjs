@@ -387,7 +387,7 @@ test('options library sorting supports title A-Z, title Z-A, date newest, and da
     ui.get('#library-preview').children.map((r) => r.textContent.split(' — ')[0]),
     ['Alpha Game', 'Beta Game', 'Gamma Game']
   );
-  assert.match(ui.get('#preview-note').textContent, /by purchase date \(newest\)/);
+  assert.match(ui.get('#preview-note').textContent, /by latest purchase date \(newest\), titles without a known date last/);
 
   // date-asc (oldest first, undated at end)
   await ui.change('#library-sort', 'date-asc');
@@ -395,7 +395,21 @@ test('options library sorting supports title A-Z, title Z-A, date newest, and da
     ui.get('#library-preview').children.map((r) => r.textContent.split(' — ')[0]),
     ['Beta Game', 'Alpha Game', 'Gamma Game']
   );
-  assert.match(ui.get('#preview-note').textContent, /by purchase date \(oldest\)/);
+  assert.match(ui.get('#preview-note').textContent, /by first purchase date \(oldest\), titles without a known date last/);
+});
+
+test('oldest first sorts titles by their first purchase and newest first by their latest', async () => {
+  const origin = (ref, date) => ({purchaseRef: ref.repeat(64), purchaseDate: date, quantity: 1, bundle: {sourceItemId: 'bundle-' + ref, title: 'Bundle ' + ref}});
+  const ui = await optionsHarness({fanaticalLibraryItems: [
+    {...item('Bought twice', 'product-twice'), purchaseOrigins: [origin('a', '2025-01-01T12:00:00.000Z'), origin('b', '2026-06-01T12:00:00.000Z')]},
+    {...item('Bought once', 'product-once'), purchaseOrigins: [origin('c', '2025-06-01T12:00:00.000Z')]},
+    item('Never dated', 'product-undated')
+  ]});
+  const titles = () => ui.get('#library-preview').children.map(r => r.textContent.split(' — ')[0]);
+  await ui.change('#library-sort', 'date-asc');
+  assert.deepEqual(titles(), ['Bought twice', 'Bought once', 'Never dated'], 'first bought in 2025-01, so oldest; unknown dates are not old');
+  await ui.change('#library-sort', 'date-desc');
+  assert.deepEqual(titles(), ['Bought twice', 'Bought once', 'Never dated'], 'last bought in 2026-06, so newest');
 });
 
 test('options library pagination handles selectable page sizes, previous/next, and out-of-bounds clamping', async () => {

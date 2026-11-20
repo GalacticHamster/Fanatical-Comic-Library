@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Purchase dates use the same calendar day as Humble Library: Titles, Bundles & Orders and reminder cards show a timestamp's day in this browser's time zone instead of in UTC, matching the CSV catalog, and a date saved without a time of day (exactly midnight UTC) shows that date. Purchase date (oldest) sorts titles by their first purchase instead of their latest, as in Humble Library; titles without a known date stay last, and the Library note says how each date sort works. Saved dates are unchanged.
+
 - Key reminder cards follow Humble Library's layout: the order link comes first, then Dismiss and Snooze, and the status reads Not yet revealed or Key status unknown with a sentence saying what Fanatical reported. The views are ordered as in Humble Library, and the reminder section shows one count for the selected view.
 
 - Bundles & Orders matches Humble Library's purchase browsing more closely. A search for a contained title counts the matching titles on each purchase and lists them first, marked Match, when it opens. Purchases can be filtered by contents (games, books or comics, software, audiobooks, video or mixed media) and to bundles bought more than once, and sorted by most or fewest products. An opened purchase lists its media, bundles and standalone products, copies bought in quantity, whether it is a verified order and how many separate purchases share its name. Contents name a bundle only when it differs from the purchase name and appear in batches of 100.
