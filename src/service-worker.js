@@ -390,6 +390,6 @@ const purchaseHandoff=GalacticPurchaseTransfer.createService({runtime:chrome.run
  accounts:()=>syncStore.execute('handoffAccounts'),snapshot:(_,ref)=>syncStore.execute('handoffSnapshot',[ref]),preview:(data,target)=>syncStore.execute('handoffPreview',[data,target]),commit:(data,target)=>syncStore.execute('handoffImport',[data,target])});
 purchaseHandoff.register();
 
-const purchaseSync=GalacticPurchaseSync.createCoordinator({runtime:chrome.runtime,area:chrome.storage.local,alarms:chrome.alarms,service:purchaseHandoff,role:'fan',catalog:()=>syncStore.execute('syncAccounts'),busy:async()=>Boolean((await chrome.storage.local.get({fanaticalSyncControl:null})).fanaticalSyncControl)});
+const purchaseSync=GalacticPurchaseSync.createCoordinator({runtime:chrome.runtime,area:chrome.storage.local,alarms:chrome.alarms,service:purchaseHandoff,role:'fan',catalog:()=>syncStore.execute('syncAccounts'),revision:()=>syncStore.revision(),busy:async()=>Boolean((await chrome.storage.local.get({fanaticalSyncControl:null})).fanaticalSyncControl)});
 purchaseSync.register();
 GalacticPurchaseSync.observeCompanion(chrome,purchaseSync,'fanatical',['fanaticalLibraryItems','fanaticalProfileArchives'], 'fanaticalSyncControl');

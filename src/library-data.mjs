@@ -403,6 +403,9 @@ export function mergeRestoreState(current,restored){
 }
 
 export function createSyncStore(area,{onInvalidated=()=>{}}={}){
+  // Purchase sync compares revisions to tell whether a saved change landed while it applied another extension's
+  // records. Every write made through this store counts.
+  let revision=0;const storage=area;area={get:(...a)=>storage.get(...a),set:async(...a)=>{try{return await storage.set(...a);}finally{revision++;}},remove:async(...a)=>{try{return await storage.remove(...a);}finally{revision++;}}};
   let tail=Promise.resolve();const key='fanaticalSyncControl';
   const defaults={fanaticalLibraryItems:[],fanaticalScannedOrderFingerprints:[],fanaticalProfileLabel:'',fanaticalAccountId:null,fanaticalProfileArchives:[],fanaticalHistoricalItems:[],fanaticalImportSummary:null,fanaticalLastScanAttempt:null,mediaTypeOverrides:{},rejectedPurchaseItems:[]};
   async function operate(operation,args){
@@ -720,7 +723,7 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
     if(operation==='unlink'){await area.remove('galacticLibraryExtensionId');return true;}
     throw new Error('Unsupported storage operation.');
   }
-  return {execute(operation,args=[]){const captured=structuredClone(args);const task=tail.then(()=>operate(operation,captured));tail=task.catch(()=>{});return task;}};
+  return {execute(operation,args=[]){const captured=structuredClone(args);const task=tail.then(async()=>{const before=revision,value=await operate(operation,captured);return operation==='handoffImport'&&value&&typeof value==='object'&&!Array.isArray(value)?{...value,revisionBefore:before,revision}:value;});tail=task.catch(()=>{});return task;},revision:()=>revision};
 }
 
 /** Portable catalog metadata deliberately excludes purchase/ownership evidence. */
