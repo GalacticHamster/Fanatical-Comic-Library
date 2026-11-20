@@ -221,6 +221,7 @@ async function importFullScan(options={}){
       // Paused keeps the saved progress for Continue full scan; Cancel discards it. Saved purchases stay either way.
       const mode=fullScanStop;fullScanStop=null;
       if(mode==='cancel')await removeFullScanPass(area);
+      await syncStore.execute('fullScanTotals',[done.size,failed.size+deferred.size]);
       const {batchRound,batchComplete,batchToken,batchTabId,...result}=round;
       return {...result,stopped:mode==='cancel'?'cancelled':'paused',addedProducts:added,verifiedPurchasesSaved:done.size,unresolvedOrders:failed.size+deferred.size,fullScanPass:{verifiedOrders:done.size,remainingOrders:failed.size+deferred.size,batches:pass.parts,kept:mode!=='cancel'}};
     }
@@ -232,6 +233,7 @@ async function importFullScan(options={}){
       // Full scan retries the rest without reading verified orders again.
       const {batchRound,batchComplete,batchToken,batchTabId,...result}=round;
       const explained=problem??round;
+      await syncStore.execute('fullScanTotals',[done.size,failed.size+deferred.size]);
       return {...result,addedProducts:added,verifiedPurchasesSaved:done.size,unresolvedOrders:failed.size+deferred.size,failureExplanation:explained.failureExplanation,fullScanPass:{verifiedOrders:done.size,remainingOrders:failed.size+deferred.size,batches:pass.parts},scanDiagnostic:{...explained.scanDiagnostic,verifiedPurchasesSaved:Math.min(done.size,100000),unresolvedOrders:Math.min(failed.size+deferred.size,100000)}};
     }
     round=await importPurchases(later,{limit:FULL_SCAN_BATCH,known:[...done],retryLater:[...failed],pass});

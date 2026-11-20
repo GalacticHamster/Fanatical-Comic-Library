@@ -1236,6 +1236,7 @@ test('Pause stops a Full scan between batches, keeps verified purchases and Cont
  assert.equal(detailPaths(run).length,200,'the batch being read finishes; no further batch starts');
  assert.equal(run.stored.fanaticalLibraryItems.filter(item=>/^product-\d{6}$/u.test(item.sourceItemId)&&item.sourceItemId!=='product-654321').length,200,'verified purchases are saved');
  assert.deepEqual(run.stored.fanaticalImportSummary,run.before.fanaticalImportSummary,'the complete-scan checkpoint is not advanced');
+ assert.equal(run.stored.fanaticalLastScanAttempt.verifiedPurchasesSaved,200,'the last attempt reports the whole pass');
  const state=(await run.control('state')).result;
  assert.equal(state.running,false);assert.equal(state.unfinished.verifiedOrders,200);assert.equal(state.unfinished.batches,1);
  assert(!/order-0|product-0/u.test(JSON.stringify(state)),'status carries counts only');

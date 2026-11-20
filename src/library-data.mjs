@@ -509,6 +509,14 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
       await area.set({[key]:{token,tabId,label,changing,fullScan:options.fullScan||forceFull}});
       return {token,forceFull,state:changing?{...defaults}:state};
     }
+    if(operation==='fullScanTotals'){
+      // A batched Full scan that ends partial, paused or cancelled reports the whole pass, not its last batch.
+      const [verified,unresolved]=args,saved=await area.get({fanaticalLastScanAttempt:null});
+      if(!Number.isSafeInteger(verified)||verified<0||!Number.isSafeInteger(unresolved)||unresolved<0)throw Error('Invalid Full scan totals.');
+      if(saved.fanaticalLastScanAttempt?.status!=='partial')return false;
+      await area.set({fanaticalLastScanAttempt:{...saved.fanaticalLastScanAttempt,verifiedPurchasesSaved:Math.min(verified,100000),unresolvedOrders:Math.min(unresolved,100000)}});
+      return true;
+    }
     if(operation==='stageFullScanBatch'){
       // A restore or profile change invalidates the same token used to save the batch.
       const [token,tabId,pass,done,receipt]=args;

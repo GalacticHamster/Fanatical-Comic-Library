@@ -377,7 +377,7 @@
       } catch { if (active()) savedState.textContent = ''; }
     };
     const savedChanged = (changes, area) => { if (area === 'local' && (changes.fanaticalFullScanPass || changes.fanaticalImportSummary || changes.fanaticalSyncControl)) void renderSaved(); };
-    chrome.storage.onChanged.addListener(savedChanged);
+    chrome.storage.onChanged?.addListener?.(savedChanged);
     browse.addEventListener('click', () => { void scanControl('browse').catch(() => {}); });
     discard.addEventListener('click', async () => {
       if (!active() || !confirm('Discard the unfinished Full scan? Purchases it already saved stay in your library; the next Full scan starts from the first order.')) return;
@@ -416,7 +416,7 @@
     profileControls.querySelector('[data-profile-label]').addEventListener('input',()=>{profileControls.querySelector('[data-profile-confirm]').checked=false;});
     const buttons = [quick, full];
     let removeProgress=()=>{};
-    disposeOrderPanel=()=>{chrome.runtime.onMessage.removeListener(pageStatus);chrome.storage.onChanged.removeListener(savedChanged);removeProgress();accounts.destroy?.();panel.remove();};
+    disposeOrderPanel=()=>{chrome.runtime.onMessage.removeListener(pageStatus);chrome.storage.onChanged?.removeListener?.(savedChanged);removeProgress();accounts.destroy?.();panel.remove();};
     const watch=promise=>{
       buttons.forEach(control=>{control.disabled=true;});
       promise.then(response=>{
