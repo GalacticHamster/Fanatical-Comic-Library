@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A bundle page's Already purchased notice lists every saved purchase of the bundle, as in Humble Library: how many times it was bought, then each purchase's date, oldest first, with copies bought in quantity. A purchase without a saved date says "date unknown" instead of hiding the notice, and an earlier record that may be the same purchase as a verified order makes the count "at least".
+
 - Purchase dates use the same calendar day as Humble Library: Titles, Bundles & Orders and reminder cards show a timestamp's day in this browser's time zone instead of in UTC, matching the CSV catalog, and a date saved without a time of day (exactly midnight UTC) shows that date. Purchase date (oldest) sorts titles by their first purchase instead of their latest, as in Humble Library; titles without a known date stay last, and the Library note says how each date sort works. Saved dates are unchanged.
 
 - Key reminder cards follow Humble Library's layout: the order link comes first, then Dismiss and Snooze, and the status reads Not yet revealed or Key status unknown with a sentence saying what Fanatical reported. The views are ordered as in Humble Library, and the reminder section shows one count for the selected view.

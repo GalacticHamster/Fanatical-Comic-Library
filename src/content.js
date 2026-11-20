@@ -923,11 +923,13 @@ function restoreSummaryState(panel, state) {
     appendContentsSummary(advanced, parsed, matches);
     if(parsed.products.length)advanced.append(F.createPurchasePlanning(parsed,matches,state));
     appendReadingSummary(advanced, matches);
-    const purchase = (Array.isArray(localItems) ? localItems : []).flatMap(item=>item.purchaseOrigins?.length?item.purchaseOrigins:[item]).filter(item=>item?.bundle?.sourceItemId===parsed.sourceItemId).sort((a,b)=>(Date.parse(b.purchaseDate)||0)-(Date.parse(a.purchaseDate)||0))[0];
-    if (purchase?.purchaseDate) {
+    // Every saved purchase of this bundle, as Humble Library lists them: count, then each date (or that it is unknown).
+    const bought = F.bundlePurchases(Array.isArray(localItems) ? localItems : [], parsed.sourceItemId);
+    if (bought.purchases.length) {
       const notice = document.createElement('p'); notice.className = 'fanatical-library-purchased library-ui-status-owned';
-      const date = new Date(purchase.purchaseDate);
-      notice.textContent = `Already purchased: ${Number.isNaN(date.valueOf()) ? purchase.purchaseDate : date.toLocaleDateString()}`;
+      const copies = bought.purchases.reduce((total, entry) => total + entry.copies, 0);
+      const times = copies > 1 || !bought.exact ? ` (${bought.exact ? '' : 'at least '}${copies.toLocaleString()} ${copies === 1 ? 'time' : 'times'})` : '';
+      notice.textContent = `Already purchased${times}: ${bought.purchases.map(entry => (entry.date && F.calendarDay(entry.date) || 'date unknown') + (entry.copies > 1 ? ` (${entry.copies} copies)` : '')).join(' \u00b7 ')}`;
       element.append(notice);
     }
     const legend = document.createElement('div'); legend.className = 'fanatical-library-legend';

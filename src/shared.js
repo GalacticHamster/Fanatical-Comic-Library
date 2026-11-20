@@ -1003,6 +1003,30 @@
     const max = purchases.length + expand([...unordered].filter(([key]) => orderedBundles.has(JSON.parse(key).join('\u0000'))).map(([, entry]) => entry)).length;
     return { purchases, exact: purchases.length === max, max };
   }
+  // Separate purchases of one bundle, for the bundle page's Already purchased notice: one entry per verified
+  // order (with its copies when bought in quantity). An earlier record without an order reference is listed when
+  // no verified order of the bundle shares its date; one that does may be the same purchase, so the count is
+  // then a minimum. Dates are kept as saved; undated purchases are listed, never dropped.
+  function bundlePurchases(items, bundleId) {
+    const orders = new Map(), loose = new Map();
+    if (!bundleId) return { purchases: [], exact: true };
+    for (const item of items ?? []) {
+      if (!item || typeof item !== 'object' || item.source && item.source !== 'fanatical') continue;
+      const origins = Array.isArray(item.purchaseOrigins) && item.purchaseOrigins.length ? item.purchaseOrigins : [{ bundle: item.bundle, purchaseDate: item.purchaseDate, quantity: 1 }];
+      for (const origin of origins) {
+        if (origin?.bundle?.sourceItemId !== bundleId) continue;
+        const copies = Number.isSafeInteger(origin.quantity) && origin.quantity > 0 ? origin.quantity : 1, date = origin.purchaseDate ?? null;
+        const map = typeof origin.purchaseRef === 'string' && origin.purchaseRef ? orders : loose, key = map === orders ? origin.purchaseRef : String(date);
+        const previous = map.get(key);
+        map.set(key, { date: date ?? previous?.date ?? null, copies: Math.max(copies, previous?.copies ?? 0) });
+      }
+    }
+    const day = entry => Date.parse(entry.date);
+    const dated = new Set([...orders.values()].map(entry => entry.date ? calendarDay(entry.date) : null));
+    const separate = [...loose.values()].filter(entry => !orders.size || !dated.has(entry.date ? calendarDay(entry.date) : null));
+    const purchases = [...orders.values(), ...separate].sort((a, b) => (Number.isFinite(day(a)) ? 0 : 1) - (Number.isFinite(day(b)) ? 0 : 1) || (day(a) || 0) - (day(b) || 0));
+    return { purchases, exact: separate.length === loose.size };
+  }
   function purchaseCount(items) {
     const { purchases, exact, max } = purchaseList(items);
     return exact ? { count: purchases.length, exact } : { count: purchases.length, max, exact };
@@ -1582,7 +1606,7 @@
     if (time % 86400000 === 0) return d.toISOString().slice(0, 10);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
-  global.FanaticalLibrary = { calendarDay, purchaseCount, purchaseList, purchaseCountText, formatScanSummary, purchaseImportScope, purchaseImportProgress, purchaseActivity, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, isCompleteBundleCatalogue, isBundleOverlapProduct, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, sendGalacticMatch, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, COMPANION_IDENTITIES, companionBrowser, builtinGalacticId, resolveGalacticId, galacticAvailability, galacticPermissionDenied, trustedGalacticSender, companionTargetProblem, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft, isComicItem, mediaOverrideKey };
+  global.FanaticalLibrary = { calendarDay, bundlePurchases, purchaseCount, purchaseList, purchaseCountText, formatScanSummary, purchaseImportScope, purchaseImportProgress, purchaseActivity, normalizeSummaryPreferences, storageSet, normalizeTitle, titleKey, mediaType, compatibleMedia, trueKeys, externalIds, componentMetadata, validIsbn, bibliographicFields, scopeKey, numberKey, contentKey, contentsMetadata, plainProduct, parseBundle, isCompleteBundleCatalogue, isBundleOverlapProduct, classify, identityConflicts, offerContents, localContents, coverageFor, mergeGalactic, galacticRequestItems, galacticBatches, queryGalacticItems, sendGalacticMatch, flattenProducts, resolveProduct, overlayLabel, upsertBadge, unitLabel, explanationLines, centralReviewUrl, bundleContents, readingTargets, readingCoverage, editionContentsEvidence, centralReminders, loadCentralReminders, COMPANION_IDENTITIES, companionBrowser, builtinGalacticId, resolveGalacticId, galacticAvailability, galacticPermissionDenied, trustedGalacticSender, companionTargetProblem, companionCall, galacticCapabilities, testGalacticLink, isExtensionId, standardTierCoverage, catalogueOffer, cataloguePageKind, purchasedBundleSlugs, catalogueDaysLeft, isComicItem, mediaOverrideKey };
 }(globalThis));
 
 /* Account picker; all changes use the serialized writer. */
