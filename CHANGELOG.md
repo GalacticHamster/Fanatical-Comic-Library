@@ -1,5 +1,12 @@
 # Release notes
 
+## Unreleased
+
+- A purchase with a part the scan cannot read no longer withholds its other products. Products whose bundle or pick-and-mix selection the order list confirms, each with its own product ID, are saved with the purchase's date and quantity. An unrecognized product type, a bundle missing from the order details, an unexpected or mismatched bundle and a malformed promotional item stay unresolved. The purchase is not marked complete and every later scan reads it again; a re-read never adds a second copy, and once every part is recognized the purchase completes normally. Promotional gifts are never saved as owned, and nothing is matched by title alone.
+- The scan message says when items from a partly readable purchase were saved, and Options says how many unresolved purchases had verified items saved. Scan reports add `partialPurchasesSaved`, `partialProductRecordsSaved`, `partialProductRecordsPreviouslySaved` and a count-only `compatibility.components` section. A `parent-missing` report also says how many order-list items are promotional and whether a promotional item in the order details has an ID, which separates a renamed gift from a purchase missing from the order details. Earlier reports remain valid.
+- A Full-scan batch that saves only the verified parts of partly readable purchases no longer ends the scan as if nothing had been read.
+- Uses shared Fanatical acquisition revision fanatical-v1-79f0891654940a39.
+
 ## 1.0.6
 
 - A purchase change saved while Galactic Library is sending purchases to Fanatical Library is now always sent to Galactic Library in the same sync, including with Galactic Library 1.0.4. Previously both extensions could show Synced until the next change.

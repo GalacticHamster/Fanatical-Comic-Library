@@ -203,6 +203,14 @@ abort the scan. Failed scans leave library records, scan fingerprints and the
 last successful summary unchanged. A separate last-attempt flag exposes an
 incomplete scan in settings, without saving raw error/response data.
 
+Within one order, the production importer admits products individually. A
+product is saved only when the order list corroborates its parent (same name
+and, where listed, the same parent ID) and the product has its own validated
+ID. An unrecognized product structure, an omitted or unexpected parent and a
+malformed product or promotional item stay unresolved without withholding
+their verified siblings. The order keeps no skip eligibility and is read again
+by later scans until every part is recognized; re-reads never add copies.
+
 At most **three order-detail requests** run at once. Each GET has a 20-second
 timeout (including the body read) and at most three attempts. Network/timeouts,
 408, 429, 500, 502, 503 and 504 use exponential backoff plus jitter. Authentication

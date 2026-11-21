@@ -83,7 +83,7 @@ const SCAN_FAILURES = Object.freeze({
   'save-failed':'The validated scan could not be saved. Your previous purchases were kept. Export the scan report.',
   'account-check-failed':'The local account could not be selected. Check Saved accounts and retry.'
 });
-function scanReport({code,diagnostic={},requestedFull=false,actualFull=null,storageAdmission='not-reached',localAccountConfirmed=false,outcome=code==='complete'?'complete':'unsafe',verifiedPurchasesSaved=0,verifiedProductRecordsSaved=0,unresolvedOrders=0,failures=[],acquisitionComplete=false}={}) {
+function scanReport({code,diagnostic={},requestedFull=false,actualFull=null,storageAdmission='not-reached',localAccountConfirmed=false,outcome=code==='complete'?'complete':'unsafe',verifiedPurchasesSaved=0,verifiedProductRecordsSaved=0,unresolvedOrders=0,failures=[],acquisitionComplete=false,partialPurchasesSaved=0,partialProductRecordsSaved=0,partialProductRecordsPreviouslySaved=0}={}) {
   code=Object.hasOwn(SCAN_FAILURES,code)||code==='complete'?code:'page-exception';
   const count=(value,max)=>Number.isSafeInteger(value)&&value>=0&&value<=max?value:null;
   const version=chrome.runtime.getManifest?.().version;
@@ -103,7 +103,9 @@ function scanReport({code,diagnostic={},requestedFull=false,actualFull=null,stor
     acquisitionComplete:storageAdmission==='committed'&&(outcome==='complete'||acquisitionComplete===true),
     ...(compatibility?{compatibility}:{}),
     listingEvidence:diagnostic.listingEvidence&&typeof diagnostic.listingEvidence==='object'?Object.fromEntries(['arrayPages','objectPages','otherPages','headersReadablePages','linkHeaderPages','totalCountHeaderPages','contentRangeHeaderPages','nextReferencePages'].map(k=>[k,count(diagnostic.listingEvidence[k],1000)])):null,
-    outcome:['complete','partial-extraction','partial-discovery','unsafe'].includes(outcome)?outcome:'unsafe',verifiedPurchasesSaved:count(verifiedPurchasesSaved,100000),verifiedProductRecordsSaved:count(verifiedProductRecordsSaved,500000),unresolvedOrders:count(unresolvedOrders,100000),discoveryComplete:diagnostic.discoveryComplete??(outcome==='complete'||(diagnostic.terminalReached===true&&['link','count','range'].includes(diagnostic.paginationEvidence))),completeCheckpointAdvanced:outcome==='complete'&&storageAdmission==='committed',retryEligible:outcome==='partial-extraction'||outcome==='partial-discovery',
+    outcome:['complete','partial-extraction','partial-discovery','unsafe'].includes(outcome)?outcome:'unsafe',verifiedPurchasesSaved:count(verifiedPurchasesSaved,100000),verifiedProductRecordsSaved:count(verifiedProductRecordsSaved,500000),unresolvedOrders:count(unresolvedOrders,100000),
+    // Purchases saved in part: their verified items were saved while other parts stay unresolved.
+    partialPurchasesSaved:count(partialPurchasesSaved,100000),partialProductRecordsSaved:count(partialProductRecordsSaved,500000),partialProductRecordsPreviouslySaved:count(partialProductRecordsPreviouslySaved,500000),discoveryComplete:diagnostic.discoveryComplete??(outcome==='complete'||(diagnostic.terminalReached===true&&['link','count','range'].includes(diagnostic.paginationEvidence))),completeCheckpointAdvanced:outcome==='complete'&&storageAdmission==='committed',retryEligible:outcome==='partial-extraction'||outcome==='partial-discovery',
     failures:Array.isArray(failures)?failures.filter(f=>Object.hasOwn(SCAN_FAILURES,f?.code)&&['listing','summaries','details'].includes(f.stage)&&count(f.count,100000)>0).slice(0,32).map(({code,stage,count})=>({code,stage,count})):[]};
 }
 
@@ -161,7 +163,7 @@ async function importPurchases({ fullScan = false, profileLabel='', confirmed=fa
     progressPhase('saving');
     const stageBatch=Boolean(batch&&(batch.pass||projected.deferredOrderFingerprints?.length));
     const partial=await syncStore.execute('commitPartial',[scan.token,projected,tab.id,stageBatch,navigation]);
-    return {...partial,...(batch?{batchRound:{...projected,compatibility:authority.compatibility},batchToken:scan.token,batchTabId:tab.id}:{}),failureExplanation:SCAN_FAILURES[primary.code],scanDiagnostic:scanReport({code:primary.code,diagnostic:pageDiagnostic,requestedFull,actualFull:fullScan,localAccountConfirmed:true,storageAdmission:'committed',outcome:partial.outcome,verifiedPurchasesSaved:partial.verifiedPurchasesSaved,verifiedProductRecordsSaved:projected.items.length,unresolvedOrders:partial.unresolvedOrders,failures:projected.failures,acquisitionComplete:partial.acquisitionComplete})};
+    return {...partial,...(batch?{batchRound:{...projected,compatibility:authority.compatibility},batchToken:scan.token,batchTabId:tab.id}:{}),failureExplanation:SCAN_FAILURES[primary.code],scanDiagnostic:scanReport({code:primary.code,diagnostic:pageDiagnostic,requestedFull,actualFull:fullScan,localAccountConfirmed:true,storageAdmission:'committed',outcome:partial.outcome,verifiedPurchasesSaved:partial.verifiedPurchasesSaved,verifiedProductRecordsSaved:projected.items.length,unresolvedOrders:partial.unresolvedOrders,failures:projected.failures,acquisitionComplete:partial.acquisitionComplete,partialPurchasesSaved:partial.partialPurchasesSaved,partialProductRecordsSaved:partial.partialProductRecordsSaved,partialProductRecordsPreviouslySaved:partial.partialProductRecordsPreviouslySaved})};
   }
   if(batch&&!fullScan){
     // Publish the last verified purchases before attempting reconciliation.
@@ -227,7 +229,8 @@ async function importFullScan(options={}){
     }
     // A batch that verified nothing and only failed (for example after sign-out or while Fanatical
     // is refusing requests) ends the pass instead of spending requests on the remaining batches.
-    const stalled=!p.verifiedOrderFingerprints.length&&p.unresolvedOrderFingerprints.some(fp=>!deferred.has(fp));
+    // Saving verified items from a partly readable purchase is progress too.
+    const stalled=!p.verifiedOrderFingerprints.length&&!p.partialOrderFingerprints?.length&&p.unresolvedOrderFingerprints.some(fp=>!deferred.has(fp));
     if(!deferred.size||stalled||batches>=FULL_SCAN_MAX_BATCHES){
       // Some orders could not be read. Verified orders are saved; the pass stays open so the next
       // Full scan retries the rest without reading verified orders again.

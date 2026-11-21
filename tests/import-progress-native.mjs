@@ -9,9 +9,14 @@ const sourceFiles=legacyKeys?readRuntimeZip(await readFile(process.env.FAN_LEGAC
 const files=process.argv.includes('--candidate')?await candidateFiles('FAN',sourceFiles):new Map(sourceFiles);
 const baseline=process.argv.includes('--baseline');
 if(baseline)for(const name of ['src/content.js','src/order-importer.mjs','src/service-worker.js','src/shared.js'])files.set(name,execFileSync('git',['show','ea494ce6c0d8232142d519c4552243fc43062e21:'+name],{windowsHide:true,maxBuffer:8*1024*1024}));
-let sixOrders=false,directGames=false,directKeysPresent=false,mixedSummary=false;
+let sixOrders=false,directGames=false,directKeysPresent=false,mixedSummary=false,componentPartial='';
 const baseOrder=n=>directGames&&n===size-1?{_id:'synthetic-order-'+n,status:'COMPLETE',date:'2026-11-01',items:Array.from({length:10},(_,i)=>({_id:'direct-game-'+i,name:'Selected '+i,type:'game',status:'fulfilled',bundles:[],pickAndMix:'Synthetic pick and mix',drm:{steam:true},...(directKeysPresent?{key:'SYNTHETIC_SECRET_DO_NOT_RETAIN'}:{})}))}:({_id:'synthetic-order-'+n,status:'COMPLETE',date:'2026-10-01T00:00:00Z',items:[{_id:'bundle-123456',name:'Synthetic',bundles:[{games:sixOrders?Array.from({length:8},(_,j)=>({_id:'six-product-'+n+'-'+j,name:'Synthetic '+n+' '+j,type:n===2?'comic':'game'})):[{_id:'synthetic-product-'+n,name:'Synthetic '+n,type:'book'}]}]}]});
-const order=n=>{const o=baseOrder(n);if(mixedSummary&&n===size-1)o.items.push(...[1,2].map(i=>({_id:'mixed-bundle-'+i,name:'Mixed comic bundle '+i,bundles:[{games:[{_id:'mixed-comic-'+i,name:'Mixed comic '+i,type:'comic'}]}]})));return o;};
+const order=n=>{const o=baseOrder(n);if(mixedSummary&&n===size-1)o.items.push(...[1,2].map(i=>({_id:'mixed-bundle-'+i,name:'Mixed comic bundle '+i,bundles:[{games:[{_id:'mixed-comic-'+i,name:'Mixed comic '+i,type:'comic'}]}]})));
+  // Orders 3-5 of the six-order case use a bundle container unrecognized in both
+  // the order list and the order details, so they stay unresolved.
+  if(sixOrders&&n>=3)o.items[0].bundles={};
+  // A sibling whose product structure the importer does not recognize, and later does.
+  if(componentPartial&&n===size-1)o.items.push(componentPartial==='known'?{_id:'synthetic-type-c',name:'Synthetic type C',bundles:[{games:[{_id:'synthetic-c-product',name:'Synthetic C product',type:'book'}]}]}:{_id:'synthetic-type-c',name:'Synthetic type C',widgets:[{_id:'synthetic-c-product',name:'Synthetic C product'}]});return o;};
 let size=3,delay=0,fail=false,denied=false,retry=false,headerless=false,summaryIssues=false,reorderedDuplicate=false,sparseSummary=false,sparseDetailFailure=false,counts={lists:0,details:0,completed:0,failed:0},attempts=new Map();
 const thin=o=>({...o,items:o.items.map((p,i)=>mixedSummary&&i===0?p:({name:p.name,bundles:[]}))});
 const summaryRows=()=>{const rows=Array.from({length:size},(_,i)=>summaryIssues&&i===1?{...order(i),status:'UNKNOWN_STATUS'}:summaryIssues&&i===2?{...order(i),items:[{...order(i).items[0],bundles:[],products:[{name:'PRIVATE_TITLE',_id:'PRIVATE_ID'}],tiers:[{quantity:1}]}]}:order(i));if(sixOrders)for(let n=3;n<rows.length;n++)rows[n].items[0].bundles={};if(sparseSummary&&rows.length)rows[rows.length-1]=thin(rows.at(-1));if(reorderedDuplicate&&rows.length)rows.push(Object.fromEntries(Object.entries(rows[0]).reverse()));return rows;};
@@ -86,7 +91,7 @@ try{
        if(/ partially completed$/.test(paragraphs[0])){
          assert.match(paragraphs[0],/^(?:Full import|Quick update) partially completed$/);
          assert.match(paragraphs[1],/^(?:Couldn't check [\d,]+ purchases?[^\n]*|Part of your purchase list couldn't be checked[^\n]*)$/);
-         assert.match(paragraphs[2],/^(?:Saved [\d,]+ purchases?[^\n]*|No purchases were saved\.[^\n]*)Your library now contains [\d,]+ items?\. Earlier records were preserved\.$/);
+         assert.match(paragraphs[2],/^(?:Saved [\d,]+ purchases?[^\n]*|Added [\d,]+ new items?\.[^\n]*|No new items found\.[^\n]*|No purchases were saved\.[^\n]*)Your library now contains [\d,]+ items?\. Earlier records were preserved\.$/);
        }else{
          assert.match(paragraphs[0],/^(?:Full import|Quick update) completed$/);
          assert.match(paragraphs[1],/^(?:(?:Checked [\d,]+ purchases?\.|No purchases needed checking\.) (?:Imported [\d,]+ new items?\.|No new items found\.)|No purchases found in your account\.)$/);
@@ -232,6 +237,18 @@ try{
    sparseDetailFailure=true;await openOrders();await scan('all');assert.deepEqual((await saved()).items,mixedSaved.items);assert.equal((await saved()).fingerprints.length,mixedSaved.fingerprints.length-1);
    sparseDetailFailure=false;await openOrders();await scan('new');assert.equal(counts.details,1);assert.deepEqual((await saved()).fingerprints,mixedSaved.fingerprints);assert.equal((await saved()).count,mixedSaved.count);
    console.log('PASS installed FAN mixed checkout: three populated/sparse bundles, detail recovery, known Quick recheck, atomic failed-order preservation and retry without complete coverage');
+   // A partly readable order keeps its verified bundle, stays retryable, and recovers C without duplicates.
+   mixedSummary=false;sparseSummary=false;sparseDetailFailure=false;componentPartial='unknown';size=3;await openOrders();
+   let text=await scan('all');assert.match(text,/Items that could be verified from a partly readable purchase were saved\./);
+   await evaluate('const s='+root+';[...s.querySelectorAll("button")].find(b=>b.textContent==="Export scan report").click();return true;');
+   const componentReport=JSON.parse(await wait('return document.documentElement.dataset.testExport;','Partial component report missing'));
+   assert.equal(componentReport.partialPurchasesSaved,1);assert.equal(componentReport.partialProductRecordsSaved,1);assert.equal(componentReport.compatibility.components.ordersPartiallyResolved,1);assert.equal(componentReport.compatibility.components.unknownStructures,1);assert.equal(componentReport.completeCheckpointAdvanced,false);assert(!/synthetic-|Synthetic|SYNTHETIC-ONLY/.test(JSON.stringify(componentReport)));
+   const partlySaved=await saved();assert(partlySaved.items.some(i=>i.sourceItemId==='synthetic-product-2'&&i.purchaseOrigins.length===1));assert(!partlySaved.items.some(i=>i.sourceItemId==='synthetic-c-product'));
+   await openOrders();text=await scan('new');assert.equal(counts.details,1,'the partial order is retried');assert.match(text,/No new items found\./);assert.deepEqual((await saved()).items,partlySaved.items);assert.deepEqual((await saved()).fingerprints,partlySaved.fingerprints);
+   componentPartial='known';await openOrders();await scan('new');assert.equal(counts.details,1);const componentResolved=await saved();
+   assert.deepEqual(componentResolved.items.filter(i=>i.sourceItemId!=='synthetic-c-product'),partlySaved.items);assert.equal(componentResolved.count,partlySaved.count+1);assert.equal(componentResolved.fingerprints.length,partlySaved.fingerprints.length+1);
+   await openOrders();await scan('new');assert.equal(counts.details,0);assert.deepEqual((await saved()).items,componentResolved.items);componentPartial='';
+   console.log('PASS installed FAN partly readable order: verified bundle saved beside an unrecognized sibling, Quick retry unchanged, later recognition adds it without duplicates and completes');
 
  }
 }finally{driver?.close?.();child?.kill();if(exited)await exited;await new Promise(done=>server.close(done));const target=resolve(temporary),base=resolve(tmpdir());if(target.startsWith(base+sep)&&target.slice(base.length+1).startsWith('fan-progress-native-'))await rm(target,{recursive:true,force:true,maxRetries:5,retryDelay:200});}

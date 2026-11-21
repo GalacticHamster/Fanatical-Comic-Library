@@ -16,7 +16,7 @@ export function acquisitionContract({provider,finished,verified=[],unresolved=[]
 // adapter. Legacy writer validation still checks products and save-time leases.
 export function fanaticalCompatibilityReport(value){
   const fields=['unsupportedStatus','invalidStatus','missingItems','invalidItems','missingBundles','invalidBundles','missingGames','invalidGames','missingNames','summaryConflict','detailRequest','detailStructure','detailIdentity','detailStatus','detailProductMismatch','detailProductIdentity','detailProjection','scheduled','knownSkipped','multipleCopies'];
-  if(!value||value.version!==1||Object.keys(value).some(k=>!['version','counts','bundleShapes','summaryRecovery','productMismatches'].includes(k))||!value.counts||typeof value.counts!=='object'||Array.isArray(value.counts)||Object.keys(value.counts).length!==fields.length||fields.some(k=>!Number.isSafeInteger(value.counts[k])||value.counts[k]<0||value.counts[k]>100000))return null;
+  if(!value||value.version!==1||Object.keys(value).some(k=>!['version','counts','bundleShapes','summaryRecovery','productMismatches','components'].includes(k))||!value.counts||typeof value.counts!=='object'||Array.isArray(value.counts)||Object.keys(value.counts).length!==fields.length||fields.some(k=>!Number.isSafeInteger(value.counts[k])||value.counts[k]<0||value.counts[k]>100000))return null;
   const result={version:1,counts:Object.fromEntries(fields.map(k=>[k,value.counts[k]]))};
   if(value.summaryRecovery!==undefined){
     const r=value.summaryRecovery,counts=['eligible','scheduled','recovered','unresolved','emptyDetailItems'],types=['missing','null','array','object','string','number','boolean','other'],bounded=n=>Number.isSafeInteger(n)&&n>=0&&n<=100000;
@@ -33,11 +33,17 @@ export function fanaticalCompatibilityReport(value){
   }
   if(value.productMismatches!==undefined){
     const pm=value.productMismatches,cats=['parent-missing','unexpected-detail-item','id-missing','direct-missing','product-missing','product-count'],bounded=n=>Number.isSafeInteger(n)&&n>=0&&n<=100000;
-    const ctxInts=['summaryParents','detailParents','promotionalDetailParents','unexpectedDetailParents','detailDirectParents','detailBundleParents','nonStringPickAndMix'],ctxBools=['missingParentHasId','promotionalIdMatched'],ctxKeys=[...ctxInts,'normalizedNameMatched',...ctxBools];
-    const validCtx=c=>c&&typeof c==='object'&&!Array.isArray(c)&&Object.keys(c).every(k=>ctxKeys.includes(k))&&ctxInts.every(k=>bounded(c[k]))&&typeof c.normalizedNameMatched==='boolean'&&ctxBools.every(k=>!Object.hasOwn(c,k)||typeof c[k]==='boolean');
+    const ctxInts=['summaryParents','detailParents','promotionalDetailParents','unexpectedDetailParents','detailDirectParents','detailBundleParents','nonStringPickAndMix'],ctxBools=['missingParentHasId','promotionalIdMatched','promotionalParentHasId'],ctxOptionalInts=['summaryPromotionalParents'],ctxKeys=[...ctxInts,...ctxOptionalInts,'normalizedNameMatched',...ctxBools];
+    const validCtx=c=>c&&typeof c==='object'&&!Array.isArray(c)&&Object.keys(c).every(k=>ctxKeys.includes(k))&&ctxInts.every(k=>bounded(c[k]))&&typeof c.normalizedNameMatched==='boolean'&&ctxBools.every(k=>!Object.hasOwn(c,k)||typeof c[k]==='boolean')&&ctxOptionalInts.every(k=>!Object.hasOwn(c,k)||bounded(c[k]));
     const validRecord=r=>r&&typeof r==='object'&&!Array.isArray(r)&&Object.keys(r).every(k=>['category','expectedCount','observedCount','parentContext'].includes(k))&&cats.includes(r.category)&&bounded(r.expectedCount)&&bounded(r.observedCount)&&(!Object.hasOwn(r,'parentContext')||validCtx(r.parentContext));
     if(!pm||pm.version!==1||Object.keys(pm).length!==3||Object.keys(pm).some(k=>!['version','records','truncated'].includes(k))||typeof pm.truncated!=='boolean'||!Array.isArray(pm.records)||pm.records.length>8||pm.records.some(r=>!validRecord(r)))return null;
-    result.productMismatches={version:1,records:pm.records.map(r=>({category:r.category,expectedCount:r.expectedCount,observedCount:r.observedCount,...(Object.hasOwn(r,'parentContext')?{parentContext:{...Object.fromEntries(ctxInts.map(k=>[k,r.parentContext[k]])),normalizedNameMatched:r.parentContext.normalizedNameMatched,...Object.fromEntries(ctxBools.filter(k=>Object.hasOwn(r.parentContext,k)).map(k=>[k,r.parentContext[k]]))}}:{})})),truncated:pm.truncated};
+    result.productMismatches={version:1,records:pm.records.map(r=>({category:r.category,expectedCount:r.expectedCount,observedCount:r.observedCount,...(Object.hasOwn(r,'parentContext')?{parentContext:{...Object.fromEntries(ctxInts.map(k=>[k,r.parentContext[k]])),...Object.fromEntries(ctxOptionalInts.filter(k=>Object.hasOwn(r.parentContext,k)).map(k=>[k,r.parentContext[k]])),normalizedNameMatched:r.parentContext.normalizedNameMatched,...Object.fromEntries(ctxBools.filter(k=>Object.hasOwn(r.parentContext,k)).map(k=>[k,r.parentContext[k]]))}}:{})})),truncated:pm.truncated};
+  }
+  if(value.components!==undefined){
+    // Item-level admission summary: bounded counters only, never identities.
+    const c=value.components,ints=['ordersFullyResolved','ordersPartiallyResolved','ordersResolvedByComponents','componentsAdmitted','componentsUnresolved','componentsRejected','unknownStructures','ordersUnresolved'],cats=['summaryStructure','parentMissing','unexpectedDetailItem','identityMismatch','parentStructure','childStructure','childIdentity','productMissing','productUnexpected'],bounded=n=>Number.isSafeInteger(n)&&n>=0&&n<=100000;
+    if(!c||typeof c!=='object'||Array.isArray(c)||c.version!==1||Object.keys(c).length!==ints.length+2||Object.keys(c).some(k=>!['version','categories',...ints].includes(k))||ints.some(k=>!bounded(c[k]))||!c.categories||typeof c.categories!=='object'||Array.isArray(c.categories)||Object.keys(c.categories).length!==cats.length||cats.some(k=>!bounded(c.categories[k])))return null;
+    result.components={version:1,...Object.fromEntries(ints.map(k=>[k,c[k]])),categories:Object.fromEntries(cats.map(k=>[k,c.categories[k]]))};
   }
   return result;
 }
@@ -97,7 +103,7 @@ export function assertFanaticalAcquisitionContract(raw,options={}){
   const keys=(value,allowed)=>value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).every(key=>allowed.includes(key));
   const ids=value=>Array.isArray(value)&&value.length<=100000&&value.every(id=>typeof id==='string'&&/^[a-f0-9]{64}$/u.test(id))&&new Set(value).size===value.length;
   const same=(a,b)=>{if(!ids(a)||!ids(b)||a.length!==b.length)return false;const set=new Set(b);return a.every(id=>set.has(id));};
-  if(!keys(raw,['acquisitionContract','partialScanVersion','outcome','deferredOrderFingerprints','verifiedOrderFingerprints','unresolvedOrderFingerprints','ineligibleOrderFingerprints','observedOrderFingerprints','failures','unidentifiedRecords','schemaVersion','coverage','ordersScanned','ordersAvailable','orderFingerprints','items','rejectedPurchaseItems'])||raw.schemaVersion!==1||raw.partialScanVersion!==1)invalid();
+  if(!keys(raw,['acquisitionContract','partialScanVersion','outcome','deferredOrderFingerprints','partialOrderFingerprints','verifiedOrderFingerprints','unresolvedOrderFingerprints','ineligibleOrderFingerprints','observedOrderFingerprints','failures','unidentifiedRecords','schemaVersion','coverage','ordersScanned','ordersAvailable','orderFingerprints','items','rejectedPurchaseItems'])||raw.schemaVersion!==1||raw.partialScanVersion!==1)invalid();
   const rejected=raw.rejectedPurchaseItems===undefined?undefined:fanaticalRejectedPurchaseItems(raw.rejectedPurchaseItems);
   const c=raw.acquisitionContract,coverage=raw.coverage;
   const compatibility=coverage?.compatibility===undefined?null:fanaticalCompatibilityReport(coverage.compatibility);
@@ -110,6 +116,9 @@ export function assertFanaticalAcquisitionContract(raw,options={}){
   const partition=[...c.verified,...c.unresolved,...c.ineligible],observedSet=new Set(raw.observedOrderFingerprints);
   // A bounded batch defers some orders to a later batch; they are always unresolved here.
   if(raw.deferredOrderFingerprints!==undefined&&(!ids(raw.deferredOrderFingerprints)||raw.deferredOrderFingerprints.some(id=>!c.unresolved.includes(id))))invalid();
+  // Partially resolved orders stay unresolved and retryable. Only their
+  // independently verified components may carry their purchase identity.
+  if(raw.partialOrderFingerprints!==undefined&&(!ids(raw.partialOrderFingerprints)||!raw.partialOrderFingerprints.length||raw.partialOrderFingerprints.some(id=>!c.unresolved.includes(id)||raw.deferredOrderFingerprints?.includes(id))))invalid();
   if(new Set(partition).size!==partition.length||partition.some(id=>!observedSet.has(id)))invalid();
   if(!coverage||!['complete','partial-extraction','partial-discovery'].includes(raw.outcome)||coverage.complete!==(raw.outcome==='complete')||coverage.discoveryComplete!==(raw.outcome!=='partial-discovery'))invalid();
   const finished=raw.outcome==='complete'||raw.outcome==='partial-discovery'&&coverage.paginationEvidence==='array-only'&&coverage.expectedTotal===null&&coverage.pagesParsed===coverage.pagesFetched&&!c.unresolved.length&&raw.unidentifiedRecords===0&&raw.failures.length===1&&raw.failures[0].code==='discovery-unverified'&&raw.failures[0].stage==='listing'&&raw.failures[0].count===1;

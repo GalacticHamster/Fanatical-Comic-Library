@@ -18,7 +18,8 @@ async function orderMatchesReference(id, reference) {
 /** Reduce the private page projection to verified orders or known saved purchases. */
 export async function checkedOrderNavigation(raw, receipt, recoveryRefs) {
   if (!Array.isArray(raw) || raw.length > 100000) return [];
-  const eligible = new Set(receipt.verifiedOrderFingerprints);
+  // A partly resolved order's detail carried the same validated order ID.
+  const eligible = new Set([...receipt.verifiedOrderFingerprints, ...(receipt.partialOrderFingerprints ?? [])]);
   const saved = new Set(recoveryRefs);
   for (const ref of receipt.orderFingerprints) if (saved.has(ref)) eligible.add(ref);
   const checked = new Map();
@@ -248,6 +249,10 @@ function validatePartialScan(value,{fullScan,knownOrderFingerprints}){
   // Orders a bounded Full-scan batch left for a later batch: always a subset of the unresolved orders.
   const deferred=value.deferredOrderFingerprints===undefined?null:new Set(validFingerprints(value.deferredOrderFingerprints)?value.deferredOrderFingerprints:fail());
   if(deferred&&[...deferred].some(fp=>!value.unresolvedOrderFingerprints.includes(fp)))fail();
+  // A partially resolved order stays unresolved: it is retried and never
+  // checkpointed. Only its independently verified components are saved.
+  const partialOrders=value.partialOrderFingerprints===undefined?null:new Set(validFingerprints(value.partialOrderFingerprints)&&value.partialOrderFingerprints.length?value.partialOrderFingerprints:fail());
+  if(partialOrders&&[...partialOrders].some(fp=>!value.unresolvedOrderFingerprints.includes(fp)||deferred?.has(fp)))fail();
   const all=new Set(value.observedOrderFingerprints),verified=new Set(value.verifiedOrderFingerprints),processed=new Set(value.orderFingerprints),unresolved=new Set(value.unresolvedOrderFingerprints),ineligible=new Set(value.ineligibleOrderFingerprints),known=new Set(validFingerprints(knownOrderFingerprints)?knownOrderFingerprints:[]);
   if([...processed].some(fp=>!all.has(fp)||unresolved.has(fp)||ineligible.has(fp)||!verified.has(fp)&&(!known.has(fp)||fullScan))||[...verified].some(fp=>!processed.has(fp))||[...unresolved].some(fp=>!all.has(fp)||ineligible.has(fp))||[...ineligible].some(fp=>!all.has(fp))||processed.size+unresolved.size+ineligible.size!==all.size)fail();
   const c=value.coverage;
@@ -271,10 +276,10 @@ function validatePartialScan(value,{fullScan,knownOrderFingerprints}){
   for(const item of value.items){
     if(item.source!=='fanatical'||!safeId(item.sourceItemId)||!safeText(item.title)||!safeId(item.bundle?.sourceItemId)||!safeText(item.bundle?.title)||!Array.isArray(item.purchaseOrigins)||!item.purchaseOrigins.length)fail();
     purchaseOrigins(item.purchaseOrigins,true);
-    for(const origin of item.purchaseOrigins){if(!verified.has(origin.purchaseRef)||!safeId(origin.bundle?.sourceItemId)||!safeText(origin.bundle?.title))fail();origins.add(origin.purchaseRef);}
+    for(const origin of item.purchaseOrigins){if(!verified.has(origin.purchaseRef)&&!partialOrders?.has(origin.purchaseRef)||!safeId(origin.bundle?.sourceItemId)||!safeText(origin.bundle?.title))fail();origins.add(origin.purchaseRef);}
   }
-  if(origins.size!==verified.size)fail();
-  return {...projected,acquisitionComplete,partialScanVersion:1,outcome:value.outcome,verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],...(deferred?{deferredOrderFingerprints:[...deferred]}:{}),ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...all],failures,unidentifiedRecords:value.unidentifiedRecords,coverage:{...(listingEvidence?{listingEvidence}:{}),complete:c.complete,discoveryComplete:c.discoveryComplete,accountAffinity:c.accountAffinity,listedOrders:c.listedOrders,validatedOrders:c.validatedOrders,emptyAccount:c.emptyAccount,pagesFetched:c.pagesFetched,pagesParsed:c.pagesParsed,expectedTotal:c.expectedTotal,paginationEvidence:c.paginationEvidence,retries:c.retries,concurrency:3}};
+  if(origins.size!==verified.size+(partialOrders?.size??0))fail();
+  return {...projected,acquisitionComplete,partialScanVersion:1,outcome:value.outcome,verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],...(deferred?{deferredOrderFingerprints:[...deferred]}:{}),...(partialOrders?{partialOrderFingerprints:[...partialOrders]}:{}),ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...all],failures,unidentifiedRecords:value.unidentifiedRecords,coverage:{...(listingEvidence?{listingEvidence}:{}),complete:c.complete,discoveryComplete:c.discoveryComplete,accountAffinity:c.accountAffinity,listedOrders:c.listedOrders,validatedOrders:c.validatedOrders,emptyAccount:c.emptyAccount,pagesFetched:c.pagesFetched,pagesParsed:c.pagesParsed,expectedTotal:c.expectedTotal,paginationEvidence:c.paginationEvidence,retries:c.retries,concurrency:3}};
 }
 
 /** A Full scan read in batches keeps its progress here until its final complete commit. */
@@ -554,10 +559,14 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
         for(const fp of [...receipt.unresolvedOrderFingerprints,...receipt.ineligibleOrderFingerprints])fingerprints.delete(fp);
         for(const fp of receipt.verifiedOrderFingerprints)fingerprints.add(fp);
         if(fingerprints.size>100000)throw Error('Saved scan history reached its safety limit.');
-        const attempt={status:'partial',acquisitionComplete:receipt.acquisitionComplete,partialCheckpointVersion:1,outcome:receipt.outcome,scanMode:control.fullScan?'full':'quick',attemptedAt:new Date().toISOString(),discoveryComplete:receipt.coverage.discoveryComplete,completeCheckpointAdvanced:false,verifiedPurchasesSaved:receipt.verifiedOrderFingerprints.length,unresolvedOrders:receipt.unresolvedOrderFingerprints.length,unidentifiedRecords:receipt.unidentifiedRecords,failures:receipt.failures,pagesProcessed:receipt.coverage.pagesFetched};
+        const attempt={status:'partial',acquisitionComplete:receipt.acquisitionComplete,partialCheckpointVersion:1,outcome:receipt.outcome,scanMode:control.fullScan?'full':'quick',attemptedAt:new Date().toISOString(),discoveryComplete:receipt.coverage.discoveryComplete,completeCheckpointAdvanced:false,verifiedPurchasesSaved:receipt.verifiedOrderFingerprints.length,unresolvedOrders:receipt.unresolvedOrderFingerprints.length,...(receipt.partialOrderFingerprints?.length?{partialPurchasesSaved:receipt.partialOrderFingerprints.length}:{}),unidentifiedRecords:receipt.unidentifiedRecords,failures:receipt.failures,pagesProcessed:receipt.coverage.pagesFetched};
         if(!finalBatch&&!partialAttemptIsValid(attempt))throw Error('Invalid partial scan checkpoint.');
         const existingIds=new Set(base.fanaticalLibraryItems.map(item=>item.sourceItemId));
-        partialSummary={...attempt,ordersScanned:receipt.ordersScanned,ordersAvailable:receipt.ordersAvailable,ordersSkipped:receipt.orderFingerprints.length-receipt.ordersScanned,addedProducts:receipt.items.filter(i=>!existingIds.has(i.sourceItemId)).length,ownedLeafProducts:merged.length,coverage:receipt.coverage};
+        // Components saved from partially resolved purchases, and how many of
+        // them an earlier attempt had already saved (a retry, not a new write).
+        const partialRefs=new Set(receipt.partialOrderFingerprints??[]),priorOrigins=new Set(priorItems.flatMap(item=>(item.purchaseOrigins??[]).map(o=>JSON.stringify([item.sourceItemId,o.purchaseRef]))));
+        const partialProducts=receipt.items.flatMap(item=>item.purchaseOrigins.filter(o=>partialRefs.has(o.purchaseRef)).map(o=>JSON.stringify([item.sourceItemId,o.purchaseRef])));
+        partialSummary={...attempt,partialPurchasesSaved:partialRefs.size,partialProductRecordsSaved:new Set(partialProducts).size,partialProductRecordsPreviouslySaved:new Set(partialProducts.filter(key=>priorOrigins.has(key))).size,ordersScanned:receipt.ordersScanned,ordersAvailable:receipt.ordersAvailable,ordersSkipped:receipt.orderFingerprints.length-receipt.ordersScanned,addedProducts:receipt.items.filter(i=>!existingIds.has(i.sourceItemId)).length,ownedLeafProducts:merged.length,coverage:receipt.coverage};
         updates={fanaticalLibraryItems:merged,fanaticalScannedOrderFingerprints:[...fingerprints].sort(),fanaticalImportSummary:base.fanaticalImportSummary,fanaticalLastScanAttempt:finalBatch?base.fanaticalLastScanAttempt:attempt};
       }
       if(!partial&&control.fullScan&&updates.fanaticalImportSummary?.scanMode!=='full')throw new Error('This profile requires a full scan.');

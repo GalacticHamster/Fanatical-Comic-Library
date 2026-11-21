@@ -1478,6 +1478,11 @@
       } else {
         detail = `Some purchase details couldn't be verified.${retryable ? ' They will be retried on your next update.' : ''}`;
       }
+      // A partly readable purchase keeps the items that could be verified.
+      const partlyRead = summary.partialPurchasesSaved ?? 0;
+      if (partlyRead > 0) {
+        detail += ` Items that could be verified from ${partlyRead === 1 ? 'a partly readable purchase were' : `${partlyRead} partly readable purchases were`} saved.`;
+      }
 
       const saved = summary.verifiedPurchasesSaved ?? summary.ordersScanned ?? 0;
       const added = summary.addedProducts ?? summary.addedItems ?? (Array.isArray(summary.items) ? summary.items.length : 0);
@@ -1490,6 +1495,8 @@
         activity = `Saved ${saved} purchase${saved === 1 ? '' : 's'}. No new items found.`;
       } else if (saved === 0 && added > 0) {
         activity = `Added ${added} new item${added === 1 ? '' : 's'}.`;
+      } else if (partlyRead > 0) {
+        activity = 'No new items found.';
       } else {
         activity = 'No purchases were saved.';
       }

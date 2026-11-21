@@ -610,6 +610,27 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     }
     return counts;
   };
+  // A sparse summary can locate an authenticated detail request, but is
+  // never product evidence or authority to skip that detail on Quick.
+  const isSparse=parent=>parent&&typeof parent==='object'&&!Array.isArray(parent)
+    &&typeof parent.name==='string'&&!!safeTextInPage(parent.name)
+    &&Array.isArray(parent.bundles)&&parent.bundles.length===0
+    &&(parent._id===undefined||(typeof parent._id==='string'&&!!safeIdInPage(parent._id)))
+    &&['games','products','items','tiers'].every(key=>!Object.hasOwn(parent,key));
+  const isPopulated=parent=>parent&&typeof parent==='object'&&!Array.isArray(parent)
+    &&typeof parent.name==='string'&&!!safeTextInPage(parent.name)
+    &&Array.isArray(parent.bundles)&&parent.bundles.length>0
+    &&parent.bundles.every(group=>group&&Array.isArray(group.games)&&group.games.length>0
+         &&group.games.every(leaf=>leaf&&typeof leaf.name==='string'&&!!safeTextInPage(leaf.name)));
+  const isNamedParent=parent=>parent&&typeof parent==='object'&&!Array.isArray(parent)&&!!safeTextInPage(parent.name);
+  // Parents whole-order summary counting accepts.
+  const isCountable=parent=>isNamedParent(parent)&&(isPromotionalLeaf(parent)||isDirectPurchasedItem(parent)||isPopulated(parent));
+  // A parent-level product catalog may be a selection pool, not a purchase.
+  // Such a summary parent never corroborates a detail parent.
+  const isCatalogLike=parent=>isNamedParent(parent)&&!isCountable(parent)&&!isSparse(parent)&&['games','products','items','tiers'].some(key=>Object.hasOwn(parent,key));
+  // Orders whose summary has an unreadable or unrecognized parent. Readable
+  // siblings still locate the detail and corroborate its components.
+  const componentSummaries=new Set();
   for (const order of summaries) {
     if (!order || typeof order._id !== 'string' || !safeIdInPage(order._id) || listed.has(order._id)) throw unreadable();
     listed.add(order._id);
@@ -617,18 +638,6 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
       if(conflictingIds.has(order._id)){issue('summaryConflict');throw unreadable();}
       if(typeof order.status!=='string'||!/^[A-Z][A-Z_]*$/u.test(order.status)){issue('invalidStatus');throw unreadable();}
       if(order.status==='COMPLETE'){
-        // A sparse summary can locate an authenticated detail request, but is
-        // never product evidence or authority to skip that detail on Quick.
-        const isSparse=parent=>parent&&typeof parent==='object'&&!Array.isArray(parent)
-          &&typeof parent.name==='string'&&!!safeTextInPage(parent.name)
-          &&Array.isArray(parent.bundles)&&parent.bundles.length===0
-          &&(parent._id===undefined||(typeof parent._id==='string'&&!!safeIdInPage(parent._id)))
-          &&['games','products','items','tiers'].every(key=>!Object.hasOwn(parent,key));
-        const isPopulated=parent=>parent&&typeof parent==='object'&&!Array.isArray(parent)
-          &&typeof parent.name==='string'&&!!safeTextInPage(parent.name)
-          &&Array.isArray(parent.bundles)&&parent.bundles.length>0
-          &&parent.bundles.every(group=>group&&Array.isArray(group.games)&&group.games.length>0
-               &&group.games.every(leaf=>leaf&&typeof leaf.name==='string'&&!!safeTextInPage(leaf.name)));
         const sparse=allowPartial&&Array.isArray(order.items)&&order.items.length>0
           &&order.items.some(parent=>isSparse(parent)&&!isDirectPurchasedItem(parent))
           &&order.items.every(parent=>isSparse(parent)||isPopulated(parent));
@@ -638,6 +647,12 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
           const populated=order.items.filter(parent=>isPopulated(parent)||isDirectPurchasedItem(parent));
           expectedProducts.set(order._id,populated.length?productCounts(populated):new Map());
           order.items.filter(parent=>isSparse(parent)&&!isDirectPurchasedItem(parent)).forEach(parent=>bundleShape(parent));
+        } else if(allowPartial&&Array.isArray(order.items)&&order.items.some(parent=>isNamedParent(parent)&&!isCatalogLike(parent))&&order.items.some(parent=>!isCountable(parent))){
+          // One unrecognized summary parent must not withhold the detail
+          // request for its siblings; the detail decides admission. Shape
+          // diagnostics name the unrecognized parents, not ordinary sparse ones.
+          for(const parent of order.items)if(!isCountable(parent)&&!isSparse(parent))try{productCounts([parent]);}catch(error){if(fatal(error))throw error;}
+          componentSummaries.add(order._id);expectedProducts.set(order._id,new Map());
         } else {
           const counts=productCounts(order.items);
           expectedProducts.set(order._id,counts);
@@ -694,12 +709,101 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   const scope = {fullScan,scanHistoryMissing,total:toInspect.length,skipped:complete.length-unread.length};
   reportProgress({phase:'plan',...scope});
   let completedDetails = 0;
+  // Item-level fault isolation. An order is a container of purchase evidence;
+  // its authenticated detail (same order ID, COMPLETE) is the ownership
+  // evidence. A detail parent is admitted when a summary parent corroborates
+  // it: same name and, where the summary states one, the same parent ID (a
+  // pick-and-mix selection by its group name). Each product leaf needs its own
+  // validated ID. Anything else stays unresolved for retry; nothing is guessed.
+  const partialOrders=new Set();
+  const componentCategories=['summaryStructure','parentMissing','unexpectedDetailItem','identityMismatch','parentStructure','childStructure','childIdentity','productMissing','productUnexpected'];
+  const components={version:1,ordersPartiallyResolved:0,ordersResolvedByComponents:0,componentsAdmitted:0,componentsUnresolved:0,componentsRejected:0,unknownStructures:0,categories:Object.fromEntries(componentCategories.map(key=>[key,0]))};
+  let componentsUsed=false;
+  const admitComponents=async(order,listedOrder,fingerprint)=>{
+    componentsUsed=true;
+    // Whole-order verification already recorded detail shapes unless it was skipped.
+    const shape=componentSummaries.has(order._id)?bundleShape:()=>{};
+    const open=new Map(),rejected=[],pending=[],miss=(category,n=1)=>open.set(category,(open.get(category)??0)+n);
+    const slots=[];
+    for(const parent of Array.isArray(listedOrder.items)?listedOrder.items:[]){
+      if(!isNamedParent(parent)){miss('summaryStructure');continue;}
+      if(isPromotionalLeaf(parent))continue;
+      let leaves=null;
+      if(isPopulated(parent)){leaves=new Map();for(const group of parent.bundles)for(const leaf of group.games)if(!isPromotionalLeaf(leaf)){const name=safeTextInPage(leaf.name);leaves.set(name,(leaves.get(name)??0)+1);}}
+      slots.push({name:safeTextInPage(parent.name),id:parent._id===undefined?'':typeof parent._id==='string'&&safeIdInPage(parent._id)?parent._id:null,direct:isDirectPurchasedItem(parent),catalog:isCatalogLike(parent),leaves,used:false});
+    }
+    const parents=order.items.map(parent=>({parent,slot:null,valid:isNamedParent(parent)}));
+    const claim=(name,id,accept=()=>true)=>{
+      const slot=(id&&slots.find(s=>!s.used&&s.name===name&&s.id===id&&accept(s)))||slots.find(s=>!s.used&&s.name===name&&s.id===''&&accept(s));
+      if(slot)slot.used=true;return slot;
+    };
+    const parentId=parent=>typeof parent._id==='string'&&safeIdInPage(parent._id)?parent._id:'';
+    // Ordinary parents first, then pick-and-mix selections by group, then
+    // promotional parents, so a gift never takes a purchased parent's place.
+    for(const entry of parents)if(entry.valid&&!isPromotionalLeaf(entry.parent))entry.slot=claim(safeTextInPage(entry.parent.name),parentId(entry.parent));
+    const groups=new Map();
+    for(const entry of parents){
+      const group=entry.valid&&!entry.slot&&!isPromotionalLeaf(entry.parent)?safeTextInPage(typeof entry.parent.pickAndMix==='string'?entry.parent.pickAndMix:''):'';
+      if(!group)continue;
+      const unused=slots.find(s=>!s.used&&s.name===group&&!s.direct&&!s.leaves&&!s.catalog);
+      if(unused)unused.used=true;
+      entry.slot=unused??groups.get(group)??null;
+      if(entry.slot)groups.set(group,entry.slot);
+    }
+    for(const entry of parents){
+      if(!entry.valid||!isPromotionalLeaf(entry.parent))continue;
+      const name=safeTextInPage(entry.parent.name),id=parentId(entry.parent);
+      if(!claim(name,id)&&id){const renamed=slots.find(s=>!s.used&&s.id===id&&!s.direct);if(renamed)renamed.used=true;}
+    }
+    let position=0;
+    for(const [pi,{parent,slot,valid}] of parents.entries()){
+      if(!valid){miss('parentStructure');components.unknownStructures++;continue;}
+      if(isPromotionalLeaf(parent)){rejected.push(recordRejected(parent,parent,order));continue;}
+      const direct=isDirectPurchasedItem(parent),id=parentId(parent);
+      const groupsOf=direct?[{games:[parent]}]:id&&Array.isArray(parent.bundles)&&parent.bundles.length?parent.bundles:null;
+      // Positions follow whole-order verification so that a fully resolved
+      // order keeps the exact occurrence identities of the ordinary path.
+      const leafCount=groupsOf?groupsOf.reduce((n,g)=>n+(Array.isArray(g?.games)?g.games.filter(l=>!isPromotionalLeaf(l)).length:0),0):0;
+      const start=position;position+=leafCount;
+      if(!slot){miss('unexpectedDetailItem');continue;}
+      if(slot.catalog){miss('summaryStructure');continue;}
+      if(slot.direct&&(!direct||id!==slot.id)){miss('identityMismatch');continue;}
+      if(!groupsOf){miss('parentStructure');components.unknownStructures++;shape(parent);continue;}
+      let at=start;
+      for(const [gi,group] of groupsOf.entries()){
+        if(!group||typeof group!=='object'||!Array.isArray(group.games)||!group.games.length){miss('childStructure');shape(parent,group?.games==null?'missingGames':'invalidGames',{value:group});continue;}
+        for(const [li,leaf] of group.games.entries()){
+          if(isPromotionalLeaf(leaf)){rejected.push(recordRejected(leaf,parent,order));continue;}
+          const index=at++,name=safeTextInPage(leaf?.name);
+          if(slot.leaves){if(!(slot.leaves.get(name)>0)){miss('productUnexpected');continue;}slot.leaves.set(name,slot.leaves.get(name)-1);}
+          if(!leaf||typeof leaf._id!=='string'){miss('childIdentity');continue;}
+          const projected=projectLeafInPage(leaf,parent,order,fingerprint);
+          if(!projected){miss('childIdentity');continue;}
+          pending.push({projected,parent,leaf,index,ref:`${order._id}\u0000component\u0000${pi}\u0000${gi}\u0000${li}\u0000${parent._id}\u0000${leaf._id}`});
+        }
+      }
+      if(slot.leaves)for(const n of slot.leaves.values())if(n>0)miss('productMissing',n);
+    }
+    for(const slot of slots)if(!slot.used)miss('parentMissing');
+    const resolved=open.size===0,items=[];
+    for(const {projected,parent,leaf,index,ref} of pending){
+      // A partial order's occurrences are provisional order/bundle counts: a
+      // later complete observation replaces them instead of adding purchases.
+      projected.occurrences=[{occurrenceRef:await fingerprintOrderInPage(resolved?`${order._id}\u0000${index}\u0000${parent._id}\u0000${leaf._id}`:ref),...(resolved?{}:{basis:'order-bundle-count'}),orderRef:fingerprint,bundleId:parent._id,bundleTitle:safeTextInPage(parent.name),purchasedAt:safeDateInPage(order.date),...keyEvidenceInPage(leaf)}];
+      items.push(projected);
+    }
+    for(const [category,n] of open){components.categories[category]=Math.min(100000,components.categories[category]+n);components.componentsUnresolved=Math.min(100000,components.componentsUnresolved+n);}
+    components.componentsRejected=Math.min(100000,components.componentsRejected+rejected.length);
+    if(resolved)components.ordersResolvedByComponents++;
+    else if(items.length){components.ordersPartiallyResolved++;components.componentsAdmitted=Math.min(100000,components.componentsAdmitted+items.length);}
+    return {items,rejected,resolved};
+  };
   diagnostic.stage='details';
   activity.pages=diagnostic.pagesParsed;activity.discovered=summaries.length;activity.scheduled=toInspect.length;activityProgress('details',true);
   const details = await boundedMap(toInspect, async ({ order: listedOrder, fingerprint }) => {
     const sparse=sparseSummaries.get(listedOrder._id);
     activity.active++;activityProgress('details',activity.completed===0&&activity.active===Math.min(3,activity.scheduled));
-    let detailRead=false;
+    let detailRead=false,admittedComponents=[];
     try {
     const { data: order } = await request(`/api/user/orders/${encodeURIComponent(listedOrder._id)}`);
     detailRead=true;
@@ -709,6 +813,12 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     if (!order || order._id !== listedOrder._id){issue('detailIdentity');throw unreadable();}
     if(order.status!=='COMPLETE'){issue('detailStatus');throw unreadable();}
     if(!Array.isArray(order.items)||!order.items.length){issue('detailStructure');throw unreadable();}
+    // Whole-order verification is the ordinary path and keeps its exact
+    // occurrence identities. When it fails, a component failure is isolated
+    // below instead of withholding independently verified siblings.
+    let isolation=null;const rejectedHere=[];
+    try{
+    if(componentSummaries.has(order._id))throw unreadable();
     const expected = expectedProducts.get(order._id);
     const actual = productCounts(order.items);
     if(sparse){
@@ -770,9 +880,14 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
             detailDirectParents:Math.min(100000,detailDirectParents),
             detailBundleParents:Math.min(100000,detailBundleParents),
             nonStringPickAndMix:Math.min(100000,nonStringPickAndMix),
+            // Summary parents classified promotional, and whether a promotional
+            // detail parent carries a validated ID: they separate a renamed gift
+            // listed without an ID from a purchase the detail omits.
+            summaryPromotionalParents:sumCounts(sparse.promotional),
             normalizedNameMatched,
             missingParentHasId:missingIds.length>0,
-            promotionalIdMatched:missingIds.some(id=>promotionalParentIds.has(id))
+            promotionalIdMatched:missingIds.some(id=>promotionalParentIds.has(id)),
+            promotionalParentHasId:promotionalParentIds.size>0
           };
         }
         recordMismatch(mismatchCategory,expCount,obsCount,parentContext);
@@ -786,7 +901,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
     let occurrence=0;
     for (const parent of order.items) {
       if (isPromotionalLeaf(parent)) {
-        rejectedList.push(recordRejected(parent, parent, order));
+        rejectedHere.push(recordRejected(parent, parent, order));
         continue;
       }
       if (!parent || typeof parent._id !== 'string' || !safeIdInPage(parent._id) || !safeTextInPage(parent.name) || !Array.isArray(parent.bundles) || (!parent.bundles.length&&!isDirectPurchasedItem(parent))) throw unreadable();
@@ -794,7 +909,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
         if (!group || !Array.isArray(group.games) || !group.games.length) throw unreadable();
         for (const leaf of group.games) {
           if (isPromotionalLeaf(leaf)) {
-            rejectedList.push(recordRejected(leaf, parent, order));
+            rejectedHere.push(recordRejected(leaf, parent, order));
             continue;
           }
           if (typeof leaf?._id !== 'string'){issue('detailProductIdentity');throw unreadable();}
@@ -805,12 +920,20 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
         }
       }
     }
+    }catch(error){if(!allowPartial||fatal(error))throw error;isolation=error;}
+    if(isolation){
+      projectedItems.length=0;
+      const admitted=await admitComponents(order,listedOrder,fingerprint);
+      rejectedList.push(...admitted.rejected);
+      if(!admitted.resolved){admittedComponents=admitted.items;throw isolation;}
+      projectedItems.push(...admitted.items);
+    }else rejectedList.push(...rejectedHere);
     reportProgress({phase:'details',...scope,completed:++completedDetails});
     diagnostic.detailsParsed=completedDetails;verified.add(fingerprint);
     if(sparse)recovery.recovered++;
     activity.validatedItems+=projectedItems.length;
     return projectedItems;
-    }catch(error){if(sparse)recovery.unresolved++;if(!detailRead)issue('detailRequest');activity.failed++;if(!allowPartial||fatal(error))throw error;unresolved.add(fingerprint);note(error,'details');return [];}
+    }catch(error){if(sparse)recovery.unresolved++;if(!detailRead)issue('detailRequest');activity.failed++;if(!allowPartial||fatal(error))throw error;unresolved.add(fingerprint);note(error,'details');if(admittedComponents.length){partialOrders.add(fingerprint);activity.validatedItems+=admittedComponents.length;}return admittedComponents;}
     finally{activity.active--;activity.completed++;activityProgress('details',activity.completed===activity.scheduled);}
   });
   activityProgress('validating',true);
@@ -819,6 +942,11 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   diagnostic.stage='session';
   if(currentToken!==token)throw failure('session-changed','The signed-in Fanatical session changed during this scan. Start a fresh scan.');
   // `token`, summaries, details, and raw leaves remain in this execution world.
+  if(componentsUsed){
+    const bounded=n=>Math.min(100000,Math.max(0,n));
+    const {version,...counts}=components;
+    compatibility.components={version,ordersFullyResolved:bounded(verified.size),...counts,ordersUnresolved:bounded(unresolved.size-partialOrders.size-deferred.length-postponed.length)};
+  }
   const outcome=!discoveryComplete?'partial-discovery':unresolved.size?'partial-extraction':'complete';
   const finished=outcome==='complete'||outcome==='partial-discovery'&&diagnostic.paginationEvidence==='array-only'&&diagnostic.pagesParsed===visitedPages.size&&!unresolved.size&&!unidentifiedRecords&&failureCounts.size===1&&[...failureCounts.values()][0].code==='discovery-unverified';
   // FAN alone requests private navigation metadata. A saved purchase can recover
@@ -826,14 +954,14 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   const navigationRefs = progressFormat === 'fan' && allowPartial && Array.isArray(orderNavigationRefs)
     ? new Set(orderNavigationRefs.slice(0,100000)) : null;
   if (navigationRefs) for (const item of items) for (const origin of item.purchaseOrigins) {
-    if (verified.has(origin.purchaseRef)) navigationRefs.add(origin.purchaseRef);
+    if (verified.has(origin.purchaseRef)||partialOrders.has(origin.purchaseRef)) navigationRefs.add(origin.purchaseRef);
   }
   return {
     ...(navigationRefs ? {orderNavigation:completeWithFingerprints
-      .filter(({fingerprint})=>navigationRefs.has(fingerprint)&&!unresolved.has(fingerprint))
+      .filter(({fingerprint})=>navigationRefs.has(fingerprint)&&(!unresolved.has(fingerprint)||partialOrders.has(fingerprint)))
       .map(({order,fingerprint})=>[fingerprint,order._id])} : {}),
     acquisitionContract:{version:1,provider:'fanatical',acquisition:{outcome:finished?'finished':'interrupted'},verified:[...verified].sort(),unresolved:[...unresolved].sort(),ineligible:[...ineligible].sort(),coverage:{status:outcome==='complete'?'verified':finished?'unverified':'incomplete',evidence:[diagnostic.paginationEvidence]},scope:{authority:accountOverlap?'saved-order-match':'declared-scope'},retry:[...unresolved].sort(),persistence:{outcome:'not-attempted'},reconciliation:{authority:'none'}},
-    ...(allowPartial?{partialScanVersion:1,outcome,...(batched?{deferredOrderFingerprints:[...deferred].sort()}:{}),verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...listedFingerprints],failures:[...failureCounts.values()],unidentifiedRecords}:{}),
+    ...(allowPartial?{partialScanVersion:1,outcome,...(batched?{deferredOrderFingerprints:[...deferred].sort()}:{}),verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],...(partialOrders.size?{partialOrderFingerprints:[...partialOrders].sort()}:{}),ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...listedFingerprints],failures:[...failureCounts.values()],unidentifiedRecords}:{}),
     schemaVersion: 1,
     coverage: { complete: allowPartial?outcome==='complete':true,...(allowPartial?{listingEvidence,compatibility,discoveryComplete,pagesParsed:diagnostic.pagesParsed,accountAffinity:accountOverlap?'saved-order-match':'declared-scope'}:{}), listedOrders: summaries.length, validatedOrders: allowPartial?verified.size:details.length, emptyAccount: summaries.length === 0,
       pagesFetched: visitedPages.size, expectedTotal, paginationEvidence: ranged ? 'range' : expectedTotal !== null ? 'count' : linked ? 'link' : 'array-only', retries, concurrency },

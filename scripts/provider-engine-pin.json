@@ -1,16 +1,16 @@
 {
   "contractVersion": 1,
-  "engine": "6fcb41b1240fafbb8ed5f3282274ede284e4bda76b8ba8822f782b69fe61bcb8",
-  "adapter": "9f220a9a89e90cbeb8d2624e87b37765d25ac32650d6cc25c07e33eed2b0263b",
-  "contract": "361b3a81ca8d0f913954ee05d0c683808126d35f989cabb1a44aaed13fb4eef2",
-  "revision": "fanatical-v1-928fb95d4e5b70a4",
+  "engine": "5fc3d744a1502c73b1d176989cd0a8270919e28c08132cdc856567256a3d19da",
+  "adapter": "8a803fea4addd6682f9e3d6fbdab624efaef1035b99dfc02f734dab65d43ac65",
+  "contract": "14b7fb3fdc5c0f9010c8c58cd70bc7f480d646db8e0e7fad87d45bfc67ca7bcd",
+  "revision": "fanatical-v1-79f0891654940a39",
   "consumers": {
-    "GL": "5405d8a864a51a8c57ff485640a1326dc63de8d2b5ec22a89ecc64a2afb59c0d",
-    "FAN": "6fcb41b1240fafbb8ed5f3282274ede284e4bda76b8ba8822f782b69fe61bcb8"
+    "GL": "3ceafe99c95025d203e79a995c27404c957bdaf8c2760c0147d12bebd981c9aa",
+    "FAN": "5fc3d744a1502c73b1d176989cd0a8270919e28c08132cdc856567256a3d19da"
   },
   "runtime": {
-    "src/order-importer.mjs": "6fcb41b1240fafbb8ed5f3282274ede284e4bda76b8ba8822f782b69fe61bcb8",
-    "src/acquisition-contract.mjs": "361b3a81ca8d0f913954ee05d0c683808126d35f989cabb1a44aaed13fb4eef2",
-    "src/service-worker.js": "37092947441284019c7705d3343e57c469e97d2195dd01421c08d8f6430706e4"
+    "src/order-importer.mjs": "5fc3d744a1502c73b1d176989cd0a8270919e28c08132cdc856567256a3d19da",
+    "src/acquisition-contract.mjs": "14b7fb3fdc5c0f9010c8c58cd70bc7f480d646db8e0e7fad87d45bfc67ca7bcd",
+    "src/service-worker.js": "7b79ba706e278d32ce2f5f79dc8b757f9a8854b59adc9a76ea9b2de62762f27b"
   }
 }
