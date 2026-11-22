@@ -10,14 +10,22 @@ import {createRelease,readRuntimeZip} from '../scripts/release.mjs';
 import {chromePipe,firefoxMarionette,freePort} from './native-protocol.mjs';
 import {quotaProduct,quotaBaseline} from './fixtures/storage-quota.mjs';
 
-const firefox=process.argv.includes('--firefox'),from=process.env.FAN_UPGRADE_FROM??'1.0.2',suffix=firefox?'-firefox':'';
-assert(['1.0.0','1.0.1','1.0.2','1.0.4','1.0.5'].includes(from));
-const oldZip=await readFile(new URL(`../dist/FanaticalLibrary-${from}${suffix}.zip`,import.meta.url)),oldFiles=readRuntimeZip(oldZip);
+import {createHash} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
+
+const firefox=process.argv.includes('--firefox'),from=process.env.FAN_UPGRADE_FROM??'1.0.6',suffix=firefox?'-firefox':'';
+assert(['1.0.0','1.0.1','1.0.2','1.0.4','1.0.5','1.0.6'].includes(from));
+const supplied=process.env.FAN_UPGRADE_FROM_PACKAGE;
+const archive=supplied?resolve(supplied):fileURLToPath(new URL(`../dist/${from==='1.0.6'?'1.0.6-rc1/':''}FanaticalLibrary-${from}${suffix}.zip`,import.meta.url));
+const oldZip=await readFile(archive),oldFiles=readRuntimeZip(oldZip);
+const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
+if(!supplied&&from==='1.0.6')assert.equal(digest(oldZip),firefox?'da5bb0b876fd4fefa26a1bb0dd57673633426b24a43f75e353b53417dbd2b4a0':'17c4807e0d60650185f23a41d8da221dd74d4fbbfefb3e3b1c267a10a6cb5d22');
+console.log(`Baseline (${supplied?'explicit archive':from==='1.0.6'?'tagged local release candidate':'local archived release'}): ${archive} SHA-256 ${digest(oldZip)}`);
 const newZip=process.env.FAN_UPGRADE_TO?await readFile(process.env.FAN_UPGRADE_TO):(await createRelease(undefined,undefined,firefox?'firefox':'chrome')).zip,newFiles=readRuntimeZip(newZip);
 const oldManifest=JSON.parse(oldFiles.get('manifest.json')),nextManifest=JSON.parse(newFiles.get('manifest.json'));
-assert.equal(oldManifest.version,from);assert.equal(nextManifest.version,'1.0.6');
+assert.equal(oldManifest.version,from);assert.notEqual(digest(newZip),digest(oldZip),'Upgrade must install a different runtime archive');
 assert(nextManifest.permissions.includes('unlimitedStorage'));
-if(['1.0.2','1.0.4','1.0.5'].includes(from))assert.deepEqual(nextManifest,{...oldManifest,version:'1.0.6'},'Only version changes in the release manifest');
+if(['1.0.2','1.0.4','1.0.5','1.0.6'].includes(from))assert.deepEqual(nextManifest,{...oldManifest,version:nextManifest.version},'Only version changes in the release manifest');
 const temporary=await mkdtemp(join(tmpdir(),'fan-release-upgrade-')),profile=join(temporary,'profile'),stage=join(temporary,'runtime');
 let child,driver,exited,session,url;
 const writeStage=async files=>{for(const [name,bytes]of files){const path=join(stage,name);await mkdir(resolve(path,'..'),{recursive:true});await writeFile(path,bytes);}};
@@ -26,7 +34,7 @@ try{
   if(firefox){
     let binary=process.env.FIREFOX_BIN||'C:/Program Files/Mozilla Firefox/firefox.exe';
     if(process.platform==='win32'&&!process.env.FIREFOX_BIN){const location=execFileSync('powershell.exe',['-NoProfile','-Command','(Get-AppxPackage -Name Mozilla.Firefox).InstallLocation'],{windowsHide:true,encoding:'utf8'}).trim();if(location)binary=join(location,'VFS/ProgramFiles/Firefox Package Root/firefox.exe');}
-    const port=await freePort(),archive=resolve('dist',`FanaticalLibrary-${from}-firefox.zip`);
+    const port=await freePort();
     await writeFile(join(profile,'user.js'),`user_pref("marionette.port",${port});\nuser_pref("extensions.update.enabled",false);\n`);
     child=spawn(binary,['--headless','--no-remote','--profile',profile,'--marionette','--remote-allow-system-access','about:blank'],{windowsHide:true,env:{...process.env,MOZ_REMOTE_ALLOW_SYSTEM_ACCESS:'1'},stdio:['ignore','pipe','pipe']});exited=new Promise(done=>child.once('exit',done));
     driver=await firefoxMarionette(port);await driver.send('WebDriver:NewSession',{capabilities:{alwaysMatch:{browserName:'firefox'}}});
@@ -45,7 +53,10 @@ try{
   }
   async function ready(){for(let i=0;i<200;i++){try{if(await evaluate("return document.querySelector('#library-count')?.textContent.includes('stored locally');"))return;}catch{}await pause(40);}throw Error('Installed options did not become ready: '+JSON.stringify(await evaluate("return {url:location.href,text:document.body?.innerText?.slice(0,1200)};")));}
   await ready();
-  const seed={...quotaBaseline(),fanaticalLibraryItems:[{...quotaProduct(0),mediaType:'comic'}],fanaticalScannedOrderFingerprints:['1'.padStart(64,'0')],fanaticalLastScanAttempt:{status:'incomplete',scanMode:'quick',attemptedAt:'2026-01-16T12:00:00.000Z'},galacticLibraryExtensionId:'b'.repeat(32),galacticHamsterAppearance:{version:1,mode:'dark'}};
+  const savedProduct={...quotaProduct(0),mediaType:'comic'};
+  const origin=savedProduct.purchaseOrigins[0];
+  savedProduct.purchaseOrigins=[{...origin,quantity:2},{...origin,purchaseRef:'2'.padStart(64,'0'),keyStatus:'unrevealed',keyCheckedAt:'2026-01-16T12:00:00.000Z'}];
+  const seed={...quotaBaseline(),fanaticalLibraryItems:[savedProduct],fanaticalWishlistItems:[{title:'Synthetic wish',mediaType:'book',weight:3}],fanaticalScannedOrderFingerprints:['1'.padStart(64,'0')],fanaticalLastScanAttempt:{status:'incomplete',scanMode:'quick',attemptedAt:'2026-01-16T12:00:00.000Z'},galacticLibraryExtensionId:'b'.repeat(32),galacticHamsterAppearance:{version:1,mode:'dark'}};
   const before=await evaluate(`await chrome.storage.local.set(${JSON.stringify(seed)});return await chrome.storage.local.get(null);`);
   const backup=await evaluate("const r=await chrome.runtime.sendMessage({type:'FANATICAL_STORE',operation:'backup',args:[]});if(!r.ok)throw Error(r.error);return r.result;");
   console.log(`PASS ${from}: installed baseline retains library, history, profiles, corrections, fingerprints, incomplete attempt and companion settings`);
@@ -60,9 +71,10 @@ try{
   if(Object.hasOwn(after,'galacticPurchaseSharing'))assert.deepEqual(after.galacticPurchaseSharing,before.galacticPurchaseSharing??{version:1,humble:true,fanatical:true});
   if(Object.hasOwn(after,'galacticPurchaseDiscoveryAfter:fanatical'))assert.equal(Number.isSafeInteger(after['galacticPurchaseDiscoveryAfter:fanatical'])&&after['galacticPurchaseDiscoveryAfter:fanatical']>0,true);
   if(Object.hasOwn(after,'galacticPurchaseDiscoveryAttempts:fanatical'))assert.equal(Number.isSafeInteger(after['galacticPurchaseDiscoveryAttempts:fanatical'])&&after['galacticPurchaseDiscoveryAttempts:fanatical']>=(before['galacticPurchaseDiscoveryAttempts:fanatical']??0)&&after['galacticPurchaseDiscoveryAttempts:fanatical']<=5,true);
-  assert.equal(await evaluate('return chrome.runtime.getManifest().version;'),'1.0.6');
+  assert.equal(await evaluate('return chrome.runtime.getManifest().version;'),nextManifest.version);
+  assert.equal(await evaluate("return await (await fetch(chrome.runtime.getURL('src/order-importer.mjs'))).text();"),newFiles.get('src/order-importer.mjs').toString('utf8'));
   assert.equal(await evaluate("return await chrome.permissions.contains({permissions:['unlimitedStorage']});"),true);
-  console.log(`PASS ${from}: same-identity installed upgrade to 1.0.6 preserves all storage and unlimitedStorage`);
+  console.log(`PASS ${from}: same-identity installed upgrade to development ${nextManifest.version} preserves all storage and unlimitedStorage`);
   const result=await evaluate(`const {createSyncStore,parseLibraryBackup}=await import('./library-data.mjs');const store=createSyncStore(chrome.storage.local);const backup=${JSON.stringify(backup)};if(parseLibraryBackup(backup).length!==1)throw Error('Old backup unreadable');const scan=await store.execute('begin',[{reuseAccount:true,accountId:${JSON.stringify(seed.fanaticalAccountId)},profileLabel:'fixture',confirmed:true},99]);if(scan.forceFull)throw Error('Valid old checkpoints lost');await store.execute('failure',[scan.token,null,99]);return true;`);
   assert.equal(result,true);console.log(`PASS ${from}: old backup parses and existing per-order authority remains usable`);
   const updated=await evaluate(`const {createSyncStore}=await import('./library-data.mjs');const s=createSyncStore(chrome.storage.local);const scan=await s.execute('begin',[{reuseAccount:true,accountId:${JSON.stringify(seed.fanaticalAccountId)},profileLabel:'fixture',confirmed:true},99]);await s.execute('commit',[scan.token,{fanaticalLibraryItems:[...scan.state.fanaticalLibraryItems,${JSON.stringify(quotaProduct(1))}],fanaticalScannedOrderFingerprints:scan.state.fanaticalScannedOrderFingerprints,fanaticalImportSummary:{...scan.state.fanaticalImportSummary,scanMode:'quick'},fanaticalLastScanAttempt:{status:'complete',scanMode:'quick'}},99]);return (await chrome.storage.local.get('fanaticalLibraryItems')).fanaticalLibraryItems;`);assert.equal(updated.length,2);assert.equal(updated.find(i=>i.sourceItemId==='quota-product-0').mediaType,'comic');
@@ -75,6 +87,36 @@ try{
   const restored=await evaluate("return await chrome.storage.local.get(['fanaticalLibraryItems','mediaTypeOverrides','fanaticalProfileArchives','fanaticalScannedOrderFingerprints','fanaticalImportSummary']);");
   assert.equal(restored.fanaticalLibraryItems[0].sourceItemId,'quota-product-0');assert.equal(restored.mediaTypeOverrides['quota-product-0'],'comic');assert.equal(restored.fanaticalProfileArchives.length,1);assert.deepEqual(restored.fanaticalScannedOrderFingerprints,[]);assert.equal(restored.fanaticalImportSummary,null);
   console.log(`PASS ${from}: restored backup preserves purchases/corrections/profiles and resets private checkpoint authority`);
+  const component=await evaluate(`
+    const {importFanaticalOrdersInPage:acquire}=await import('./order-importer.mjs');
+    const {createSyncStore,validateScanResult}=await import('./library-data.mjs');
+    const store=createSyncStore(chrome.storage.local);
+    const originalFetch=window.fetch,originalAuth=localStorage.getItem('bsauth');
+    const detail={_id:'synthetic-upgrade-partial',status:'COMPLETE',items:[{_id:'synthetic-upgrade-bundle',name:'Synthetic upgrade bundle',bundles:[{games:[
+      {_id:'upgrade-verified-child',name:'Verified upgrade product',type:'book'},
+      {name:'Unresolved upgrade product',type:'book'}
+    ]}]}]};
+    const summary={...detail,items:detail.items.map(x=>({_id:x._id,name:x.name,bundles:[]}))};
+    const before=await chrome.storage.local.get(null);
+    try{
+      localStorage.setItem('bsauth',JSON.stringify({token:'SYNTHETIC'}));
+      window.fetch=async path=>new Response(JSON.stringify(path==='/api/user/orders'?[summary]:detail),{headers:{'Content-Type':'application/json'}});
+      for(let attempt=0;attempt<2;attempt++){
+        const scan=await store.execute('begin',[{profileLabel:'fixture',confirmed:true,fullScan:true},99]);
+        const receipt=validateScanResult(await acquire({allowPartial:true,returnFailure:true,fullScan:true}),{fullScan:true});
+        if(receipt.acquisitionComplete||receipt.partialOrderFingerprints.length!==1||receipt.items.length!==1)throw Error('Partial acquisition failed to isolate the unreadable product');
+        await store.execute('commitPartial',[scan.token,receipt,99]);
+      }
+    }finally{window.fetch=originalFetch;if(originalAuth===null)localStorage.removeItem('bsauth');else localStorage.setItem('bsauth',originalAuth);}
+    const after=await chrome.storage.local.get(null);
+    const {fanaticalLibraryItems:items}=after;
+    const picked=items.filter(row=>row.sourceItemId==='upgrade-verified-child');
+    return {one:picked.length===1&&picked[0].purchaseOrigins.length===1&&picked[0].purchaseOrigins[0].quantity===1,
+      saved:before.fanaticalLibraryItems.every(row=>JSON.stringify(items.find(i=>i.sourceItemId===row.sourceItemId)?.purchaseOrigins)===JSON.stringify(row.purchaseOrigins)),
+      protected:['fanaticalAccountId','fanaticalProfileArchives','fanaticalHistoricalItems','fanaticalImportSummary','mediaTypeOverrides','fanaticalWishlistItems'].every(key=>JSON.stringify(before[key])===JSON.stringify(after[key]))};
+  `);
+  assert.deepEqual(component,{one:true,saved:true,protected:true});
+  console.log(`PASS ${from}: upgraded runtime preserves earlier quantities and saves a verified component once across two partial imports`);
   // Run the actual installed package's acquisition/validation/writer in each
   // native engine too. Fetch is synthetic; Firefox provider MAIN admission is
   // separately covered by the packaged-browser serialized-function checks.
@@ -112,7 +154,7 @@ try{
   assert.equal(await evaluate("return document.querySelector('#history-note').textContent.includes('No complete order-history check has been saved yet.');"),true);
   console.log(`PASS ${from}: actual installed package saves one verified purchase and 47 products during a partial scan without false coverage`);
   console.log(`PASS ${from}: installed Quick skips verified details and Full revalidates without product duplication`);
-  console.log(`8 installed ${firefox?'Firefox':'Chrome'} upgrade checks passed (${from} -> 1.0.6).`);
+  console.log(`9 installed ${firefox?'Firefox':'Chrome'} upgrade checks passed (${from} -> development ${nextManifest.version}).`);
 }finally{
   if(firefox&&driver)try{await driver.send('Marionette:Quit',{flags:['eForceQuit']});}catch{}
   child?.kill();driver?.close?.();if(exited)await exited;

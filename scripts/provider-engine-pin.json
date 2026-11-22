@@ -1,11 +1,11 @@
 {
   "contractVersion": 1,
   "engine": "7bd383db20ff44f1368a48ab52dba52e6684a0f684ee8e1b98fae28159affe90",
-  "adapter": "e090f3ab13ab026100c1440e596d4f44d2cb680194fde3c003d7bc28f6cd8f75",
+  "adapter": "0c2bc6d299fb0bb6f031433bb2d5624e029f7d40ff9a562bab69224167604c62",
   "contract": "6f490987fe488da3a8a96163b8c0fdf317e46f4d6db027b6b1c46b0071055441",
-  "revision": "fanatical-v1-050e634533409a30",
+  "revision": "fanatical-v1-33817701c47cf9bd",
   "consumers": {
-    "GL": "869d11db246d1357800a036b2b7435450723a07cfaa8ac6ad5b63dc276f7e38b",
+    "GL": "907800c690a84d2e137848ee770b50a45cb3a63d083d630273e4c85966e71d69",
     "FAN": "7bd383db20ff44f1368a48ab52dba52e6684a0f684ee8e1b98fae28159affe90"
   },
   "runtime": {
