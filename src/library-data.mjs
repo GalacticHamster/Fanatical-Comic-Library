@@ -222,7 +222,8 @@ export function validateScanResult(value, { fullScan = false, knownOrderFingerpr
   const unseen = fingerprints.filter((fingerprint) => !known.has(fingerprint)).length;
   const scheduled = value.coverage?.compatibility?.counts?.scheduled;
   const expected = fullScan ? value.ordersAvailable : (Number.isSafeInteger(scheduled) ? scheduled : unseen);
-  if (value.ordersScanned !== expected || (expected > 0 && !value.items.length) || (expected === 0 && value.items.length)) fail();
+  // A checked order whose contents were all excluded (a promotional gift) adds no product.
+  if (value.ordersScanned !== expected || (expected > 0 && !value.items.length && !value.rejectedPurchaseItems?.length) || (expected === 0 && value.items.length)) fail();
   if (value.items.some((item) => item?.source !== 'fanatical' || typeof item.sourceItemId !== 'string' || !safeId(item.sourceItemId) || !safeText(item.title) || !safeId(item.bundle?.sourceItemId) || !safeText(item.bundle?.title))) fail();
   const projected = sanitizeImportResult(value);
   if (projected.items.length !== value.items.length) fail();
@@ -278,8 +279,14 @@ function validatePartialScan(value,{fullScan,knownOrderFingerprints}){
     purchaseOrigins(item.purchaseOrigins,true);
     for(const origin of item.purchaseOrigins){if(!verified.has(origin.purchaseRef)&&!partialOrders?.has(origin.purchaseRef)||!safeId(origin.bundle?.sourceItemId)||!safeText(origin.bundle?.title))fail();origins.add(origin.purchaseRef);}
   }
-  if(origins.size!==verified.size+(partialOrders?.size??0))fail();
-  return {...projected,acquisitionComplete,partialScanVersion:1,outcome:value.outcome,verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],...(deferred?{deferredOrderFingerprints:[...deferred]}:{}),...(partialOrders?{partialOrderFingerprints:[...partialOrders]}:{}),ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...all],failures,unidentifiedRecords:value.unidentifiedRecords,coverage:{...(listingEvidence?{listingEvidence}:{}),complete:c.complete,discoveryComplete:c.discoveryComplete,accountAffinity:c.accountAffinity,listedOrders:c.listedOrders,validatedOrders:c.validatedOrders,emptyAccount:c.emptyAccount,pagesFetched:c.pagesFetched,pagesParsed:c.pagesParsed,expectedTotal:c.expectedTotal,paginationEvidence:c.paginationEvidence,retries:c.retries,concurrency:3}};
+  // A verified order may contribute nothing (all of it excluded, e.g. a gift);
+  // a partly resolved order exists only because something of it was admitted.
+  if(partialOrders&&[...partialOrders].some(fp=>!origins.has(fp)))fail();
+  // Each partly resolved order states its remaining recovery scope.
+  const bounded1=n=>Number.isSafeInteger(n)&&n>=1&&n<=100000,scopes=value.componentScopes;
+  if((scopes!==undefined||partialOrders)&&(!Array.isArray(scopes)||scopes.length!==(partialOrders?.size??0)||new Set(scopes.map(s=>s?.order)).size!==scopes.length||scopes.some(s=>!s||typeof s!=='object'||!partialOrders.has(s.order)||!bounded1(s.unresolved)||!Array.isArray(s.bundles)||s.bundles.length>1000||new Set(s.bundles.map(b=>b?.bundle)).size!==s.bundles.length||s.bundles.some(b=>!b||!safeId(b.bundle)||!bounded(b.admitted)||!bounded1(b.unresolved)))))fail();
+  const componentScopes=(scopes??[]).map(s=>({order:s.order,unresolved:s.unresolved,bundles:s.bundles.map(b=>({bundle:b.bundle,admitted:b.admitted,unresolved:b.unresolved}))}));
+  return {...projected,acquisitionComplete,partialScanVersion:1,outcome:value.outcome,verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],...(deferred?{deferredOrderFingerprints:[...deferred]}:{}),...(partialOrders?{partialOrderFingerprints:[...partialOrders],componentScopes}:{}),ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...all],failures,unidentifiedRecords:value.unidentifiedRecords,coverage:{...(listingEvidence?{listingEvidence}:{}),complete:c.complete,discoveryComplete:c.discoveryComplete,accountAffinity:c.accountAffinity,listedOrders:c.listedOrders,validatedOrders:c.validatedOrders,emptyAccount:c.emptyAccount,pagesFetched:c.pagesFetched,pagesParsed:c.pagesParsed,expectedTotal:c.expectedTotal,paginationEvidence:c.paginationEvidence,retries:c.retries,concurrency:3}};
 }
 
 /** A Full scan read in batches keeps its progress here until its final complete commit. */
@@ -341,7 +348,7 @@ export function backupRestoreState(items, backup={}) {
   });
   if(backup.accountId!=null&&!GalacticPurchaseSync.accountUuid(backup.accountId))throw Error('Invalid saved account identity.');
   const ids=[backup.accountId,...profileArchives.map(a=>a.accountId)].filter(Boolean).map(id=>id.toLowerCase());if(new Set(ids).size!==ids.length)throw Error('Duplicate saved account identity.');
-  return { fanaticalAccountId:backup.accountId??null, fanaticalLibraryItems: items, fanaticalImportSummary: null, fanaticalScannedOrderFingerprints: [], fanaticalLastScanAttempt: null, fanaticalProfileLabel:backup.schemaVersion>=2?backup.profileLabel:'', fanaticalProfileArchives:profileArchives,
+  return { fanaticalAccountId:backup.accountId??null, fanaticalLibraryItems: items, fanaticalImportSummary: null, fanaticalScannedOrderFingerprints: [], fanaticalLastScanAttempt: null, fanaticalComponentScopes: {}, fanaticalProfileLabel:backup.schemaVersion>=2?backup.profileLabel:'', fanaticalProfileArchives:profileArchives,
     fanaticalHistoricalItems:backup.schemaVersion>=4?parseHistoricalItems(backup.historicalItems,backup.profileLabel):[],
     ...(backup.mediaTypeOverrides && typeof backup.mediaTypeOverrides === 'object' && !Array.isArray(backup.mediaTypeOverrides) ? { mediaTypeOverrides: backup.mediaTypeOverrides } : {}),
     ...(backup.rejectedPurchaseItems!==undefined ? { rejectedPurchaseItems: fanaticalRejectedPurchaseItems(backup.rejectedPurchaseItems) } : {}),
@@ -412,7 +419,7 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
   // records. Every write made through this store counts.
   let revision=0;const storage=area;area={get:(...a)=>storage.get(...a),set:async(...a)=>{try{return await storage.set(...a);}finally{revision++;}},remove:async(...a)=>{try{return await storage.remove(...a);}finally{revision++;}}};
   let tail=Promise.resolve();const key='fanaticalSyncControl';
-  const defaults={fanaticalLibraryItems:[],fanaticalScannedOrderFingerprints:[],fanaticalProfileLabel:'',fanaticalAccountId:null,fanaticalProfileArchives:[],fanaticalHistoricalItems:[],fanaticalImportSummary:null,fanaticalLastScanAttempt:null,mediaTypeOverrides:{},rejectedPurchaseItems:[]};
+  const defaults={fanaticalLibraryItems:[],fanaticalScannedOrderFingerprints:[],fanaticalProfileLabel:'',fanaticalAccountId:null,fanaticalProfileArchives:[],fanaticalHistoricalItems:[],fanaticalImportSummary:null,fanaticalLastScanAttempt:null,mediaTypeOverrides:{},rejectedPurchaseItems:[],fanaticalComponentScopes:{}};
   async function operate(operation,args){
     if(['syncAccounts','begin','selectProfile','renameProfile'].includes(operation))await GalacticPurchaseSync.migrateAccounts(area,'fan');
     function archive(state){
@@ -495,7 +502,7 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
       const archives=state.fanaticalProfileArchives.filter(entry=>entry.profileLabel!==label&&entry.profileLabel!==state.fanaticalProfileLabel);
       if(state.fanaticalProfileLabel)archives.push(archive(state));
       if(archives.length>100)throw Error('Too many saved accounts. Export a backup first.');
-      await area.set({fanaticalAccountId:selected.accountId,fanaticalLibraryItems:items,fanaticalHistoricalItems:history,fanaticalScannedOrderFingerprints:scan?.fingerprints??[],fanaticalImportSummary:scan?.summary??null,fanaticalLastScanAttempt:scan?.attempt??null,fanaticalProfileLabel:label,fanaticalProfileArchives:archives,[key]:null});return true;
+      await area.set({fanaticalAccountId:selected.accountId,fanaticalLibraryItems:items,fanaticalHistoricalItems:history,fanaticalScannedOrderFingerprints:scan?.fingerprints??[],fanaticalComponentScopes:{},fanaticalImportSummary:scan?.summary??null,fanaticalLastScanAttempt:scan?.attempt??null,fanaticalProfileLabel:label,fanaticalProfileArchives:archives,[key]:null});return true;
     }
     if(operation==='begin'){
       const [options,tabId]=args;const state=await area.get(defaults);let label=String(options.profileLabel??'').trim();
@@ -558,16 +565,21 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
         const fingerprints=new Set(validFingerprints(base.fanaticalScannedOrderFingerprints)?base.fanaticalScannedOrderFingerprints:[]);
         for(const fp of [...receipt.unresolvedOrderFingerprints,...receipt.ineligibleOrderFingerprints])fingerprints.delete(fp);
         for(const fp of receipt.verifiedOrderFingerprints)fingerprints.add(fp);
+        // Remaining recovery scope per partly resolved order: replaced when the
+        // order is read again, dropped once it is verified or no longer eligible.
+        const scopes=Object.fromEntries(Object.entries(base.fanaticalComponentScopes&&typeof base.fanaticalComponentScopes==='object'?base.fanaticalComponentScopes:{}).filter(([fp])=>/^[a-f0-9]{64}$/u.test(fp)&&!fingerprints.has(fp)));
+        for(const fp of [...receipt.verifiedOrderFingerprints,...receipt.ineligibleOrderFingerprints])delete scopes[fp];
+        for(const scope of receipt.componentScopes??[])scopes[scope.order]={unresolved:scope.unresolved,bundles:scope.bundles};
         if(fingerprints.size>100000)throw Error('Saved scan history reached its safety limit.');
-        const attempt={status:'partial',acquisitionComplete:receipt.acquisitionComplete,partialCheckpointVersion:1,outcome:receipt.outcome,scanMode:control.fullScan?'full':'quick',attemptedAt:new Date().toISOString(),discoveryComplete:receipt.coverage.discoveryComplete,completeCheckpointAdvanced:false,verifiedPurchasesSaved:receipt.verifiedOrderFingerprints.length,unresolvedOrders:receipt.unresolvedOrderFingerprints.length,...(receipt.partialOrderFingerprints?.length?{partialPurchasesSaved:receipt.partialOrderFingerprints.length}:{}),unidentifiedRecords:receipt.unidentifiedRecords,failures:receipt.failures,pagesProcessed:receipt.coverage.pagesFetched};
+        const attempt={status:'partial',acquisitionComplete:receipt.acquisitionComplete,partialCheckpointVersion:1,outcome:receipt.outcome,scanMode:control.fullScan?'full':'quick',attemptedAt:new Date().toISOString(),discoveryComplete:receipt.coverage.discoveryComplete,completeCheckpointAdvanced:false,verifiedPurchasesSaved:receipt.verifiedOrderFingerprints.length,unresolvedOrders:receipt.unresolvedOrderFingerprints.length,...(receipt.partialOrderFingerprints?.length?{partialPurchasesSaved:receipt.partialOrderFingerprints.length,incompleteBundles:Math.min(100000,(receipt.componentScopes??[]).reduce((n,s)=>n+s.bundles.length,0))}:{}),unidentifiedRecords:receipt.unidentifiedRecords,failures:receipt.failures,pagesProcessed:receipt.coverage.pagesFetched};
         if(!finalBatch&&!partialAttemptIsValid(attempt))throw Error('Invalid partial scan checkpoint.');
         const existingIds=new Set(base.fanaticalLibraryItems.map(item=>item.sourceItemId));
         // Components saved from partially resolved purchases, and how many of
         // them an earlier attempt had already saved (a retry, not a new write).
         const partialRefs=new Set(receipt.partialOrderFingerprints??[]),priorOrigins=new Set(priorItems.flatMap(item=>(item.purchaseOrigins??[]).map(o=>JSON.stringify([item.sourceItemId,o.purchaseRef]))));
         const partialProducts=receipt.items.flatMap(item=>item.purchaseOrigins.filter(o=>partialRefs.has(o.purchaseRef)).map(o=>JSON.stringify([item.sourceItemId,o.purchaseRef])));
-        partialSummary={...attempt,partialPurchasesSaved:partialRefs.size,partialProductRecordsSaved:new Set(partialProducts).size,partialProductRecordsPreviouslySaved:new Set(partialProducts.filter(key=>priorOrigins.has(key))).size,ordersScanned:receipt.ordersScanned,ordersAvailable:receipt.ordersAvailable,ordersSkipped:receipt.orderFingerprints.length-receipt.ordersScanned,addedProducts:receipt.items.filter(i=>!existingIds.has(i.sourceItemId)).length,ownedLeafProducts:merged.length,coverage:receipt.coverage};
-        updates={fanaticalLibraryItems:merged,fanaticalScannedOrderFingerprints:[...fingerprints].sort(),fanaticalImportSummary:base.fanaticalImportSummary,fanaticalLastScanAttempt:finalBatch?base.fanaticalLastScanAttempt:attempt};
+        partialSummary={...attempt,incompleteBundles:(receipt.componentScopes??[]).reduce((n,s)=>n+s.bundles.length,0),recoveryScopesRemaining:Object.keys(scopes).length,partialPurchasesSaved:partialRefs.size,partialProductRecordsSaved:new Set(partialProducts).size,partialProductRecordsPreviouslySaved:new Set(partialProducts.filter(key=>priorOrigins.has(key))).size,ordersScanned:receipt.ordersScanned,ordersAvailable:receipt.ordersAvailable,ordersSkipped:receipt.orderFingerprints.length-receipt.ordersScanned,addedProducts:receipt.items.filter(i=>!existingIds.has(i.sourceItemId)).length,ownedLeafProducts:merged.length,coverage:receipt.coverage};
+        updates={fanaticalLibraryItems:merged,fanaticalScannedOrderFingerprints:[...fingerprints].sort(),fanaticalComponentScopes:finalBatch?{}:scopes,fanaticalImportSummary:base.fanaticalImportSummary,fanaticalLastScanAttempt:finalBatch?base.fanaticalLastScanAttempt:attempt};
       }
       if(!partial&&control.fullScan&&updates.fanaticalImportSummary?.scanMode!=='full')throw new Error('This profile requires a full scan.');
       const parsedIncoming=parseLibraryBackup({schemaVersion:1,items:updates.fanaticalLibraryItems});
@@ -616,7 +628,8 @@ export function createSyncStore(area,{onInvalidated=()=>{}}={}){
         const additions=navigation.filter(([ref,id])=>refs.has(ref)&&previous[ref]!==id);
         if (additions.length) navigationPatch={fanaticalOrderNavigation:{...saved,[accountId]:{...previous,...Object.fromEntries(additions)}}};
       }
-      await area.set({...updates,...navigationPatch,fanaticalAccountId:accountId,fanaticalLibraryItems:incoming,fanaticalHistoricalItems:[...history.values()],fanaticalProfileLabel:control.label,fanaticalProfileArchives:archives,rejectedPurchaseItems:nextRejected,[key]:partial&&stageBatch?control:null});return partial?partialSummary:true;
+      // A complete commit leaves nothing unresolved, so no recovery scope remains.
+      await area.set({...updates,...(partial?{}:{fanaticalComponentScopes:{}}),...navigationPatch,fanaticalAccountId:accountId,fanaticalLibraryItems:incoming,fanaticalHistoricalItems:[...history.values()],fanaticalProfileLabel:control.label,fanaticalProfileArchives:archives,rejectedPurchaseItems:nextRejected,[key]:partial&&stageBatch?control:null});return partial?partialSummary:true;
     }
     if(operation==='backup'){
       const state=await area.get({...defaults,fanaticalImportSummary:null,fanaticalWishlistItems:[]});return createLibraryBackup(state.fanaticalLibraryItems,state.fanaticalImportSummary,undefined,state.fanaticalProfileLabel,state.fanaticalProfileArchives,state.fanaticalWishlistItems,state.fanaticalHistoricalItems,state.mediaTypeOverrides,state.rejectedPurchaseItems,state.fanaticalAccountId);

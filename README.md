@@ -208,8 +208,11 @@ product is saved only when the order list corroborates its parent (same name
 and, where listed, the same parent ID) and the product has its own validated
 ID. An unrecognized product structure, an omitted or unexpected parent and a
 malformed product or promotional item stay unresolved without withholding
-their verified siblings. The order keeps no skip eligibility and is read again
-by later scans until every part is recognized; re-reads never add copies.
+their verified siblings. No bundle, group or nested collection is
+all-or-nothing: in a bundle of ten with one malformed product, nine are saved.
+The order keeps no skip eligibility, keeps a recovery scope naming its
+incomplete bundles, and is read again by later scans until every part is
+recognized; re-reads never add copies.
 
 At most **three order-detail requests** run at once. Each GET has a 20-second
 timeout (including the body read) and at most three attempts. Network/timeouts,

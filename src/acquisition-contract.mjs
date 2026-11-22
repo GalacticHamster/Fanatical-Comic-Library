@@ -41,7 +41,7 @@ export function fanaticalCompatibilityReport(value){
   }
   if(value.components!==undefined){
     // Item-level admission summary: bounded counters only, never identities.
-    const c=value.components,ints=['ordersFullyResolved','ordersPartiallyResolved','ordersResolvedByComponents','componentsAdmitted','componentsUnresolved','componentsRejected','unknownStructures','ordersUnresolved'],cats=['summaryStructure','parentMissing','unexpectedDetailItem','identityMismatch','parentStructure','childStructure','childIdentity','productMissing','productUnexpected'],bounded=n=>Number.isSafeInteger(n)&&n>=0&&n<=100000;
+    const c=value.components,ints=['ordersFullyResolved','ordersPartiallyResolved','ordersResolvedByComponents','componentsAdmitted','componentsUnresolved','componentsRejected','unknownStructures','bundlesFullyVerified','bundlesPartiallyVerified','bundlesUnresolved','productsAdmittedFromPartialBundles','ordersUnresolved'],cats=['summaryStructure','parentMissing','unexpectedDetailItem','identityMismatch','parentIdentity','parentStructure','childStructure','childIdentity','nestedStructure','productMissing','productUnexpected'],bounded=n=>Number.isSafeInteger(n)&&n>=0&&n<=100000;
     if(!c||typeof c!=='object'||Array.isArray(c)||c.version!==1||Object.keys(c).length!==ints.length+2||Object.keys(c).some(k=>!['version','categories',...ints].includes(k))||ints.some(k=>!bounded(c[k]))||!c.categories||typeof c.categories!=='object'||Array.isArray(c.categories)||Object.keys(c.categories).length!==cats.length||cats.some(k=>!bounded(c.categories[k])))return null;
     result.components={version:1,...Object.fromEntries(ints.map(k=>[k,c[k]])),categories:Object.fromEntries(cats.map(k=>[k,c.categories[k]]))};
   }
@@ -103,7 +103,7 @@ export function assertFanaticalAcquisitionContract(raw,options={}){
   const keys=(value,allowed)=>value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).every(key=>allowed.includes(key));
   const ids=value=>Array.isArray(value)&&value.length<=100000&&value.every(id=>typeof id==='string'&&/^[a-f0-9]{64}$/u.test(id))&&new Set(value).size===value.length;
   const same=(a,b)=>{if(!ids(a)||!ids(b)||a.length!==b.length)return false;const set=new Set(b);return a.every(id=>set.has(id));};
-  if(!keys(raw,['acquisitionContract','partialScanVersion','outcome','deferredOrderFingerprints','partialOrderFingerprints','verifiedOrderFingerprints','unresolvedOrderFingerprints','ineligibleOrderFingerprints','observedOrderFingerprints','failures','unidentifiedRecords','schemaVersion','coverage','ordersScanned','ordersAvailable','orderFingerprints','items','rejectedPurchaseItems'])||raw.schemaVersion!==1||raw.partialScanVersion!==1)invalid();
+  if(!keys(raw,['acquisitionContract','partialScanVersion','outcome','deferredOrderFingerprints','partialOrderFingerprints','componentScopes','verifiedOrderFingerprints','unresolvedOrderFingerprints','ineligibleOrderFingerprints','observedOrderFingerprints','failures','unidentifiedRecords','schemaVersion','coverage','ordersScanned','ordersAvailable','orderFingerprints','items','rejectedPurchaseItems'])||raw.schemaVersion!==1||raw.partialScanVersion!==1)invalid();
   const rejected=raw.rejectedPurchaseItems===undefined?undefined:fanaticalRejectedPurchaseItems(raw.rejectedPurchaseItems);
   const c=raw.acquisitionContract,coverage=raw.coverage;
   const compatibility=coverage?.compatibility===undefined?null:fanaticalCompatibilityReport(coverage.compatibility);
@@ -119,6 +119,13 @@ export function assertFanaticalAcquisitionContract(raw,options={}){
   // Partially resolved orders stay unresolved and retryable. Only their
   // independently verified components may carry their purchase identity.
   if(raw.partialOrderFingerprints!==undefined&&(!ids(raw.partialOrderFingerprints)||!raw.partialOrderFingerprints.length||raw.partialOrderFingerprints.some(id=>!c.unresolved.includes(id)||raw.deferredOrderFingerprints?.includes(id))))invalid();
+  // Each partly resolved order states its remaining recovery scope: a bounded
+  // unresolved count and the purchased bundles, by product ID, still incomplete.
+  const scopes=raw.componentScopes,partialSet=new Set(raw.partialOrderFingerprints??[]),bounded=n=>Number.isSafeInteger(n)&&n>=0&&n<=100000;
+  if(scopes!==undefined||partialSet.size){
+    if(!Array.isArray(scopes)||scopes.length!==partialSet.size||new Set(scopes.map(s=>s?.order)).size!==scopes.length||scopes.some(s=>!keys(s,['order','unresolved','bundles'])||!partialSet.has(s.order)||!bounded(s.unresolved)||s.unresolved<1||!Array.isArray(s.bundles)||s.bundles.length>1000
+      ||new Set(s.bundles.map(b=>b?.bundle)).size!==s.bundles.length||s.bundles.some(b=>!keys(b,['bundle','admitted','unresolved'])||typeof b.bundle!=='string'||!/^[a-zA-Z0-9_-]{6,128}$/u.test(b.bundle)||!bounded(b.admitted)||!bounded(b.unresolved)||b.unresolved<1)))invalid();
+  }
   if(new Set(partition).size!==partition.length||partition.some(id=>!observedSet.has(id)))invalid();
   if(!coverage||!['complete','partial-extraction','partial-discovery'].includes(raw.outcome)||coverage.complete!==(raw.outcome==='complete')||coverage.discoveryComplete!==(raw.outcome!=='partial-discovery'))invalid();
   const finished=raw.outcome==='complete'||raw.outcome==='partial-discovery'&&coverage.paginationEvidence==='array-only'&&coverage.expectedTotal===null&&coverage.pagesParsed===coverage.pagesFetched&&!c.unresolved.length&&raw.unidentifiedRecords===0&&raw.failures.length===1&&raw.failures[0].code==='discovery-unverified'&&raw.failures[0].stage==='listing'&&raw.failures[0].count===1;

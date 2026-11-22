@@ -1387,5 +1387,65 @@ test('a Full-scan batch whose orders are only partly readable is progress, not a
   const respond=async(path,options)=>{if(new URL(path,'https://www.fanatical.com').pathname!=='/api/user/orders')details++;return history.respond(path,options);};
   const run=harness({respond}),reply=await run.send(true);assert(reply.ok,reply.error);
   assert.equal(details,450,'every batch is read once');assert.equal(reply.summary.verifiedPurchasesSaved,250);assert.equal(reply.summary.unresolvedOrders,200);
-  assert.equal(run.stored.fanaticalLibraryItems.length,451,'verified components of partial orders are saved');assert.equal(reply.summary.completeCheckpointAdvanced,false);
+  assert.equal(run.stored.fanaticalLibraryItems.length,451,'verified components of partial orders are saved');assert.equal(Object.keys(run.stored.fanaticalComponentScopes).length,200,'each partly read order keeps its recovery scope across batches');assert.equal(reply.summary.completeCheckpointAdvanced,false);
+});
+
+// Hierarchical fault isolation through the real worker, writer and storage:
+// a ten-item purchased bundle with one malformed product.
+function tenItemOrder(id,{bad=[4]}={}){
+  const games=Array.from({length:10},(_,i)=>bad.includes(i)?{name:'Ten broken '+i,type:'game'}:{_id:`ten-product-${i}`,name:`Ten product ${i}`,type:'game'});
+  const parent={_id:'ten-bundle-id',name:'Ten bundle',bundles:[{games}]};
+  return {summary:{_id:id,status:'COMPLETE',date:'2026-11-15',items:[{_id:parent._id,name:parent.name,bundles:[]}]},detail:{_id:id,status:'COMPLETE',date:'2026-11-15',items:[parent]}};
+}
+const tenItems=stored=>structuredClone(stored.fanaticalLibraryItems.filter(i=>i.sourceItemId.startsWith('ten-product-')).sort((a,b)=>a.sourceItemId.localeCompare(b.sourceItemId)));
+
+test('hierarchical isolation: a ten-item bundle saves nine products, tracks one, survives retry and restart, and recovers the tenth without changing the nine',async()=>{
+  const id='ten-order-1',fp=fingerprint(id),partly=tenItemOrder(id),list=[summary,partly.summary],details={[orderId]:detail,[id]:partly.detail};
+  const run=harness({list,details,initial:{mediaTypeOverrides:{'ten-product-0':'software'}}});
+  const first=await run.send(true);assert(first.ok,first.error);const report=first.summary.scanDiagnostic;
+  assert.deepEqual(tenItems(run.stored).map(i=>i.sourceItemId),[0,1,2,3,5,6,7,8,9].map(i=>'ten-product-'+i),'nine saved');
+  assert(tenItems(run.stored).every(i=>i.purchaseOrigins.length===1&&i.purchaseOrigins[0].purchaseRef===fp&&i.purchaseOrigins[0].bundle.sourceItemId==='ten-bundle-id'&&i.purchaseOrigins[0].quantity===1));
+  assert.equal(run.stored.fanaticalLibraryItems.find(i=>i.sourceItemId==='ten-product-0').manualMediaType,'software','a user correction applies to the saved product');
+  // One unresolved component, bundle incomplete, order incomplete, no checkpoint.
+  assert.deepEqual(run.stored.fanaticalComponentScopes,{[fp]:{unresolved:1,bundles:[{bundle:'ten-bundle-id',admitted:9,unresolved:1}]}});
+  assert(!run.stored.fanaticalScannedOrderFingerprints.includes(fp));assert.equal(run.stored.fanaticalLastScanAttempt.incompleteBundles,1);
+  assert.equal(report.partialProductRecordsSaved,9);assert.equal(report.incompleteBundles,1);assert.equal(report.recoveryScopesRemaining,1);assert.equal(report.completeCheckpointAdvanced,false);
+  const c=report.compatibility.components;assert.equal(c.bundlesPartiallyVerified,1);assert.equal(c.productsAdmittedFromPartialBundles,9);assert.equal(c.categories.childIdentity,1);assert.equal(c.bundlesFullyVerified,1,'the other order\'s bundle');
+  assert(!/ten-|Ten |PRIVATE/.test(JSON.stringify(report)),'the report carries counts, never identities');
+  // Repeat scans and a restarted worker change nothing.
+  const nine=tenItems(run.stored);await new Promise(r=>setImmediate(r));
+  const repeated=await run.send(false);assert(repeated.ok,repeated.error);assert.deepEqual(tenItems(run.stored),nine);assert.equal(repeated.summary.scanDiagnostic.partialProductRecordsPreviouslySaved,9);
+  const restarted=harness({list,details,initial:structuredClone(run.stored)});
+  assert((await restarted.send(false)).ok);assert.deepEqual(tenItems(restarted.stored),nine);assert.deepEqual(restarted.stored.fanaticalComponentScopes,run.stored.fanaticalComponentScopes);
+  // The tenth product becomes readable: exactly one product is added, the nine are unchanged.
+  details[id]=tenItemOrder(id,{bad:[]}).detail;await new Promise(r=>setImmediate(r));
+  const recovered=await restarted.send(false);assert(recovered.ok,recovered.error);assert.equal(recovered.summary.outcome,'complete');
+  const ten=tenItems(restarted.stored);assert.equal(ten.length,10);assert.deepEqual(ten.filter(i=>i.sourceItemId!=='ten-product-4'),nine);
+  assert.deepEqual(restarted.stored.fanaticalComponentScopes,{});assert(restarted.stored.fanaticalScannedOrderFingerprints.includes(fp));
+  restarted.paths.length=0;await new Promise(r=>setImmediate(r));assert((await restarted.send(false)).ok);// A sparse summary is always rechecked on Quick; the re-read changes nothing.
+  assert.deepEqual(restarted.paths,['/api/user/orders','/api/user/orders/'+id]);assert.deepEqual(tenItems(restarted.stored),ten);assert.deepEqual(restarted.stored.fanaticalComponentScopes,{});
+});
+
+test('hierarchical isolation: backup, restore and account switching keep the nine products and reset recovery scopes without false completion',async()=>{
+  const id='ten-order-2',fp=fingerprint(id),partly=tenItemOrder(id,{bad:[0,9]}),list=[summary,partly.summary],details={[orderId]:detail,[id]:partly.detail};
+  const other={accountId:'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',profileLabel:'other',items:[],historicalItems:[]};
+  const run=harness({list,details,initial:{fanaticalProfileArchives:[other]}});assert((await run.send(true)).ok);const eight=tenItems(run.stored);assert.equal(eight.length,8);
+  // Switching accounts never carries one account's recovery scope to another; switching back keeps the products.
+  const switchUrl='chrome-extension://'+'a'.repeat(32)+'/src/options.html';
+  assert.equal((await run.store('selectProfile',[{profileLabel:'other',expectedActiveLabel:'fixture',confirmed:true}],switchUrl)).ok,true);assert.deepEqual(run.stored.fanaticalComponentScopes,{});assert.deepEqual(tenItems(run.stored),[]);
+  assert.equal((await run.store('selectProfile',[{profileLabel:'fixture',expectedActiveLabel:'other',confirmed:true}],switchUrl)).ok,true);assert.deepEqual(tenItems(run.stored),eight);assert(!run.stored.fanaticalScannedOrderFingerprints.includes(fp));
+  const url='chrome-extension://'+'a'.repeat(32)+'/src/options.html',backup=(await run.store('backup',[],url)).result;assert(!JSON.stringify(backup).includes('fanaticalComponentScopes'));
+  const fresh=harness({list,details,initial:{fanaticalLibraryItems:[],fanaticalImportSummary:null}});assert.equal((await fresh.store('restore',[backup],url)).ok,true);
+  assert.deepEqual(tenItems(fresh.stored),eight);assert.deepEqual(fresh.stored.fanaticalComponentScopes,{});assert(!fresh.stored.fanaticalScannedOrderFingerprints.includes(fp));
+  const again=await fresh.send(true,{useSavedAccount:true});assert(again.ok,again.error);assert.deepEqual(tenItems(fresh.stored),eight);assert.equal(fresh.stored.fanaticalComponentScopes[fp].bundles[0].unresolved,2);
+});
+
+test('a checked order containing only an excluded gift no longer invalidates the other orders of a partial scan',async()=>{
+  const gift={_id:'gift-only-order',status:'COMPLETE',items:[{_id:'gift-only-parent',name:'Mystery gift',type:'game',isFreeProduct:true,mystery:true,bundles:[]}]};
+  const broken={_id:'broken-only-order',status:'COMPLETE',items:[{_id:'broken-only-bundle',name:'Broken',bundles:[{games:[{name:'No ID'}]}]}]};
+  const run=harness({list:[summary,gift,broken],details:{[orderId]:detail,[gift._id]:gift,[broken._id]:broken}});
+  const reply=await run.send(true);assert(reply.ok,reply.error);assert.equal(reply.summary.outcome,'partial-extraction');
+  assert(run.stored.fanaticalLibraryItems.some(i=>i.sourceItemId==='product-123456'),'the verified order is saved');
+  assert(run.stored.fanaticalScannedOrderFingerprints.includes(fingerprint(gift._id)),'the gift-only order is checked');
+  assert(!run.stored.fanaticalLibraryItems.some(i=>i.sourceItemId==='gift-only-parent'),'the gift is not owned');
 });

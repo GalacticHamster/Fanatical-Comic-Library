@@ -715,15 +715,25 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
   // it: same name and, where the summary states one, the same parent ID (a
   // pick-and-mix selection by its group name). Each product leaf needs its own
   // validated ID. Anything else stays unresolved for retry; nothing is guessed.
-  const partialOrders=new Set();
-  const componentCategories=['summaryStructure','parentMissing','unexpectedDetailItem','identityMismatch','parentStructure','childStructure','childIdentity','productMissing','productUnexpected'];
-  const components={version:1,ordersPartiallyResolved:0,ordersResolvedByComponents:0,componentsAdmitted:0,componentsUnresolved:0,componentsRejected:0,unknownStructures:0,categories:Object.fromEntries(componentCategories.map(key=>[key,0]))};
+  const partialOrders=new Set(),componentScopes=[];
+  const componentCategories=['summaryStructure','parentMissing','unexpectedDetailItem','identityMismatch','parentIdentity','parentStructure','childStructure','childIdentity','nestedStructure','productMissing','productUnexpected'];
+  const components={version:1,ordersPartiallyResolved:0,ordersResolvedByComponents:0,componentsAdmitted:0,componentsUnresolved:0,componentsRejected:0,unknownStructures:0,bundlesFullyVerified:0,bundlesPartiallyVerified:0,bundlesUnresolved:0,productsAdmittedFromPartialBundles:0,categories:Object.fromEntries(componentCategories.map(key=>[key,0]))};
+  const tally=(key,n=1)=>{components[key]=Math.min(100000,components[key]+n);};
   let componentsUsed=false;
+  // No container is atomic. A product nested inside another product container
+  // is walked to this depth; anything deeper stays unresolved.
+  const maxNesting=8;
+  const isNestedContainer=leaf=>leaf&&typeof leaf==='object'&&!Array.isArray(leaf)&&Array.isArray(leaf.bundles)&&leaf.bundles.length>0;
+  // Collections of product-like entries beside the one a level is read from
+  // (a tier list, a product pool) are never read as purchases, and never
+  // treated as empty: each one leaves its container incomplete.
+  const collectionKeys=['games','bundles','products','items','tiers','children','contents','collections','selections'];
+  const unreadCollections=(value,read)=>value&&typeof value==='object'&&!Array.isArray(value)?collectionKeys.filter(key=>!read.includes(key)&&Array.isArray(value[key])&&value[key].some(entry=>entry&&typeof entry==='object'&&(typeof entry._id==='string'||Array.isArray(entry.games)))).length:0;
   const admitComponents=async(order,listedOrder,fingerprint)=>{
     componentsUsed=true;
     // Whole-order verification already recorded detail shapes unless it was skipped.
     const shape=componentSummaries.has(order._id)?bundleShape:()=>{};
-    const open=new Map(),rejected=[],pending=[],miss=(category,n=1)=>open.set(category,(open.get(category)??0)+n);
+    const open=new Map(),rejected=[],pending=[],miss=(category,n=1)=>open.set(category,(open.get(category)??0)+n),scopeBundles=new Map();
     const slots=[];
     for(const parent of Array.isArray(listedOrder.items)?listedOrder.items:[]){
       if(!isNamedParent(parent)){miss('summaryStructure');continue;}
@@ -732,18 +742,28 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
       if(isPopulated(parent)){leaves=new Map();for(const group of parent.bundles)for(const leaf of group.games)if(!isPromotionalLeaf(leaf)){const name=safeTextInPage(leaf.name);leaves.set(name,(leaves.get(name)??0)+1);}}
       slots.push({name:safeTextInPage(parent.name),id:parent._id===undefined?'':typeof parent._id==='string'&&safeIdInPage(parent._id)?parent._id:null,direct:isDirectPurchasedItem(parent),catalog:isCatalogLike(parent),leaves,used:false});
     }
-    const parents=order.items.map(parent=>({parent,slot:null,valid:isNamedParent(parent)}));
+    const isObject=value=>value&&typeof value==='object'&&!Array.isArray(value);
+    const parentId=parent=>isObject(parent)&&typeof parent._id==='string'&&safeIdInPage(parent._id)?parent._id:'';
+    // A parent is identified by its name, or, when its name is unreadable, by a
+    // validated parent ID that the summary states.
+    const parents=order.items.map(parent=>({parent,slot:null,named:isNamedParent(parent),valid:isNamedParent(parent)||!!parentId(parent)&&slots.some(s=>s.id===parentId(parent))}));
+    // Prefer the same stated ID, then a summary parent without one. A detail
+    // parent that omits its ID may take a same-named summary parent that states
+    // one: the two do not conflict, and the summary supplies the bundle identity.
     const claim=(name,id,accept=()=>true)=>{
-      const slot=(id&&slots.find(s=>!s.used&&s.name===name&&s.id===id&&accept(s)))||slots.find(s=>!s.used&&s.name===name&&s.id===''&&accept(s));
+      const slot=(id&&slots.find(s=>!s.used&&s.name===name&&s.id===id&&accept(s)))||slots.find(s=>!s.used&&s.name===name&&s.id===''&&accept(s))||(!id&&slots.find(s=>!s.used&&s.name===name&&s.id&&accept(s)));
       if(slot)slot.used=true;return slot;
     };
-    const parentId=parent=>typeof parent._id==='string'&&safeIdInPage(parent._id)?parent._id:'';
     // Ordinary parents first, then pick-and-mix selections by group, then
     // promotional parents, so a gift never takes a purchased parent's place.
-    for(const entry of parents)if(entry.valid&&!isPromotionalLeaf(entry.parent))entry.slot=claim(safeTextInPage(entry.parent.name),parentId(entry.parent));
+    for(const entry of parents){
+      if(!entry.valid||isPromotionalLeaf(entry.parent))continue;
+      if(entry.named)entry.slot=claim(safeTextInPage(entry.parent.name),parentId(entry.parent));
+      else{const slot=slots.find(s=>!s.used&&s.id===parentId(entry.parent));if(slot){slot.used=true;entry.slot=slot;}}
+    }
     const groups=new Map();
     for(const entry of parents){
-      const group=entry.valid&&!entry.slot&&!isPromotionalLeaf(entry.parent)?safeTextInPage(typeof entry.parent.pickAndMix==='string'?entry.parent.pickAndMix:''):'';
+      const group=entry.named&&!entry.slot&&!isPromotionalLeaf(entry.parent)?safeTextInPage(typeof entry.parent.pickAndMix==='string'?entry.parent.pickAndMix:''):'';
       if(!group)continue;
       const unused=slots.find(s=>!s.used&&s.name===group&&!s.direct&&!s.leaves&&!s.catalog);
       if(unused)unused.used=true;
@@ -755,47 +775,76 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
       const name=safeTextInPage(entry.parent.name),id=parentId(entry.parent);
       if(!claim(name,id)&&id){const renamed=slots.find(s=>!s.used&&s.id===id&&!s.direct);if(renamed)renamed.used=true;}
     }
+    // Admission order follows whole-order verification, so a fully resolved
+    // order keeps the exact occurrence identities of the ordinary path.
     let position=0;
     for(const [pi,{parent,slot,valid}] of parents.entries()){
-      if(!valid){miss('parentStructure');components.unknownStructures++;continue;}
+      if(!valid){miss('parentStructure');tally('unknownStructures');tally('bundlesUnresolved');continue;}
       if(isPromotionalLeaf(parent)){rejected.push(recordRejected(parent,parent,order));continue;}
-      const direct=isDirectPurchasedItem(parent),id=parentId(parent);
-      const groupsOf=direct?[{games:[parent]}]:id&&Array.isArray(parent.bundles)&&parent.bundles.length?parent.bundles:null;
-      // Positions follow whole-order verification so that a fully resolved
-      // order keeps the exact occurrence identities of the ordinary path.
-      const leafCount=groupsOf?groupsOf.reduce((n,g)=>n+(Array.isArray(g?.games)?g.games.filter(l=>!isPromotionalLeaf(l)).length:0),0):0;
-      const start=position;position+=leafCount;
-      if(!slot){miss('unexpectedDetailItem');continue;}
-      if(slot.catalog){miss('summaryStructure');continue;}
-      if(slot.direct&&(!direct||id!==slot.id)){miss('identityMismatch');continue;}
-      if(!groupsOf){miss('parentStructure');components.unknownStructures++;shape(parent);continue;}
-      let at=start;
-      for(const [gi,group] of groupsOf.entries()){
-        if(!group||typeof group!=='object'||!Array.isArray(group.games)||!group.games.length){miss('childStructure');shape(parent,group?.games==null?'missingGames':'invalidGames',{value:group});continue;}
-        for(const [li,leaf] of group.games.entries()){
-          if(isPromotionalLeaf(leaf)){rejected.push(recordRejected(leaf,parent,order));continue;}
-          const index=at++,name=safeTextInPage(leaf?.name);
-          if(slot.leaves){if(!(slot.leaves.get(name)>0)){miss('productUnexpected');continue;}slot.leaves.set(name,slot.leaves.get(name)-1);}
-          if(!leaf||typeof leaf._id!=='string'){miss('childIdentity');continue;}
-          const projected=projectLeafInPage(leaf,parent,order,fingerprint);
-          if(!projected){miss('childIdentity');continue;}
-          pending.push({projected,parent,leaf,index,ref:`${order._id}\u0000component\u0000${pi}\u0000${gi}\u0000${li}\u0000${parent._id}\u0000${leaf._id}`});
-        }
+      const direct=isDirectPurchasedItem(parent);
+      // A child's purchase origin needs its parent's validated ID: the detail's
+      // own, or the one stated by the summary parent that corroborates it.
+      const id=parentId(parent)||slot?.id||'',owner={_id:id,name:safeTextInPage(parent.name)||slot?.name||'',...(typeof parent.slug==='string'?{slug:parent.slug}:{})};
+      const children=direct?[{games:[parent]}]:Array.isArray(parent.bundles)&&parent.bundles.length?parent.bundles:null;
+      let unresolvedHere=0;const before=pending.length,fail=(category,n=1)=>{miss(category,n);unresolvedHere+=n;};
+      if(!slot)fail('unexpectedDetailItem');
+      else if(slot.catalog)fail('summaryStructure');
+      else if(slot.direct&&(!direct||parentId(parent)!==slot.id))fail('identityMismatch');
+      else if(!children){fail('parentStructure');tally('unknownStructures');shape(parent);}
+      else if(!id)fail('parentIdentity');
+      else{
+        const unreadHere=unreadCollections(parent,direct?[]:['bundles']);if(unreadHere){fail('nestedStructure',unreadHere);tally('unknownStructures',unreadHere);}
+        // Every group and child is judged on its own evidence; a failure never
+        // removes a sibling. A populated summary parent limits its direct children.
+        const walk=(groupsOf,depth,path,listed)=>{
+          for(const [gi,group] of groupsOf.entries()){
+            if(!isObject(group)||!Array.isArray(group.games)||!group.games.length){fail('childStructure');if(depth===0)shape(parent,group?.games==null?'missingGames':'invalidGames',{value:group});continue;}
+            const unreadGroup=unreadCollections(group,['games']);if(unreadGroup){fail('nestedStructure',unreadGroup);tally('unknownStructures',unreadGroup);}
+            for(const [li,leaf] of group.games.entries()){
+              if(isPromotionalLeaf(leaf)){rejected.push(recordRejected(leaf,owner,order));continue;}
+              const name=safeTextInPage(leaf?.name);
+              if(listed){if(!(listed.get(name)>0)){fail('productUnexpected');continue;}listed.set(name,listed.get(name)-1);}
+              if(isNestedContainer(leaf)){
+                if(depth+1>=maxNesting){fail('nestedStructure');tally('unknownStructures');continue;}
+                const unreadNested=unreadCollections(leaf,['bundles']);if(unreadNested){fail('nestedStructure',unreadNested);tally('unknownStructures',unreadNested);}
+                walk(leaf.bundles,depth+1,`${path}${gi}.${li}/`,null);continue;
+              }
+              // The product itself is admissible; a collection it carries is not read.
+              const unreadLeaf=leaf===parent?0:unreadCollections(leaf,[]);if(unreadLeaf){fail('nestedStructure',unreadLeaf);tally('unknownStructures',unreadLeaf);}
+              if(!isObject(leaf)||typeof leaf._id!=='string'){fail('childIdentity');continue;}
+              const projected=projectLeafInPage(leaf,owner,order,fingerprint);
+              if(!projected){fail('childIdentity');continue;}
+              pending.push({projected,owner,leaf,index:position++,ref:`${order._id}\u0000component\u0000${pi}\u0000${path}${gi}\u0000${li}\u0000${id}\u0000${leaf._id}`});
+            }
+          }
+        };
+        walk(children,0,'',slot.leaves);
+        if(slot.leaves)for(const n of slot.leaves.values())if(n>0)fail('productMissing',n);
       }
-      if(slot.leaves)for(const n of slot.leaves.values())if(n>0)miss('productMissing',n);
+      const admitted=pending.length-before;
+      if(!unresolvedHere)tally('bundlesFullyVerified');
+      else if(admitted){tally('bundlesPartiallyVerified');tally('productsAdmittedFromPartialBundles',admitted);}
+      else tally('bundlesUnresolved');
+      if(unresolvedHere&&id){const scope=scopeBundles.get(id)??{bundle:id,admitted:0,unresolved:0};scope.admitted=Math.min(100000,scope.admitted+admitted);scope.unresolved=Math.min(100000,scope.unresolved+unresolvedHere);scopeBundles.set(id,scope);}
     }
     for(const slot of slots)if(!slot.used)miss('parentMissing');
     const resolved=open.size===0,items=[];
-    for(const {projected,parent,leaf,index,ref} of pending){
+    for(const {projected,owner,leaf,index,ref} of pending){
       // A partial order's occurrences are provisional order/bundle counts: a
       // later complete observation replaces them instead of adding purchases.
-      projected.occurrences=[{occurrenceRef:await fingerprintOrderInPage(resolved?`${order._id}\u0000${index}\u0000${parent._id}\u0000${leaf._id}`:ref),...(resolved?{}:{basis:'order-bundle-count'}),orderRef:fingerprint,bundleId:parent._id,bundleTitle:safeTextInPage(parent.name),purchasedAt:safeDateInPage(order.date),...keyEvidenceInPage(leaf)}];
+      projected.occurrences=[{occurrenceRef:await fingerprintOrderInPage(resolved?`${order._id}\u0000${index}\u0000${owner._id}\u0000${leaf._id}`:ref),...(resolved?{}:{basis:'order-bundle-count'}),orderRef:fingerprint,bundleId:owner._id,bundleTitle:safeTextInPage(owner.name),purchasedAt:safeDateInPage(order.date),...keyEvidenceInPage(leaf)}];
       items.push(projected);
     }
-    for(const [category,n] of open){components.categories[category]=Math.min(100000,components.categories[category]+n);components.componentsUnresolved=Math.min(100000,components.componentsUnresolved+n);}
-    components.componentsRejected=Math.min(100000,components.componentsRejected+rejected.length);
-    if(resolved)components.ordersResolvedByComponents++;
-    else if(items.length){components.ordersPartiallyResolved++;components.componentsAdmitted=Math.min(100000,components.componentsAdmitted+items.length);}
+    let total=0;
+    for(const [category,n] of open){components.categories[category]=Math.min(100000,components.categories[category]+n);tally('componentsUnresolved',n);total+=n;}
+    tally('componentsRejected',rejected.length);
+    if(resolved)tally('ordersResolvedByComponents');
+    else if(items.length){
+      tally('ordersPartiallyResolved');tally('componentsAdmitted',items.length);
+      // The order's remaining recovery scope: how much is unresolved, and in
+      // which purchased bundles. Fully verified bundles are implied.
+      componentScopes.push({order:fingerprint,unresolved:Math.min(100000,total),bundles:[...scopeBundles.values()].sort((a,b)=>a.bundle.localeCompare(b.bundle)).slice(0,1000)});
+    }
     return {items,rejected,resolved};
   };
   diagnostic.stage='details';
@@ -905,13 +954,17 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
         continue;
       }
       if (!parent || typeof parent._id !== 'string' || !safeIdInPage(parent._id) || !safeTextInPage(parent.name) || !Array.isArray(parent.bundles) || (!parent.bundles.length&&!isDirectPurchasedItem(parent))) throw unreadable();
+      if (unreadCollections(parent,isDirectPurchasedItem(parent)?[]:['bundles'])){issue('detailStructure');throw unreadable();}
       for (const group of isDirectPurchasedItem(parent)?[{games:[parent]}]:parent.bundles) {
         if (!group || !Array.isArray(group.games) || !group.games.length) throw unreadable();
+        if (unreadCollections(group,['games'])){issue('detailStructure');throw unreadable();}
         for (const leaf of group.games) {
           if (isPromotionalLeaf(leaf)) {
             rejectedHere.push(recordRejected(leaf, parent, order));
             continue;
           }
+          // A product that is itself a container is walked by component admission.
+          if (isNestedContainer(leaf)||leaf!==parent&&unreadCollections(leaf,[])){issue('detailStructure');throw unreadable();}
           if (typeof leaf?._id !== 'string'){issue('detailProductIdentity');throw unreadable();}
           const projected = projectLeafInPage(leaf, parent, order, fingerprint);
           if (!projected){issue('detailProjection');throw unreadable();}
@@ -927,7 +980,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
       rejectedList.push(...admitted.rejected);
       if(!admitted.resolved){admittedComponents=admitted.items;throw isolation;}
       projectedItems.push(...admitted.items);
-    }else rejectedList.push(...rejectedHere);
+    }else{rejectedList.push(...rejectedHere);tally('bundlesFullyVerified',order.items.filter(parent=>!isPromotionalLeaf(parent)).length);}
     reportProgress({phase:'details',...scope,completed:++completedDetails});
     diagnostic.detailsParsed=completedDetails;verified.add(fingerprint);
     if(sparse)recovery.recovered++;
@@ -961,7 +1014,7 @@ export async function importFanaticalOrdersInPage({ fullScan = false, knownOrder
       .filter(({fingerprint})=>navigationRefs.has(fingerprint)&&(!unresolved.has(fingerprint)||partialOrders.has(fingerprint)))
       .map(({order,fingerprint})=>[fingerprint,order._id])} : {}),
     acquisitionContract:{version:1,provider:'fanatical',acquisition:{outcome:finished?'finished':'interrupted'},verified:[...verified].sort(),unresolved:[...unresolved].sort(),ineligible:[...ineligible].sort(),coverage:{status:outcome==='complete'?'verified':finished?'unverified':'incomplete',evidence:[diagnostic.paginationEvidence]},scope:{authority:accountOverlap?'saved-order-match':'declared-scope'},retry:[...unresolved].sort(),persistence:{outcome:'not-attempted'},reconciliation:{authority:'none'}},
-    ...(allowPartial?{partialScanVersion:1,outcome,...(batched?{deferredOrderFingerprints:[...deferred].sort()}:{}),verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],...(partialOrders.size?{partialOrderFingerprints:[...partialOrders].sort()}:{}),ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...listedFingerprints],failures:[...failureCounts.values()],unidentifiedRecords}:{}),
+    ...(allowPartial?{partialScanVersion:1,outcome,...(batched?{deferredOrderFingerprints:[...deferred].sort()}:{}),verifiedOrderFingerprints:[...verified],unresolvedOrderFingerprints:[...unresolved],...(partialOrders.size?{partialOrderFingerprints:[...partialOrders].sort(),componentScopes:componentScopes.sort((a,b)=>a.order.localeCompare(b.order))}:{}),ineligibleOrderFingerprints:[...ineligible],observedOrderFingerprints:[...listedFingerprints],failures:[...failureCounts.values()],unidentifiedRecords}:{}),
     schemaVersion: 1,
     coverage: { complete: allowPartial?outcome==='complete':true,...(allowPartial?{listingEvidence,compatibility,discoveryComplete,pagesParsed:diagnostic.pagesParsed,accountAffinity:accountOverlap?'saved-order-match':'declared-scope'}:{}), listedOrders: summaries.length, validatedOrders: allowPartial?verified.size:details.length, emptyAccount: summaries.length === 0,
       pagesFetched: visitedPages.size, expectedTotal, paginationEvidence: ranged ? 'range' : expectedTotal !== null ? 'count' : linked ? 'link' : 'array-only', retries, concurrency },

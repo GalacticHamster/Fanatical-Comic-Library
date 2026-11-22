@@ -9,12 +9,14 @@ const sourceFiles=legacyKeys?readRuntimeZip(await readFile(process.env.FAN_LEGAC
 const files=process.argv.includes('--candidate')?await candidateFiles('FAN',sourceFiles):new Map(sourceFiles);
 const baseline=process.argv.includes('--baseline');
 if(baseline)for(const name of ['src/content.js','src/order-importer.mjs','src/service-worker.js','src/shared.js'])files.set(name,execFileSync('git',['show','ea494ce6c0d8232142d519c4552243fc43062e21:'+name],{windowsHide:true,maxBuffer:8*1024*1024}));
-let sixOrders=false,directGames=false,directKeysPresent=false,mixedSummary=false,componentPartial='';
+let sixOrders=false,directGames=false,directKeysPresent=false,mixedSummary=false,componentPartial='',tenBundle='';
 const baseOrder=n=>directGames&&n===size-1?{_id:'synthetic-order-'+n,status:'COMPLETE',date:'2026-11-01',items:Array.from({length:10},(_,i)=>({_id:'direct-game-'+i,name:'Selected '+i,type:'game',status:'fulfilled',bundles:[],pickAndMix:'Synthetic pick and mix',drm:{steam:true},...(directKeysPresent?{key:'SYNTHETIC_SECRET_DO_NOT_RETAIN'}:{})}))}:({_id:'synthetic-order-'+n,status:'COMPLETE',date:'2026-10-01T00:00:00Z',items:[{_id:'bundle-123456',name:'Synthetic',bundles:[{games:sixOrders?Array.from({length:8},(_,j)=>({_id:'six-product-'+n+'-'+j,name:'Synthetic '+n+' '+j,type:n===2?'comic':'game'})):[{_id:'synthetic-product-'+n,name:'Synthetic '+n,type:'book'}]}]}]});
 const order=n=>{const o=baseOrder(n);if(mixedSummary&&n===size-1)o.items.push(...[1,2].map(i=>({_id:'mixed-bundle-'+i,name:'Mixed comic bundle '+i,bundles:[{games:[{_id:'mixed-comic-'+i,name:'Mixed comic '+i,type:'comic'}]}]})));
   // Orders 3-5 of the six-order case use a bundle container unrecognized in both
   // the order list and the order details, so they stay unresolved.
   if(sixOrders&&n>=3)o.items[0].bundles={};
+  // A ten-item purchased bundle whose fifth product lacks an ID until repaired.
+  if(tenBundle&&n===size-1)o.items.push({_id:'ten-bundle-id',name:'Ten bundle',bundles:[{games:Array.from({length:10},(_,i)=>tenBundle==='broken'&&i===4?{name:'Ten product 4',type:'game'}:{_id:'ten-product-'+i,name:'Ten product '+i,type:'game'})}]});
   // A sibling whose product structure the importer does not recognize, and later does.
   if(componentPartial&&n===size-1)o.items.push(componentPartial==='known'?{_id:'synthetic-type-c',name:'Synthetic type C',bundles:[{games:[{_id:'synthetic-c-product',name:'Synthetic C product',type:'book'}]}]}:{_id:'synthetic-type-c',name:'Synthetic type C',widgets:[{_id:'synthetic-c-product',name:'Synthetic C product'}]});return o;};
 let size=3,delay=0,fail=false,denied=false,retry=false,headerless=false,summaryIssues=false,reorderedDuplicate=false,sparseSummary=false,sparseDetailFailure=false,counts={lists:0,details:0,completed:0,failed:0},attempts=new Map();
@@ -249,6 +251,19 @@ try{
    assert.deepEqual(componentResolved.items.filter(i=>i.sourceItemId!=='synthetic-c-product'),partlySaved.items);assert.equal(componentResolved.count,partlySaved.count+1);assert.equal(componentResolved.fingerprints.length,partlySaved.fingerprints.length+1);
    await openOrders();await scan('new');assert.equal(counts.details,0);assert.deepEqual((await saved()).items,componentResolved.items);componentPartial='';
    console.log('PASS installed FAN partly readable order: verified bundle saved beside an unrecognized sibling, Quick retry unchanged, later recognition adds it without duplicates and completes');
+   // Ten-item bundle: nine products survive one malformed product, a Quick retry and a browser restart; the tenth is then added alone.
+   const tenOf=state=>state.items.filter(i=>i.sourceItemId.startsWith('ten-product-')).sort((a,b)=>a.sourceItemId.localeCompare(b.sourceItemId));
+   tenBundle='broken';size=4;await openOrders();await scan('all');
+   await evaluate('const s='+root+';[...s.querySelectorAll("button")].find(b=>b.textContent==="Export scan report").click();return true;');
+   const tenReport=JSON.parse(await wait('return document.documentElement.dataset.testExport;','Ten-item report missing'));
+   assert.equal(tenReport.incompleteBundles,1);assert.equal(tenReport.compatibility.components.bundlesPartiallyVerified,1);assert.equal(tenReport.compatibility.components.productsAdmittedFromPartialBundles,9);assert.equal(tenReport.completeCheckpointAdvanced,false);assert(!/ten-|Ten /.test(JSON.stringify(tenReport)));
+   const nineSaved=await saved();assert.deepEqual(tenOf(nineSaved).map(i=>i.sourceItemId),[0,1,2,3,5,6,7,8,9].map(i=>'ten-product-'+i));
+   await openOrders();await scan('new');assert.equal(counts.details,1);assert.deepEqual(tenOf(await saved()),tenOf(nineSaved));
+   driver.close?.();child.kill();await exited;await startBrowser();await openOrders();await scan('new');assert.equal(counts.details,1);const afterRestart=await saved();assert.deepEqual(tenOf(afterRestart),tenOf(nineSaved));assert.deepEqual(afterRestart.fingerprints,nineSaved.fingerprints);
+   tenBundle='fixed';await openOrders();await scan('new');const tenSaved=await saved();
+   assert.equal(tenOf(tenSaved).length,10);assert.deepEqual(tenOf(tenSaved).filter(i=>i.sourceItemId!=='ten-product-4'),tenOf(nineSaved));assert.equal(tenSaved.fingerprints.length,nineSaved.fingerprints.length+1);
+   tenBundle='';
+   console.log('PASS installed FAN ten-item bundle: nine products saved beside one malformed product, unchanged through Quick retry and browser restart, the tenth then added alone and the order completed');
 
  }
 }finally{driver?.close?.();child?.kill();if(exited)await exited;await new Promise(done=>server.close(done));const target=resolve(temporary),base=resolve(tmpdir());if(target.startsWith(base+sep)&&target.slice(base.length+1).startsWith('fan-progress-native-'))await rm(target,{recursive:true,force:true,maxRetries:5,retryDelay:200});}
