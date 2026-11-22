@@ -3,7 +3,9 @@ import {spawn,execFileSync} from 'node:child_process';import {access,mkdtemp,mkd
 import {verifyStandaloneFanaticalReminders,verifyFanaticalKeyCompatibility,verifyFanaticalKeyReminders,verifyFanaticalNativeSync} from '../../GalacticLibrary/tests/fanatical-native-sync.mjs';
 import {createRelease as glRelease,readRuntimeZip as readGLZip} from '../../GalacticLibrary/scripts/release.mjs';
 import {candidateFiles} from '../../GalacticLibrary/tests/provider-candidate-build.mjs';
-const firefox=process.argv.includes('--firefox'),release=await createRelease(undefined,undefined,firefox?'firefox':'chrome');
+const firefox=process.argv.includes('--firefox');
+const archive=process.env.FAN_RUNTIME_PACKAGE;
+const release=archive?{files:readRuntimeZip(await readFile(archive))}:await createRelease(undefined,undefined,firefox?'firefox':'chrome');
 const legacyPeer=process.argv.includes('--legacy-peer'),legacyKeys=legacyPeer||process.argv.includes('--pre-key-observations')||process.argv.includes('--observation-peer');
 const sourceFiles=legacyKeys?readRuntimeZip(await readFile(process.env.FAN_LEGACY_RUNTIME_PACKAGE??(()=>{throw Error('Explicit legacy FAN runtime package required');})())):release.files;
 const files=process.argv.includes('--candidate')?await candidateFiles('FAN',sourceFiles):new Map(sourceFiles);
@@ -33,6 +35,7 @@ files.set('test-report.html',Buffer.from('<html><script type="module" src="test-
 const central=process.argv.includes('--central');
 const centralInput=central?(process.argv.includes('--legacy-central')
   ?readGLZip(await readFile(process.env.GL_LEGACY_RUNTIME_PACKAGE??(()=>{throw Error('Explicit legacy GL runtime package required');})()))
+  :process.env.GL_RUNTIME_PACKAGE?readGLZip(await readFile(process.env.GL_RUNTIME_PACKAGE))
   :(await glRelease(undefined,undefined,firefox?'firefox':'chrome')).files):null;
 const centralFiles=central?(process.argv.includes('--candidate')&&!process.argv.includes('--legacy-central')?await candidateFiles('GL',centralInput):new Map(centralInput)):null;
 const temporary=await mkdtemp(join(tmpdir(),'fan-progress-native-'));let child,driver,session,exited,fanId,centralId;

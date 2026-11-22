@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 1.0.7
 
 - A purchase with a part the scan cannot read no longer withholds its other products. Products whose bundle or pick-and-mix selection the order list confirms, each with its own product ID, are saved with the purchase's date and quantity. An unrecognized product type, a bundle missing from the order details, an unexpected or mismatched bundle and a malformed promotional item stay unresolved. The purchase is not marked complete and every later scan reads it again; a re-read never adds a second copy, and once every part is recognized the purchase completes normally. Promotional gifts are never saved as owned, and nothing is matched by title alone.
 - The scan message says when items from a partly readable purchase were saved, and Options says how many unresolved purchases had verified items saved. Scan reports add `partialPurchasesSaved`, `partialProductRecordsSaved`, `partialProductRecordsPreviouslySaved` and a count-only `compatibility.components` section. A `parent-missing` report also says how many order-list items are promotional and whether a promotional item in the order details has an ID, which separates a renamed gift from a purchase missing from the order details. Earlier reports remain valid.
@@ -8,7 +8,7 @@
 - No bundle or other container inside a purchase is all-or-nothing. In a bundle of ten products with one malformed product, the nine are saved and the tenth stays unresolved until a later scan can read it, which then adds only that product. A product that is itself a bundle is read the same way. A list of products under another name next to a bundle's contents, such as tiers or a selection pool, is never saved as purchased and keeps the bundle incomplete. A bundle whose ID or name the order details omit is identified by the ID the order list states.
 - Fanatical Library records which purchased bundles of a partly read purchase are still incomplete. The record survives restarts, is replaced by the next read and removed once the purchase is complete. Backups do not include it, and restore or an account change resets it. Options and scan reports count incomplete bundles, and reports count fully, partly and not verified bundles.
 - A purchase that contains only an excluded promotional gift no longer prevents the other purchases of a scan from being saved.
-- Uses shared Fanatical acquisition revision fanatical-v1-050e634533409a30.
+- Uses shared Fanatical acquisition revision fanatical-v1-33817701c47cf9bd.
 
 ## 1.0.6
 

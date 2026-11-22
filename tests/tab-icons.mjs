@@ -17,7 +17,7 @@ try{
  if(repo==='hb'){
   execFileSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',join(root,'scripts/package-release.ps1'),'-Target',firefox?'Firefox':'Chrome','-OutputDirectory',temp],{windowsHide:true});
   originalZip=await readFile(join(temp,'Humble-Comic-Library-'+sourceManifest.version+(firefox?'-firefox':'')+'.zip'));files=unzip(originalZip);
- }else{const builder=await import(pathToFileURL(join(root,'scripts/release.mjs')));const result=await builder.createRelease(undefined,undefined,firefox?'firefox':'chrome');originalZip=result.zip;files=result.files;}
+ }else{const builder=await import(pathToFileURL(join(root,'scripts/release.mjs')));const archive=process.env.FAN_RUNTIME_PACKAGE;if(archive){originalZip=await readFile(archive);files=builder.readRuntimeZip(originalZip);}else{const result=await builder.createRelease(undefined,undefined,firefox?'firefox':'chrome');originalZip=result.zip;files=result.files;}}
  const manifest=JSON.parse(files.get('manifest.json'));const pages=[manifest.options_page,manifest.action.default_popup];
  // Verify the actual archive, not HTML copied directly from the source tree.
  for(const page of pages){const html=files.get(page).toString(),link=html.match(/<link\b[^>]*rel="icon"[^>]*>/u)?.[0];assert(link,'Missing explicit tab icon in packaged '+page);const href=link.match(/href="([^"]+)"/u)?.[1];assert.equal(new URL(href,'https://package.invalid/'+page).pathname,'/icons/icon16.png');assert(link.includes('image/png')&&link.includes('16x16'));}
